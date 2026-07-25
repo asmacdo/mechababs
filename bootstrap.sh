@@ -103,6 +103,30 @@ run "$VENV_DATALAD" save -d "$CAMPAIGN" -m "Ignore .venv" .gitignore
 save_pin mechababs "$MECHA_REF"
 save_pin babs "$BABS_REF"
 
+# The campaign owns its cluster/pipeline configs (not the vendored tool), so the
+# config that produced a run is committed in the campaign and reproduces from it
+# alone. Create the dirs now, versioned from the start; git can't track an empty
+# dir, so seed each with a README pointing at the starter set.
+run mkdir -p clusters pipelines
+cat > clusters/README.md <<'EOF'
+# Campaign cluster configs
+
+Cluster profiles for this campaign live here, so the config that produced a run is
+committed in the campaign. `mechababs configure --cluster <path>` copies the config
+in and resolves it by name; a `<name>` already here resolves in place. Starter
+profiles to copy from (or point `--cluster` straight at) live in
+`code/mechababs/examples/clusters/`.
+EOF
+cat > pipelines/README.md <<'EOF'
+# Campaign pipeline configs
+
+Pipeline configs for this campaign live here, so the config that produced a run is
+committed in the campaign. `mechababs configure --pipelines <path>,...` copies each
+config in and resolves it by name; a `<name>` already here resolves in place.
+Starters live in `code/mechababs/examples/pipelines/`.
+EOF
+run "$VENV_DATALAD" save -d "$CAMPAIGN" -m "Add campaign clusters/ + pipelines/ config dirs" clusters pipelines
+
 # editable-install the pinned babs + the campaign extras into the venv.
 # Under --system-site-packages, install babs WITHOUT its deps: they come from the
 # ambient env (--system-site-packages made them importable), and reinstalling

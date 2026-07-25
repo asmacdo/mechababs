@@ -1,0 +1,37 @@
+# Sherlock cluster profile (Stanford Research Computing). Same shape as
+# dartmouth.yaml; the Sherlock-specific adaptations are:
+#
+#   - Scratch: Sherlock gives every user a persistent /scratch/users/${USER}
+#     ($SCRATCH), so — unlike Unity — there is NO workspace to allocate; the
+#     paths below are stable across logins.
+#
+#   - VCS binaries (git + git-annex): the compute nodes ship only CentOS 7's system
+#     git 1.8 (no `git sparse-checkout`, which the babs job needs) and no git-annex
+#     datalad/babs can rely on. Both come from the conda-forge base env the campaign
+#     venv is built on (git 2.x, git-annex), one coherent source on shared Lustre
+#     scratch the compute nodes also see. See docs/installation.md.
+#
+#   - Partition: set on the PIPELINE axis today (cluster_resources.customized_text),
+#     not here — cluster/runtime settings on the pipeline axis is a known
+#     config-composition gap (#97). The simbids test pipelines request
+#     `russpold,normal`: the lab's private partition first (group priority = fast
+#     dispatch), the public `normal` as fallback. `normal` is also Sherlock's default
+#     (`*` in `sh_part`) if no `-p` were given.
+script_preamble: |
+  # git (>=2, for `git sparse-checkout`) + git-annex from the conda-forge base env
+  # the venv is built on — the compute node's system git is 1.8 and has neither.
+  # On shared Lustre scratch so the compute nodes see it too.
+  export PATH="/scratch/users/${USER}/mechababs-work/campaign-base/bin:$PATH"
+  # campaign venv (abspath substituted at compose time by merge_config)
+  source "{{MECHABABS_VENV}}/bin/activate"
+  # The campaign venv is built --system-site-packages onto a conda-forge base (the
+  # CentOS 7 glibc-2.17 workaround, see docs/installation.md), and that flag
+  # re-enables Python user-site — so a stale ~/.local/lib stack on a shared $HOME
+  # would shadow the conda packages. Suppress it so the job's python resolves only
+  # the venv + its conda base.
+  export PYTHONNOUSERSITE=1
+  export JOB_TMP="/scratch/users/${USER}/sjob-tmp/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+  mkdir -p "${JOB_TMP}"
+  trap 'rm -rf "${JOB_TMP}"' EXIT
+
+job_compute_space: "/scratch/users/${USER}"

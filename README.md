@@ -19,8 +19,8 @@ curl -sSL https://raw.githubusercontent.com/con/mechababs/main/bootstrap.sh \
 cd my-campaign
 source .venv/bin/activate
 
-# 2. Bind an ordered pipeline-set to a cluster.
-mechababs configure --pipelines MRIQC-24.0.2.yaml --cluster dartmouth.yaml [--limit N]
+# 2. Bind an ordered pipeline-set to a cluster (configure copies the named configs into the campaign).
+mechababs configure --pipelines code/mechababs/examples/pipelines/MRIQC-24.0.2.yaml --cluster code/mechababs/examples/clusters/dartmouth.yaml [--limit N]
 
 # 3. Register datasets by URL.
 mechababs add-dataset https://github.com/OpenNeuroDatasets/ds005896

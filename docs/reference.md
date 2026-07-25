@@ -38,12 +38,13 @@ is how the pin is set.
 cd my-campaign
 source .venv/bin/activate
 
-# bind an ordered pipeline-set to a cluster: vendor containers, write the
-# mechababs config + the empty ledger. Guards that THIS process is the campaign
-# venv's python (the check that prevents the wrong, unpinned babs from running).
+# bind an ordered pipeline-set to a cluster: copy the named configs into the
+# campaign's pipelines/ + clusters/, vendor containers, write the mechababs config
+# + the empty ledger. Guards that THIS process is the campaign venv's python (the
+# check that prevents the wrong, unpinned babs from running).
 mechababs configure \
-    --pipelines MRIQC-24.0.2.yaml \
-    --cluster dartmouth.yaml \
+    --pipelines code/mechababs/examples/pipelines/MRIQC-24.0.2.yaml \
+    --cluster code/mechababs/examples/clusters/dartmouth.yaml \
     [--limit N]              # cap each dataset's inclusion to the first N eligible subjects
 
 # register a dataset by URL (append a ledger row). Derives processing_level
@@ -151,16 +152,23 @@ the code location that needs it (grep `TODO(manual step)`):
 
 ## Configuration
 
-- **Pipeline YAMLs** (`pipelines/`) hold `short_name` (the ledger column prefix,
-  unique per campaign), the `container` block, BIDS-app flags, and zip
-  foldernames. Flags are the ground truth for what runs — the *why* behind each
-  choice lives in the `OpenNeuroDerivatives/fmriprepDerivatives` opinions repo.
-- **Cluster YAMLs** (`clusters/`) — how to activate the campaign venv and where
-  per-job scratch lives; see the
+Configs are **campaign-owned**: they live in the campaign's own `pipelines/` and
+`clusters/`, so the config that produced a run is committed alongside it. `configure`
+copies the config you name into the campaign and resolves it by name (a name already
+there resolves in place). The files under `examples/` are starters to copy from.
+
+- **Pipeline YAMLs** hold the `container` block, BIDS-app flags, and zip
+  foldernames; the filename stem is the pipeline's identity (the ledger column
+  prefix, unique per campaign — there is no `short_name` key). Flags are the ground
+  truth for what runs — the *why* behind each choice lives in the
+  `OpenNeuroDerivatives/fmriprepDerivatives` opinions repo.
+- **Cluster YAMLs** — how to activate the campaign venv and where per-job scratch
+  lives; see the
   [cluster config & testing tutorial](cluster-config-and-testing-tutorial.md) for
   the full walk-through of adding your own cluster.
 
-To add a pipeline: copy an existing `pipelines/*.yaml`, set a unique
-`short_name`, change container + flags. To add a cluster: copy
-`clusters/dartmouth.yaml`, adjust the `script_preamble` + scratch roots, and
-validate it by running the e2e suite on your cluster (see the tutorial).
+To add a pipeline: copy an existing `examples/pipelines/*.yaml` to a
+uniquely-named file (its stem is the pipeline's identity), change container + flags.
+To add a cluster: copy
+`examples/clusters/dartmouth.yaml`, adjust the `script_preamble` + scratch roots,
+and validate it by running the e2e suite on your cluster (see the tutorial).

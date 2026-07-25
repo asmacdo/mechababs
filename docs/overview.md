@@ -10,10 +10,11 @@ Every run is the composition of three axes:
 
 - **A dataset** — an OpenNeuro raw BIDS study (`OpenNeuroDatasets/dsXXXXXX`),
   registered by URL (the URL is its identity).
-- **A pipeline** — one of `pipelines/*.yaml` (mriqc, fmriprep-anat / minimal /
-  resampling / full, simbids). Holds the container reference + BIDS-app flags.
-- **A cluster** — one of `clusters/*.yaml` (`dartmouth.yaml`, `test-docker.yaml`).
-  Holds SLURM resources + the job script preamble.
+- **A pipeline** — a config in the campaign's `pipelines/` (mriqc, fmriprep-anat /
+  minimal / resampling / full, simbids). Holds the container reference + BIDS-app
+  flags.
+- **A cluster** — a config in the campaign's `clusters/` (`dartmouth.yaml`,
+  `test-docker.yaml`). Holds SLURM resources + the job script preamble.
 
 `merge_config.py` composes pipeline × cluster × dataset-URL into the single
 `babs-config.yaml` that `babs init` consumes. Never bake cluster details into a
@@ -28,6 +29,7 @@ derivatives, and the vendored code) are subdatasets inside it:
 ```
 my-campaign/                             # a campaign = a datalad dataset (datalad create)
   .mechababs/campaign.yaml               # cluster file + {short_name: pipeline_file} + venv + limit
+  clusters/  pipelines/                  # the campaign's own configs (configure copies them in)
   desc-mechababs_datasets.tsv            # the state ledger (one row per dataset)
   .venv/                                 # campaign venv (gitignored, rebuildable)
   code/

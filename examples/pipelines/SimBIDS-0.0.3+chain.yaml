@@ -1,6 +1,6 @@
 # Downstream half of the chained-inputs e2e (issue #72): a second simbids stage
 # that consumes SimBIDS-0.0.3+anchor's output. Copy of SimBIDS-0.0.3+anchor.yaml plus the
-# chained input_datasets edge; paired with clusters/test-docker.yaml. NOT real data.
+# chained input_datasets edge; paired with examples/clusters/test-docker.yaml. NOT real data.
 
 mechababs:
   selection: {}

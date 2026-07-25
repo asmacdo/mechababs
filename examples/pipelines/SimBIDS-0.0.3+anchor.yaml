@@ -1,7 +1,7 @@
 # Fast/cheap TEST pipeline (issue #31). The simbids BIDS app stands in for a
 # real app (fmriprep/mriqc) so `iterate` -> `babs init` (and later submit) can be
 # exercised inside the pennlinc/slurm-docker-ci container with NO real cluster.
-# NOT for real data — paired with clusters/test-docker.yaml.
+# NOT for real data — paired with examples/clusters/test-docker.yaml.
 
 mechababs:
   # mechababs-only config: consumed by mechababs, stripped by merge_config so none
@@ -45,7 +45,7 @@ singularity_args:
   - --pwd "${PWD}"
   - -B $JOB_TMP:/tmp
   # --userns: this test pipeline runs INSIDE the rootless-podman slurm-docker-ci
-  # container (clusters/test-docker.yaml), so apptainer must use its unprivileged
+  # container (examples/clusters/test-docker.yaml), so apptainer must use its unprivileged
   # user-namespace mode — else, running as mapped-root, it takes the privileged
   # mount path and fails (fuseapps-driver panic on old apptainer / full-cap demand).
   # This is really a property of the nested-container test cluster, not of simbids;

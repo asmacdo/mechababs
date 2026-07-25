@@ -3,8 +3,8 @@
 
 Usage:
     python3 merge_config.py \\
-        --pipeline pipelines/MRIQC-24.0.2.yaml \\
-        --cluster clusters/dartmouth.yaml \\
+        --pipeline examples/pipelines/MRIQC-24.0.2.yaml \\
+        --cluster examples/clusters/dartmouth.yaml \\
         --dataset-url https://github.com/OpenNeuroDatasets/ds000003.git
 
 Writes merged YAML to stdout.

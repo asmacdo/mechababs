@@ -94,9 +94,9 @@ def test_full_run(campaign, cluster_config, rawdata, study):
         "mechababs",
         "configure",
         "--pipelines",
-        f"{STAGE1}.yaml",
+        f"code/mechababs/examples/pipelines/{STAGE1}.yaml",
         "--cluster",
-        cluster_config,
+        f"code/mechababs/examples/clusters/{cluster_config}",
         "--limit",
         "1",
     )
@@ -286,9 +286,9 @@ def test_chained_run(campaign, cluster_config, rawdata, study):
         "mechababs",
         "configure",
         "--pipelines",
-        f"{STAGE1}.yaml,{STAGE2}.yaml",
+        f"code/mechababs/examples/pipelines/{STAGE1}.yaml,code/mechababs/examples/pipelines/{STAGE2}.yaml",
         "--cluster",
-        cluster_config,
+        f"code/mechababs/examples/clusters/{cluster_config}",
         "--limit",
         "1",
     )

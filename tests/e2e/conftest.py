@@ -48,8 +48,9 @@ def pytest_addoption(parser):
     parser.addoption(
         "--cluster-config",
         default="test-docker.yaml",
-        help="cluster config under mechababs/clusters/ to test (default: test-docker.yaml). "
-        "The cross-cluster axis: point at a real site config to validate it the same way.",
+        help="cluster config name under examples/clusters/ — configure copies it into the "
+        "campaign (default: test-docker.yaml). The cross-cluster axis: point at a real site "
+        "config to validate it the same way.",
     )
 
 
@@ -240,4 +241,7 @@ def campaign(workdir):
         cmd.append("--system-site-packages")
     log.info("bootstrapping campaign at %s", path)
     subprocess.run(cmd, check=True)
+    # No config staging here: the tests point configure at the vendored examples/
+    # paths, exercising its copy-in (the prod path — a user points --cluster/--pipelines
+    # at a config and configure copies it into the campaign's clusters/ + pipelines/).
     return path

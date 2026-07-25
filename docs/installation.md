@@ -18,7 +18,7 @@ Verify before continuing:
 for t in git uv apptainer git-annex datalad; do command -v $t || echo "MISSING: $t"; done
 ```
 
-Jobs need a modern `git` (≥ 2.25, for `sparse-checkout`) and git-annex on PATH too — a login-node git *module* doesn't reach the compute nodes, so the cluster profile's `script_preamble` must put both on the job PATH (see `clusters/unity.yaml`).
+Jobs need a modern `git` (≥ 2.25, for `sparse-checkout`) and git-annex on PATH too — a login-node git *module* doesn't reach the compute nodes, so the cluster profile's `script_preamble` must put both on the job PATH (see `examples/clusters/unity.yaml`).
 
 ## Scratch, not home
 
@@ -70,4 +70,4 @@ source <campaign>/.venv/bin/activate
 
 ## Then
 
-Follow [cluster-config-and-testing-tutorial.md](cluster-config-and-testing-tutorial.md) to write `clusters/<site>.yaml` and validate it.
+Follow [cluster-config-and-testing-tutorial.md](cluster-config-and-testing-tutorial.md) to write `examples/clusters/<site>.yaml` and validate it.

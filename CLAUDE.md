@@ -81,7 +81,7 @@ per derivative). A true linear chain needs upstream BABS work — tracked in
 #27. Accepted as fan-out for now.
 
 **Don't restate flags or rationale here — they drift.** Exact flags live in
-`pipelines/fmriprep-*.yaml` (ground truth); the *why* behind each choice
+`examples/pipelines/fMRIPrep-*.yaml` (ground truth); the *why* behind each choice
 (version pin, me-output-echos hedge, syn-sdc, slice-timing) lives in the
 `OpenNeuroDerivatives/fmriprepDerivatives` opinions repo.
 
@@ -220,7 +220,7 @@ Cloned into `reference/` (gitignored). Before using any reference repo,
 ## Where to read in
 
 For the pipeline: the **`## Pipeline`** section above (shape), the
-`pipelines/*.yaml` (flags, ground truth), and the
+`examples/pipelines/*.yaml` (flags, ground truth), and the
 `OpenNeuroDerivatives/fmriprepDerivatives` opinions repo (rationale).
 
 For current work + open issues: the GitHub tracker.

@@ -38,8 +38,9 @@ def cmd_configure(args):
     preconditions this checks: the path is a datalad dataset with code/mechababs
     + code/babs registered, and THIS process runs from the campaign's own .venv —
     which is how we know the pinned code (not some ambient install) is executing.
-    This is the guard that kills the wrong-babs bug. Then construct.build vendors
-    the pipelines' containers and writes the config + the ledger.
+    This is the guard that kills the wrong-babs bug. Then construct.build copies
+    the named configs into the campaign, vendors the pipelines' containers, and
+    writes the config + the ledger.
     """
     campaign = args.campaign_path.resolve()
 
@@ -203,9 +204,11 @@ def main():
     pc.add_argument("--campaign-path", type=Path, default=Path("."),
                     help="the campaign dataset (default: current directory)")
     pc.add_argument("--pipelines", required=True,
-                    help="comma-separated pipeline config files under mechababs/pipelines/ (ordered)")
+                    help="comma-separated pipeline configs (ordered): a path to copy into the "
+                         "campaign's pipelines/, or the name of one already there")
     pc.add_argument("--cluster", required=True,
-                    help="cluster config file under mechababs/clusters/")
+                    help="cluster config: a path to copy into the campaign's clusters/, or the "
+                         "name of one already there")
     pc.add_argument("--limit", type=int, default=None,
                     help="cap each dataset's inclusion to the first N eligible subjects "
                          "(default: all)")
