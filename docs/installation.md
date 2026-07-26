@@ -24,7 +24,9 @@ Jobs need a modern `git` (≥ 2.25, for `sparse-checkout`) and git-annex on PATH
 
 The campaign venv and RIA stores are large — put them on fast scratch, never home/`/tmp`.
 
-- Set `MECHABABS_E2E_WORKDIR` to scratch.
+- Put the campaign on scratch. Validating a cluster puts the scenario's throwaway
+  campaign beside it, so that lands on scratch too; `test-cluster --workdir` overrides
+  where. (`MECHABABS_E2E_WORKDIR` is only for driving the scenario from a checkout.)
 - No persistent scratch (Unity)? `ws_allocate mechababs 30`, then `WS=$(ws_find mechababs)` for the live path.
 - Unity `$HOME` is quota'd and `/tmp` is `noexec` — redirect caches onto the workspace:
 
@@ -49,25 +51,22 @@ REPRONIM=$WS/repronim-containers-shim ./tmp-repronim-container-shim.sh bids-simb
 `bids-simbids` is built from Docker Hub (needs the apptainer/proot redirects above); real apps (`bids-mriqc`, `bids-fmriprep`) are fetched.
 Idempotent — to rebuild cleanly, point `REPRONIM` at a fresh path.
 
-## Driver venv (to run the e2e)
+## The campaign venv is the only venv you need
 
-`run_on_cluster.sh` runs pytest to drive the campaign. It needs its own env, and it **must be a venv**:
-
-```bash
-uv venv && source .venv/bin/activate
-uv pip install -e '.[test]'
-```
-
-Run under `tmux`/`screen` — a login-node disconnect kills the run.
-
-**Two venvs, don't cross them.** This driver venv only runs pytest — it has no `babs` or `con-duct`.
-Each campaign gets its **own** venv that `bootstrap.sh` builds (pinned babs + mechababs + con-duct), and that is what actually operates the campaign — `mechababs` refuses to run outside its campaign venv (a guard against a stray ambient install).
-So to poke a campaign after the run (`mechababs status`, another `iterate`), activate *its* venv, not this one:
+`bootstrap.sh` builds each campaign its own venv (pinned babs + mechababs + con-duct +
+pytest), and that venv is what operates the campaign — `mechababs` refuses to run outside
+it, a guard against a stray ambient install. Validation runs there too: `test-cluster`
+invokes the campaign venv's own pytest over the scenario that ships inside the installed
+package, so there is no separate driver env to build.
 
 ```bash
 source <campaign>/.venv/bin/activate
+mechababs status          # or another iterate, or test-cluster
 ```
+
+Run under `tmux`/`screen` — a login-node disconnect kills a long run.
 
 ## Then
 
-Follow [cluster-config-and-testing-tutorial.md](cluster-config-and-testing-tutorial.md) to write `examples/clusters/<site>.yaml` and validate it.
+Follow [cluster-config-and-testing-tutorial.md](cluster-config-and-testing-tutorial.md) to
+write your cluster profile and validate it with `mechababs test-cluster`.
