@@ -11,8 +11,12 @@ scenario drives the campaign CLI, so the fixtures provide everything it needs:
 - `rawdata` — fake BIDS input, generated once into a gitignored repo cache. Prod
   uses real OpenNeuro data, so fake input is a test-only concern that lives in the
   test, not in any prod tool.
-- `campaign` — the bootstrapped campaign env (provisioning), exercising prod's
-  real bootstrap.sh construction path.
+- `campaign` — the throwaway campaign the scenario runs in, provisioned from the pins
+  of the campaign named by `--campaign` (required), exercising prod's real bootstrap.sh
+  construction path. Those pins are the ONE provisioning input: `mechababs test-cluster`
+  passes them, and a dev run arrives the same way, by bootstrapping a dev campaign from
+  the checkout first (run_in_podman.sh / run_on_cluster.sh do exactly that). So the
+  provisioning code a user hits is the code every dev run hits.
 """
 
 import csv
@@ -26,6 +30,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from mechababs import validate
 
 log = logging.getLogger("mechababs.e2e")
 
@@ -39,38 +44,63 @@ SIMBIDS_CONFIG = "ds005237_configs.yaml"
 # any real OpenNeuro accession (unlike the phantom's own ds005237).
 DATASET_ID = "ds999999"
 
-# The source checkout the suite was installed from (mechababs/testing/e2e/ -> repo
-# root) — the mechababs under test, which bootstrap.sh clones + pins into the
-# campaign. Only a source/editable install has a repo above the package (an
-# installed distribution does not), so this is resolved by a function rather than at
-# import, and the `campaign` fixture skips when it is absent.
-_DEPTH_TO_REPO = 3
-
-
-def repo_under_test():
-    """The checkout above the package, or None when installed without one.
-
-    Identified by `bootstrap.sh` at the root: it is what the `campaign` fixture
-    actually needs, so its presence is the honest test of "can I bootstrap from
-    here", rather than trusting the directory depth alone.
-    """
-    repo = Path(__file__).resolve().parents[_DEPTH_TO_REPO]
-    return repo if (repo / "bootstrap.sh").is_file() else None
-
 
 def pytest_addoption(parser):
     parser.addoption(
         "--cluster-config",
-        default="test-docker.yaml",
-        help="cluster config name under examples/clusters/ — configure copies it into the "
-        "campaign (default: test-docker.yaml). The cross-cluster axis: point at a real site "
-        "config to validate it the same way.",
+        default=None,
+        help="REQUIRED. Path to the cluster config to validate. This is the "
+        "cross-cluster axis — point it at a real site config to validate that config the "
+        "same way. Resolving a bare name (against the campaign's clusters/) belongs to "
+        "`mechababs test-cluster --cluster`, which every invocation comes through, so "
+        "what arrives here is already a resolved path.",
+    )
+    parser.addoption(
+        "--campaign",
+        default=None,
+        help="REQUIRED. An existing campaign to take the pinned tools from. The scenario "
+        "still builds its own campaign to run in (it configures and retires derivatives, "
+        "so it must not touch yours) but provisions it from these pins. Set by `mechababs "
+        "test-cluster`; a dev run bootstraps a dev campaign from the checkout and points "
+        "test-cluster at that (run_in_podman.sh, run_on_cluster.sh).",
     )
 
 
 @pytest.fixture(scope="session")
 def cluster_config(request):
-    return request.config.getoption("--cluster-config")
+    """The cluster config under test, as an absolute path.
+
+    Checked here, not resolved: `validate.resolve_cluster` does the resolving (a path as
+    given, or a bare name in the campaign's `clusters/`) and every invocation goes
+    through it, so a second resolver here would be a second way to answer one question —
+    and the one that used to search the checkout's `examples/` built a path that
+    disappears once code is referenced and locked instead of cloned in.
+    """
+    value = request.config.getoption("--cluster-config")
+    if not value:
+        raise pytest.UsageError(
+            "--cluster-config is required; run the scenario as "
+            "`mechababs test-cluster --cluster <config>`, which passes it"
+        )
+    path = Path(value).expanduser()
+    if not path.is_file():
+        raise pytest.UsageError(f"cluster config is not a file: {path}")
+    return path.resolve()
+
+
+@pytest.fixture(scope="session")
+def pipelines():
+    """The suite's own test pipelines, shipped beside it.
+
+    The SimBIDS phantom pipelines are scenario fixtures, not starters a user would
+    copy, so they travel with the suite instead of living in `examples/`. That also
+    keeps the scenario runnable from an install, where the repo's `examples/` is
+    absent.
+    """
+    path = Path(__file__).resolve().parent / "pipelines"
+    if not path.is_dir():
+        raise RuntimeError(f"suite pipelines missing at {path} (incomplete install?)")
+    return path
 
 
 @pytest.fixture(scope="session")
@@ -232,54 +262,108 @@ def _write_study_description(path):
     }, indent=2) + "\n")
 
 
-@pytest.fixture(scope="function")
-def campaign(workdir):
-    """A freshly bootstrapped campaign env (provisioning), one per test.
+def _ref_or_fail(clone):
+    """`validate.clone_ref`, reported as a test failure rather than an exception.
 
-    Calls the real bootstrap.sh — prod's exact construction path — vendoring this
-    repo (at its current branch) as the mechababs under test; it clones, so only
-    committed work is under test and a dirty tree is refused. Function-scoped so each
-    test gets its own campaign (tests `configure` it, and `configure` refuses an
-    existing ledger — a shared campaign would collide). The unique per-call name keeps
-    bootstrap's refuse-existing-dir guard happy and avoids clobbering a prior run;
-    clean up stale ones with `rm -rf $MECHABABS_E2E_WORKDIR/test-campaign-*`.
+    A pin with no re-clonable ref is a real precondition breach, so fail loudly: a
+    skip here would let `test-cluster` exit 0 having validated nothing.
+    """
+    try:
+        return validate.clone_ref(clone)
+    except validate.RefError as e:
+        pytest.fail(str(e))
+
+
+def _pins_from_campaign(campaign):
+    """The mechababs + babs pins a campaign is running, as bootstrap `URL@REF` specs.
+
+    The scenario's campaign is provisioned from the SAME code the campaign under test is
+    pinned to, which is what makes a green run mean "these tools work on this cluster".
+    Today the pins are the vendored clones (`code/<tool>`), so their checked-out branch
+    is the ref; when the pins become a lockfile this is the one place that has to learn
+    to read it.
+
+    A missing mechababs pin fails rather than skips: it is the provisioning input, so
+    without it there is nothing to validate, and a skip would let `test-cluster` exit 0
+    having validated nothing.
+    """
+    pins = {}
+    for tool in ("mechababs", "babs"):
+        clone = campaign / "code" / tool
+        if not (clone / ".git").exists():
+            continue
+        pins[tool] = f"{clone}@{_ref_or_fail(clone)}"
+    if "mechababs" not in pins:
+        pytest.fail(
+            f"{campaign} carries no mechababs pin at code/mechababs, so there is "
+            f"nothing to provision the scenario from"
+        )
+    return pins
+
+
+@pytest.fixture(scope="session")
+def campaign_under_test(request):
+    """The campaign whose pins provision the scenario — its only provisioning input.
+
+    Required, and a UsageError rather than a skip: a skip would let `test-cluster` exit 0
+    having validated nothing, the worst outcome for a validation command.
+    """
+    value = request.config.getoption("--campaign")
+    if not value:
+        raise pytest.UsageError(
+            "--campaign is required: the scenario provisions its own campaign from an "
+            "existing campaign's pins, so there has to be one to take them from.\n"
+            "Run it as `mechababs test-cluster --cluster <config>` from a campaign venv. "
+            "To test a checkout, bootstrap a dev campaign from it first and point "
+            "test-cluster at that — which is all run_in_podman.sh and run_on_cluster.sh do."
+        )
+    return Path(value).expanduser().resolve()
+
+
+@pytest.fixture(scope="function")
+def campaign(workdir, campaign_under_test):
+    """A freshly bootstrapped campaign for the scenario to work in, one per test.
+
+    Calls the real bootstrap.sh — prod's exact construction path — so each test gets its
+    OWN campaign. That is not incidental: the scenario configures the campaign, adds a
+    dataset, and retires a derivative, so it must never run inside a campaign holding
+    real work.
+
+    There is ONE provisioning input: the pins of the campaign under test, so the scenario
+    exercises exactly the mechababs + babs that campaign is running. A dev run reaches it
+    the way a user does — bootstrap a dev campaign from the checkout, then point
+    `test-cluster` at it — rather than through a second, dev-only route. That is
+    docs/overview.md's one-tool-two-modes rule: dev exercises prod's exact paths, so dev
+    validates prod. Not hypothetical — while the two routes existed they drifted, and a
+    detached-HEAD bug got fixed on one and left broken on the other.
+
+    The unique per-call name keeps bootstrap's refuse-existing-dir guard happy and
+    avoids clobbering a prior run; clean up stale ones with
+    `rm -rf $MECHABABS_E2E_WORKDIR/test-campaign-*`.
 
     --system-site-packages is opt-in via MECHABABS_E2E_SYSTEM_SITE_PACKAGES (set by
     run_in_podman.sh for the CentOS7 container, whose 2015 toolchain can't build the
     newest wheels); a real cluster leaves it unset and builds prod's isolated venv.
-
-    Requires the source checkout it bootstraps from, so it skips when the suite runs
-    from an install without one (`mechababs test-cluster` provides the campaign
-    instead — see the `--campaign` option).
     """
-    repo = repo_under_test()
-    if repo is None:
-        pytest.skip(
-            "no source checkout above the installed suite, so there is nothing for "
-            "bootstrap.sh to clone; pass --campaign to test an existing campaign"
-        )
-    dirty = subprocess.run(
-        ["git", "-C", str(repo), "status", "--porcelain"],
-        check=True, text=True, capture_output=True,
-    ).stdout.strip()
-    if dirty:
+    pins = _pins_from_campaign(campaign_under_test)
+    # bootstrap.sh is not part of the installed distribution (it is what CREATES the
+    # environment the distribution runs in), so take it from the campaign's own pin —
+    # the same code the campaign is running.
+    bootstrap = campaign_under_test / "code" / "mechababs" / "bootstrap.sh"
+    if not bootstrap.is_file():
         pytest.fail(
-            "repo is dirty; bootstrap clones the committed branch, so this run would "
-            "test your last commit and silently ignore the working tree:\n" + dirty
+            f"no bootstrap.sh at {bootstrap}, so there is nothing to build the "
+            f"scenario's campaign with"
         )
-    ref = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
-        check=True, text=True, capture_output=True,
-    ).stdout.strip()
     path = workdir / f"test-campaign-{uuid.uuid4().hex[:8]}"
-    cmd = [f"{repo}/bootstrap.sh", str(path), "--mechababs", f"{repo}@{ref}"]
-    if os.environ.get("BABS_SPEC"):
-        cmd += ["--babs", os.environ["BABS_SPEC"]]
+    cmd = [str(bootstrap), str(path), "--mechababs", pins["mechababs"]]
+    if "babs" in pins:
+        cmd += ["--babs", pins["babs"]]
     if os.environ.get("MECHABABS_E2E_SYSTEM_SITE_PACKAGES"):
         cmd.append("--system-site-packages")
-    log.info("bootstrapping campaign at %s", path)
+    log.info("bootstrapping campaign at %s (mechababs %s)", path, pins["mechababs"])
     subprocess.run(cmd, check=True)
-    # No config staging here: the tests point configure at the vendored examples/
-    # paths, exercising its copy-in (the prod path — a user points --cluster/--pipelines
-    # at a config and configure copies it into the campaign's clusters/ + pipelines/).
+    # No config staging here: the tests hand configure the resolved config paths,
+    # exercising its copy-in (the prod path — a user points --cluster/--pipelines at a
+    # config and configure copies it into the campaign's clusters/ + pipelines/).
     return path

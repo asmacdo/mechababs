@@ -60,3 +60,47 @@ def test_the_dev_wrapper_scripts_are_excluded_from_the_distribution():
     """
     excluded = _setuptools_config()["exclude-package-data"]["mechababs.testing"]
     assert f"{testing.E2E_DIRNAME}/*.sh" in excluded
+
+
+def _scenario_conftest():
+    """The packaged conftest, loaded by path.
+
+    `e2e/` ships as package DATA, not as an importable subpackage, so there is no
+    `mechababs.testing.e2e.conftest` to import — and loading it by path is also how
+    pytest itself picks it up.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_scenario_conftest", testing.suite_path() / "conftest.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _fixture_body(fixture):
+    """The plain function inside a `@pytest.fixture` (wrapped since pytest 8.4)."""
+    return getattr(fixture, "__wrapped__", fixture)
+
+
+class _NoOptions:
+    """A request whose options are all unset — a bare `pytest <suite>` invocation."""
+
+    class config:
+        @staticmethod
+        def getoption(_name):
+            return None
+
+
+@pytest.mark.parametrize("fixture_name", ["campaign_under_test", "cluster_config"])
+def test_the_scenario_refuses_to_run_without_its_provisioning_input(fixture_name):
+    """Both required options must raise, not skip.
+
+    pytest exits 0 when every test skips, so a skip here would let `test-cluster`
+    report success having validated nothing — the worst outcome for a validation
+    command. That guarantee is the reason these are `UsageError`s, so it gets a test.
+    """
+    conftest = _scenario_conftest()
+    body = _fixture_body(getattr(conftest, fixture_name))
+    with pytest.raises(pytest.UsageError, match="required"):
+        body(_NoOptions())

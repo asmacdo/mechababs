@@ -1,6 +1,6 @@
 # TEST cluster profile for the pennlinc/slurm-docker-ci container (issue #31).
 # Mirrors the defaults babs's own tests use so jobs run inside the CI container
-# with no real cluster. NOT a real cluster — paired with examples/pipelines/SimBIDS-*.yaml.
+# with no real cluster. NOT a real cluster — paired with the suite's SimBIDS pipelines (mechababs/testing/e2e/pipelines/).
 # No cluster_resources here: it lives on the pipeline axis (simbids-*.yaml), so
 # this composes the same way a real cluster config does (dev-exercises-prod).
 script_preamble: |
