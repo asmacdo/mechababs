@@ -4,7 +4,10 @@ design/*.png
 *.egg-info/
 mechababs/_version.py
 __pycache__/
+.pytest_cache/
 processing/
 local-notes/
 repronim-containers/
-tests/e2e/_cache/
+# setuptools' build tree, left behind by `uv build` when checking what ships.
+build/
+build.stale_*/

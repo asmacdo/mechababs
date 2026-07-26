@@ -20,6 +20,10 @@ test = ["pytest"]
 mechababs = "mechababs.cli:main"
 
 [tool.pytest.ini_options]
+# A bare `pytest` means the unit suite. Without this it also walks mechababs/,
+# where the packaged e2e conftest registers --cluster-config a second time and
+# collection fails outright.
+testpaths = ["tests"]
 # Live phase markers during the long steps (venv build, babs init, later job
 # deploys) so a run isn't a silent wait. Add `-s` on top to stream the raw
 # subprocess output (the pip build, babs submit, ...) when you need to dig in.
@@ -29,8 +33,24 @@ log_cli_format = "%(asctime)s  %(message)s"
 log_cli_date_format = "%H:%M:%S"
 
 # Only the mechababs package is installed; the root bootstrap.sh is run directly.
+# `mechababs.testing` carries the e2e scenario, so `test-cluster` can run it from a
+# campaign wherever mechababs is installed — see mechababs/testing/__init__.py.
 [tool.setuptools]
-packages = ["mechababs"]
+packages = ["mechababs", "mechababs.testing"]
+
+# The scenario ships as package DATA, not as an importable subpackage: pytest
+# collects it from a path, so keeping it out of the import graph avoids putting an
+# __init__.py inside a directory of test modules.
+[tool.setuptools.package-data]
+"mechababs.testing" = ["e2e/*.py", "e2e/pipelines/*.yaml"]
+
+# setuptools_scm's file finder plus the default include-package-data means EVERY
+# git-tracked file under the package would ship, so the globs above are additive and
+# cannot keep anything out. Exclude the dev wrapper scripts explicitly: they drive the
+# suite from a checkout, which is the only place they are useful, and a 100+ line
+# rootless-podman runner does not belong in someone's site-packages.
+[tool.setuptools.exclude-package-data]
+"mechababs.testing" = ["e2e/*.sh"]
 
 [tool.setuptools_scm]
 version_file = "mechababs/_version.py"

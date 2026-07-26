@@ -39,9 +39,23 @@ SIMBIDS_CONFIG = "ds005237_configs.yaml"
 # any real OpenNeuro accession (unlike the phantom's own ds005237).
 DATASET_ID = "ds999999"
 
-# This repo (tests/e2e/conftest.py -> repo root) — the mechababs under test, which
-# bootstrap.sh clones + pins into the campaign. No env var: pytest runs from here.
-REPO = Path(__file__).resolve().parents[2]
+# The source checkout the suite was installed from (mechababs/testing/e2e/ -> repo
+# root) — the mechababs under test, which bootstrap.sh clones + pins into the
+# campaign. Only a source/editable install has a repo above the package (an
+# installed distribution does not), so this is resolved by a function rather than at
+# import, and the `campaign` fixture skips when it is absent.
+_DEPTH_TO_REPO = 3
+
+
+def repo_under_test():
+    """The checkout above the package, or None when installed without one.
+
+    Identified by `bootstrap.sh` at the root: it is what the `campaign` fixture
+    actually needs, so its presence is the honest test of "can I bootstrap from
+    here", rather than trusting the directory depth alone.
+    """
+    repo = Path(__file__).resolve().parents[_DEPTH_TO_REPO]
+    return repo if (repo / "bootstrap.sh").is_file() else None
 
 
 def pytest_addoption(parser):
@@ -90,8 +104,22 @@ def simbids_sif(workdir):
 
 
 @pytest.fixture(scope="session")
-def rawdata(simbids_sif):
-    """Fake BIDS input, generated once into a gitignored repo cache (reused if present).
+def cache(workdir):
+    """Where generated fixtures are cached between runs.
+
+    Under the workdir, not beside this file: the suite ships inside the package, so
+    a package-relative cache would write into the install tree (read-only for a
+    normal install, and shared across campaigns for an editable one). The workdir is
+    already the suite's scratch space, so the cache belongs there.
+    """
+    path = workdir / "e2e-cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.fixture(scope="session")
+def rawdata(simbids_sif, cache):
+    """Fake BIDS input, generated once into the workdir cache (reused if present).
 
     Prod add-dataset's a real OpenNeuro URL, so fake input has no prod home — it's a
     test-only concern owned by the test. Generated via simbids-raw-mri inside the
@@ -99,7 +127,7 @@ def rawdata(simbids_sif):
     accession (`ds999999`, like real OpenNeuro raw dirs) so the dataset id derives
     cleanly from its path.
     """
-    dest = Path(__file__).resolve().parent / "_cache" / DATASET_ID
+    dest = cache / DATASET_ID
     if not (dest / ".datalad").exists():
         _generate_fake_bids(dest, simbids_sif)
     return dest
@@ -128,20 +156,20 @@ def _generate_fake_bids(dest, sif):
 
 
 @pytest.fixture(scope="session")
-def study(rawdata):
+def study(rawdata, cache):
     """A fake OpenNeuroStudies-shaped study wrapping the phantom `rawdata`.
 
     mechababs clones a study and `babs init`s the derivative into its
     `derivatives/`. Prod clones `OpenNeuroStudies/study-ds<X>`; dev has no such
     study, so we build a faithful one from the phantom raw data — the same shape a
-    real clone would have, with no network. Built once into the gitignored repo
-    cache, reused if present.
+    real clone would have, with no network. Built once into the workdir cache,
+    reused if present.
 
     The raw phantom is registered as a real datalad SUBDATASET (`sourcedata/<id>`),
     not a plain dir, so the fixture exercises the nested-dataset structure the
     campaign runs against (campaign -> study -> derivative).
     """
-    dest = Path(__file__).resolve().parent / "_cache" / f"study-{DATASET_ID}"
+    dest = cache / f"study-{DATASET_ID}"
     if not (dest / ".datalad").exists():
         _build_study(dest, rawdata)
     return dest
@@ -219,9 +247,19 @@ def campaign(workdir):
     --system-site-packages is opt-in via MECHABABS_E2E_SYSTEM_SITE_PACKAGES (set by
     run_in_podman.sh for the CentOS7 container, whose 2015 toolchain can't build the
     newest wheels); a real cluster leaves it unset and builds prod's isolated venv.
+
+    Requires the source checkout it bootstraps from, so it skips when the suite runs
+    from an install without one (`mechababs test-cluster` provides the campaign
+    instead — see the `--campaign` option).
     """
+    repo = repo_under_test()
+    if repo is None:
+        pytest.skip(
+            "no source checkout above the installed suite, so there is nothing for "
+            "bootstrap.sh to clone; pass --campaign to test an existing campaign"
+        )
     dirty = subprocess.run(
-        ["git", "-C", str(REPO), "status", "--porcelain"],
+        ["git", "-C", str(repo), "status", "--porcelain"],
         check=True, text=True, capture_output=True,
     ).stdout.strip()
     if dirty:
@@ -230,11 +268,11 @@ def campaign(workdir):
             "test your last commit and silently ignore the working tree:\n" + dirty
         )
     ref = subprocess.run(
-        ["git", "-C", str(REPO), "rev-parse", "--abbrev-ref", "HEAD"],
+        ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
         check=True, text=True, capture_output=True,
     ).stdout.strip()
     path = workdir / f"test-campaign-{uuid.uuid4().hex[:8]}"
-    cmd = [f"{REPO}/bootstrap.sh", str(path), "--mechababs", f"{REPO}@{ref}"]
+    cmd = [f"{repo}/bootstrap.sh", str(path), "--mechababs", f"{repo}@{ref}"]
     if os.environ.get("BABS_SPEC"):
         cmd += ["--babs", os.environ["BABS_SPEC"]]
     if os.environ.get("MECHABABS_E2E_SYSTEM_SITE_PACKAGES"):

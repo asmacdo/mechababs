@@ -26,11 +26,13 @@
 #     Default is babs main.
 #
 # Usage (extra args pass straight through to pytest):
-#   ./tests/e2e/run_on_cluster.sh --cluster-config your-site.yaml
-#   ./tests/e2e/run_on_cluster.sh --cluster-config your-site.yaml -k test_full_run
+#   ./mechababs/testing/e2e/run_on_cluster.sh --cluster-config your-site.yaml
+#   ./mechababs/testing/e2e/run_on_cluster.sh --cluster-config your-site.yaml -k test_full_run
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+# The suite is this script's own directory: it ships inside the package, so there is
+# no walk up to a repo root and this works from an installed copy too.
+SUITE="$(cd "$(dirname "$0")" && pwd)"
 
 # 1. Scratch workdir must be set explicitly — the campaign venv + RIA stores are
 #    large and belong on a fast cluster filesystem, never a login-node home or /tmp.
@@ -60,4 +62,4 @@ fi
 
 # BABS_SPEC is read straight from the environment by the campaign fixture; the
 # cluster config is passed through in "$@" as --cluster-config <name>.
-exec pytest -s "$REPO/tests/e2e/" "$@"
+exec pytest -s "$SUITE" "$@"

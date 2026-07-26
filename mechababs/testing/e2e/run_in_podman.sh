@@ -47,17 +47,18 @@
 #       tmp-repronim-container-shim.sh bids-simbids
 # It sits as a campaign sibling under $MECHABABS_E2E_WORKDIR (default /tmp/mechababs-e2e),
 # visible through the same-path workdir mount, so configure resolves the pipeline's
-# `../repronim-containers-shim`. The fake BIDS input is NOT host-prep — the
-# rawdata fixture generates it into the gitignored repo cache tests/e2e/_cache, which
-# we bind-mount read-write (over the :ro repo) so it persists across runs.
+# `../repronim-containers-shim`. The fake BIDS input is NOT host-prep — the rawdata
+# fixture generates it into the workdir cache, which persists across runs through the
+# same workdir mount (no separate cache mount needed).
 #
 # Usage (extra args pass straight through to pytest):
-#   tests/e2e/run_in_podman.sh
-#   tests/e2e/run_in_podman.sh --cluster-config test-docker.yaml
-#   MECHABABS_E2E_KEEP=1 tests/e2e/run_in_podman.sh   # keep the container to inspect
+#   mechababs/testing/e2e/run_in_podman.sh
+#   mechababs/testing/e2e/run_in_podman.sh --cluster-config test-docker.yaml
+#   MECHABABS_E2E_KEEP=1 mechababs/testing/e2e/run_in_podman.sh   # keep the container
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"          # the mechababs worktree root
+# mechababs/testing/e2e/ -> the worktree root (the suite ships inside the package).
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"       # the mechababs worktree root
 echo "REPO=$REPO" >&2
 
 # A worktree's .git is a FILE pointing at the main repo's common git dir; a clone
@@ -83,12 +84,6 @@ if [ ! -d "$MECHABABS_E2E_WORKDIR/repronim-containers-shim/.datalad" ]; then
     echo "note: no shim at $MECHABABS_E2E_WORKDIR/repronim-containers-shim — build it first:" >&2
     echo "    REPRONIM=$MECHABABS_E2E_WORKDIR/repronim-containers-shim tmp-repronim-container-shim.sh bids-simbids" >&2
 fi
-
-# The gitignored repo cache for generated fake BIDS, bind-mounted read-write OVER
-# the :ro repo mount so the rawdata fixture's generated data persists on the host
-# across --rm runs. mkdir so the bind source exists (podman won't create it).
-CACHE_HOST="$REPO/tests/e2e/_cache"
-mkdir -p "$CACHE_HOST"
 
 # Forward BABS_SPEC (the babs ref under test) into the container if set, so the
 # campaign fixture's bootstrap pins that babs. Needed until `babs status --json`
@@ -120,7 +115,6 @@ podman run "${RM_FLAG[@]}" "${NAME_FLAG[@]}" -i \
     --security-opt systempaths=unconfined \
     --device /dev/fuse \
     -v "$REPO":/mechababs:ro \
-    -v "$CACHE_HOST":/mechababs/tests/e2e/_cache:rw \
     "${EXTRA_MOUNT[@]}" \
     "${WORKDIR_MOUNT[@]}" \
     "${BABS_SPEC_ENV[@]}" \
@@ -135,5 +129,6 @@ podman run "${RM_FLAG[@]}" "${NAME_FLAG[@]}" -i \
         command -v uv >/dev/null 2>&1 || pip install --quiet uv
         # pytest reads the repo from a :ro mount, so redirect the bytecode cache off
         # it and skip the on-disk cache (cannot write to /mechababs).
-        PYTHONPYCACHEPREFIX=/tmp/pyc pytest -p no:cacheprovider -x -q /mechababs/tests/e2e/ "$@"
+        PYTHONPYCACHEPREFIX=/tmp/pyc pytest -p no:cacheprovider -x -q \
+            /mechababs/mechababs/testing/e2e/ "$@"
     ' _ "$@"
