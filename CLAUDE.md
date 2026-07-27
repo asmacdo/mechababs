@@ -170,6 +170,10 @@ deps as a checklist (#38 = M2, #39 = M4).
 - `epic` — a parent tracking issue (checklist); used for the per-milestone
   upstream-deps epics above.
 - `blocked` — waiting on something (say what, in-issue).
+- `generalize` — removes an assumption that only holds for us (OpenNeuro data,
+  a single cluster, the one hardcoded pipeline) so an outside user can compose
+  their own dataset × pipeline × cluster. A cross-cutting *why* facet, not a
+  work-type — pair it with `automation`/`decision`/etc.
 - `fuzzy/slop` — an exploratory / not-fully-baked idea we still want in the
   tracker so it isn't lost, but that hasn't earned a milestone. Files to
   mechababs, no milestone. Promote (drop the label, add a milestone) when it
