@@ -42,6 +42,13 @@ bids_app_args:
   # is real: path_in_babs is sourcedata/fMRIPrep-25.2.5+anat, and the zip's
   # top folder is also fMRIPrep-25.2.5+anat/.
   --fs-subjects-dir: '"${PWD}"/sourcedata/fMRIPrep-25.2.5+anat/fMRIPrep-25.2.5+anat/sourcedata/freesurfer'
+  # Reuse the anat stage's precomputed derivatives (fmriprep --derivatives
+  # PACKAGE=PATH) so the anatomical set is taken from anat's output rather than
+  # recomputed. Same input mount as --fs-subjects-dir above, minus the
+  # /sourcedata/freesurfer tail: this points at the anat derivative root
+  # (sub-*/anat + dataset_description.json). --fs-subjects-dir stays — FreeSurfer
+  # reuse is a separate mechanism.
+  --derivatives: 'anat="${PWD}"/sourcedata/fMRIPrep-25.2.5+anat/fMRIPrep-25.2.5+anat'
   --nprocs: "4"
   --omp-nthreads: "2"
   --mem-mb: "32000"
