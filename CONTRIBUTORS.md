@@ -96,6 +96,9 @@ rm -rf $MECHABABS_E2E_WORKDIR/dev-campaign-* $MECHABABS_E2E_WORKDIR/test-campaig
 `MECHABABS_E2E_KEEP=1` additionally keeps the *container*, for post-mortem of the
 container itself.
 
+**Ctrl-C aborts the run.** It stops the container and exits 130. The campaigns built so
+far stay on the host workdir, half-finished; clean them up the same way.
+
 **babs under test.** The suite runs on babs `main` by default. To test against an
 unmerged babs fix, pin a babs ref — the dev campaign pins it, and the scenario's campaign
 inherits it from those pins:
