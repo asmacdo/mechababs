@@ -21,6 +21,7 @@ from mechababs import select
 from mechababs import state
 from mechababs import status as status_mod
 from mechababs import utils
+from mechababs import validate as validate_mod
 
 
 def _ensure_campaign(args):
@@ -29,6 +30,38 @@ def _ensure_campaign(args):
     if not state.state_path(campaign).is_file():
         sys.exit(f"not a campaign (no {state.STATE_FILENAME}): {campaign}")
     return campaign
+
+
+def _ensure_campaign_skeleton(args):
+    """Resolve --campaign-path and confirm it is the campaign ENVIRONMENT bootstrap built.
+
+    A datalad dataset with both code pins registered — deliberately NOT the ledger, which
+    is what `_ensure_campaign` checks. Both commands that use this run *before* a ledger
+    exists: `configure` is what writes it, and `test-cluster` validates a cluster before
+    you commit real data to it, which is the whole point of validating.
+    """
+    campaign = args.campaign_path.resolve()
+    if not (campaign / ".datalad").is_dir():
+        sys.exit(f"not a datalad dataset: {campaign}")
+    for sub in ("code/mechababs", "code/babs"):
+        if not (campaign / sub).is_dir():
+            sys.exit(f"not a campaign skeleton (missing {sub}): {campaign}")
+    return campaign
+
+
+def _require_campaign_venv(campaign):
+    """Refuse unless THIS process is the campaign venv's python.
+
+    The guard that kills the wrong-babs bug: the campaign's `.venv` is where the
+    pinned babs + mechababs live, so an ambient install running instead would
+    scaffold (or validate) with tools the campaign does not record.
+    """
+    venv = (campaign / ".venv").resolve()
+    prefix = Path(sys.prefix).resolve()
+    if prefix != venv:
+        sys.exit(f"must run from the campaign venv ({venv}), but sys.prefix is {prefix}\n"
+                 f"invoke as: {venv}/bin/mechababs …")
+    return venv
 
 
 def cmd_configure(args):
@@ -42,26 +75,15 @@ def cmd_configure(args):
     the named configs into the campaign, vendors the pipelines' containers, and
     writes the config + the ledger.
     """
-    campaign = args.campaign_path.resolve()
-
     # Look like a campaign skeleton bootstrap.sh built?
-    if not (campaign / ".datalad").is_dir():
-        sys.exit(f"not a datalad dataset: {campaign}")
-    for sub in ("code/mechababs", "code/babs"):
-        if not (campaign / sub).is_dir():
-            sys.exit(f"not a campaign skeleton (missing {sub}): {campaign}")
+    campaign = _ensure_campaign_skeleton(args)
 
     # Provenance guard: the code pins must match what the campaign records.
     guard.require_clean_pins(campaign)
 
-    # The PATH guard, the whole point: are we the campaign venv's python? Its
-    # sys.prefix is <campaign>/.venv. If not, an ambient mechababs is running and
-    # would scaffold with the wrong (unpinned) babs — refuse.
-    venv = (campaign / ".venv").resolve()
-    prefix = Path(sys.prefix).resolve()
-    if prefix != venv:
-        sys.exit(f"must run from the campaign venv ({venv}), but sys.prefix is {prefix}\n"
-                 f"invoke as: {venv}/bin/mechababs init …")
+    # The PATH guard, the whole point: are we the campaign venv's python? If not, an
+    # ambient mechababs is running and would scaffold with the wrong (unpinned) babs.
+    venv = _require_campaign_venv(campaign)
 
     # State guard: never clobber add-dataset rows. Reset = delete the ledger first.
     if state.state_path(campaign).is_file():
@@ -178,6 +200,28 @@ def cmd_retire_derivative(args):
     return retire_mod.run_retire(campaign, args.paths, dry_run=args.dry_run)
 
 
+def cmd_test_cluster(args):
+    """Validate a cluster config end to end, using this campaign's pinned tools.
+
+    Runs from the campaign venv for the same reason `configure` does: the pinned babs
+    is what makes the result mean anything. The scenario builds its own throwaway
+    campaign to work in — it configures and retires derivatives, so it must not touch
+    this one.
+
+    Takes the campaign SKELETON, not a configured campaign: validating a cluster before
+    committing real data to it is the point, so this has to work on a campaign that has
+    only been bootstrapped (no ledger yet).
+    """
+    campaign = _ensure_campaign_skeleton(args)
+    guard.require_clean_pins(campaign)
+    _require_campaign_venv(campaign)
+    # argparse.REMAINDER keeps the `--` separator in the list; pytest does not need it.
+    extra = args.pytest_args[1:] if args.pytest_args[:1] == ["--"] else args.pytest_args
+    return validate_mod.run_test_cluster(
+        campaign, args.cluster, extra_args=extra, workdir=args.workdir,
+    )
+
+
 def cmd_status(args):
     """Read-only: one row per job across every (dataset, pipeline) cell."""
     campaign = _ensure_campaign(args)
@@ -256,6 +300,35 @@ def main():
     pr.add_argument("--dry-run", action="store_true",
                     help="print the planned retirements and change nothing")
     pr.set_defaults(func=cmd_retire_derivative)
+
+    pt = sub.add_parser(
+        "test-cluster",
+        help="validate a cluster config end to end, using this campaign's pinned tools",
+        description=(
+            "Run the e2e scenario against a cluster config: configure -> add-dataset -> "
+            "iterate (scaffold -> submit -> merge), asserting a real derivative landed. "
+            "A stronger check than `babs check-setup`, because it proves the config "
+            "actually produces output on this scheduler. Uses this campaign's pinned "
+            "babs + mechababs and its venv, so no repo checkout or env-var setup is "
+            "needed. NOTE: the scenario builds its OWN throwaway campaign to work in "
+            "(it configures and retires derivatives); this campaign supplies the "
+            "environment, not the workspace."
+        ),
+    )
+    pt.add_argument("--cluster", required=True,
+                    help="cluster config to validate: a path, or the name of one in the "
+                         "campaign's clusters/")
+    pt.add_argument("--campaign-path", type=Path, default=Path("."),
+                    help="the campaign dataset (default: current directory)")
+    pt.add_argument("--workdir", type=Path, default=None,
+                    help="where to build the scenario's campaign (default: beside this "
+                         "campaign, so the container shim resolves as its sibling)")
+    # Flag-looking pytest args have to be fenced off from this parser, so they go
+    # after a literal `--` (the usual convention: `uv run --`, `npm run x --`).
+    pt.add_argument("pytest_args", nargs=argparse.REMAINDER, metavar="-- PYTEST_ARGS",
+                    help="args after a literal `--` pass through to pytest "
+                         "(e.g. `-- -k test_full_run`)")
+    pt.set_defaults(func=cmd_test_cluster)
 
     ps = sub.add_parser("status", help="campaign-wide job table (read-only)")
     ps.add_argument("--campaign-path", type=Path, default=Path("."),

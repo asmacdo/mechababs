@@ -1,0 +1,369 @@
+"""pytest fixtures for the mechababs e2e harness.
+
+Locally this runs INSIDE the pennlinc/slurm-docker-ci container (launched by
+run_in_podman.sh); on a real cluster it runs on the login node. Either way the
+scenario drives the campaign CLI, so the fixtures provide everything it needs:
+
+- `simbids_sif` — the simbids container, from the shim built once as host-prep
+  (`tmp-repronim-container-shim.sh bids-simbids`). This is a temporary seam: when
+  babs#383 lands + simbids is upstreamed to ReproNim/containers, only this fixture
+  changes (shim path -> ReproNim `datalad get`).
+- `rawdata` — fake BIDS input, generated once into a gitignored repo cache. Prod
+  uses real OpenNeuro data, so fake input is a test-only concern that lives in the
+  test, not in any prod tool.
+- `campaign` — the throwaway campaign the scenario runs in, provisioned from the pins
+  of the campaign named by `--campaign` (required), exercising prod's real bootstrap.sh
+  construction path. Those pins are the ONE provisioning input: `mechababs test-cluster`
+  passes them, and a dev run arrives the same way, by bootstrapping a dev campaign from
+  the checkout first (run_in_podman.sh / run_on_cluster.sh do exactly that). So the
+  provisioning code a user hits is the code every dev run hits.
+"""
+
+import csv
+import json
+import logging
+import os
+import shutil
+import subprocess
+import tempfile
+import uuid
+from pathlib import Path
+
+import pytest
+from mechababs import validate
+
+log = logging.getLogger("mechababs.e2e")
+
+# The simbids-raw-mri config baked into the simbids container (a single-session,
+# subject-level phantom dataset). It labels its phantom `ds005237` — a REAL
+# OpenNeuro accession, and simbids is upstream (pennlinc/simbids), not ours to
+# change — so the study fixture wraps it under the sentinel id below instead.
+SIMBIDS_CONFIG = "ds005237_configs.yaml"
+
+# The fixture's dataset id: an obviously-fake sentinel, chosen to NOT collide with
+# any real OpenNeuro accession (unlike the phantom's own ds005237).
+DATASET_ID = "ds999999"
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--cluster-config",
+        default=None,
+        help="REQUIRED. Path to the cluster config to validate. This is the "
+        "cross-cluster axis — point it at a real site config to validate that config the "
+        "same way. Resolving a bare name (against the campaign's clusters/) belongs to "
+        "`mechababs test-cluster --cluster`, which every invocation comes through, so "
+        "what arrives here is already a resolved path.",
+    )
+    parser.addoption(
+        "--campaign",
+        default=None,
+        help="REQUIRED. An existing campaign to take the pinned tools from. The scenario "
+        "still builds its own campaign to run in (it configures and retires derivatives, "
+        "so it must not touch yours) but provisions it from these pins. Set by `mechababs "
+        "test-cluster`; a dev run bootstraps a dev campaign from the checkout and points "
+        "test-cluster at that (run_in_podman.sh, run_on_cluster.sh).",
+    )
+
+
+@pytest.fixture(scope="session")
+def cluster_config(request):
+    """The cluster config under test, as an absolute path.
+
+    Checked here, not resolved: `validate.resolve_cluster` does the resolving (a path as
+    given, or a bare name in the campaign's `clusters/`) and every invocation goes
+    through it, so a second resolver here would be a second way to answer one question —
+    and the one that used to search the checkout's `examples/` built a path that
+    disappears once code is referenced and locked instead of cloned in.
+    """
+    value = request.config.getoption("--cluster-config")
+    if not value:
+        raise pytest.UsageError(
+            "--cluster-config is required; run the scenario as "
+            "`mechababs test-cluster --cluster <config>`, which passes it"
+        )
+    path = Path(value).expanduser()
+    if not path.is_file():
+        raise pytest.UsageError(f"cluster config is not a file: {path}")
+    return path.resolve()
+
+
+@pytest.fixture(scope="session")
+def pipelines():
+    """The suite's own test pipelines, shipped beside it.
+
+    The SimBIDS phantom pipelines are scenario fixtures, not starters a user would
+    copy, so they travel with the suite instead of living in `examples/`. That also
+    keeps the scenario runnable from an install, where the repo's `examples/` is
+    absent.
+    """
+    path = Path(__file__).resolve().parent / "pipelines"
+    if not path.is_dir():
+        raise RuntimeError(f"suite pipelines missing at {path} (incomplete install?)")
+    return path
+
+
+@pytest.fixture(scope="session")
+def workdir():
+    """Base dir where the campaign and the shim live as siblings.
+
+    Defaults to /scratch (the container's writable layer, where run_in_podman.sh
+    mounts the shim). On a real cluster, point it at scratch space via
+    MECHABABS_E2E_WORKDIR — the pipeline resolves the shim as
+    `../repronim-containers-shim`, so campaign and shim must share a parent.
+    """
+    return Path(os.environ.get("MECHABABS_E2E_WORKDIR", "/scratch"))
+
+
+@pytest.fixture(scope="session")
+def simbids_sif(workdir):
+    """Path to the simbids SIF — the temporary shim seam.
+
+    Today it lives in the shim built as host-prep by `tmp-repronim-container-shim.sh
+    bids-simbids`. When babs#383 lands + simbids is upstreamed to ReproNim, this
+    becomes a `datalad get` from ReproNim and nothing else changes.
+    """
+    sif = workdir / "repronim-containers-shim" / "images" / "bids" / "bids-simbids--0.0.3.sif"
+    if not sif.exists():
+        pytest.skip(
+            f"simbids SIF missing at {sif} — build the shim first:\n"
+            f"    REPRONIM={workdir}/repronim-containers-shim "
+            f"tmp-repronim-container-shim.sh bids-simbids"
+        )
+    return sif
+
+
+@pytest.fixture(scope="session")
+def cache(workdir):
+    """Where generated fixtures are cached between runs.
+
+    Under the workdir, not beside this file: the suite ships inside the package, so
+    a package-relative cache would write into the install tree (read-only for a
+    normal install, and shared across campaigns for an editable one). The workdir is
+    already the suite's scratch space, so the cache belongs there.
+    """
+    path = workdir / "e2e-cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.fixture(scope="session")
+def rawdata(simbids_sif, cache):
+    """Fake BIDS input, generated once into the workdir cache (reused if present).
+
+    Prod add-dataset's a real OpenNeuro URL, so fake input has no prod home — it's a
+    test-only concern owned by the test. Generated via simbids-raw-mri inside the
+    simbids container; datalad-ified so babs can clone it as raw input. Named by its
+    accession (`ds999999`, like real OpenNeuro raw dirs) so the dataset id derives
+    cleanly from its path.
+    """
+    dest = cache / DATASET_ID
+    if not (dest / ".datalad").exists():
+        _generate_fake_bids(dest, simbids_sif)
+    return dest
+
+
+def _generate_fake_bids(dest, sif):
+    log.info("generating fake BIDS at %s", dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    runner = shutil.which("apptainer") or shutil.which("singularity")
+    assert runner, "need apptainer or singularity to generate fake BIDS"
+    # simbids-raw-mri writes a `simbids/` subdir under its output dir; generate into
+    # a scratch dir alongside the cache, then move it into place.
+    gen = tempfile.mkdtemp(dir=dest.parent)
+    subprocess.run(
+        [runner, "exec", "-B", gen, str(sif), "simbids-raw-mri", gen, SIMBIDS_CONFIG],
+        check=True,
+    )
+    shutil.move(f"{gen}/simbids", str(dest))
+    shutil.rmtree(gen)
+    subprocess.run(["datalad", "create", "--force", str(dest)], check=True)
+    subprocess.run(
+        ["datalad", "save", "-d", str(dest), "-m",
+         f"simbids phantom BIDS ({DATASET_ID})"],
+        check=True,
+    )
+
+
+@pytest.fixture(scope="session")
+def study(rawdata, cache):
+    """A fake OpenNeuroStudies-shaped study wrapping the phantom `rawdata`.
+
+    mechababs clones a study and `babs init`s the derivative into its
+    `derivatives/`. Prod clones `OpenNeuroStudies/study-ds<X>`; dev has no such
+    study, so we build a faithful one from the phantom raw data — the same shape a
+    real clone would have, with no network. Built once into the workdir cache,
+    reused if present.
+
+    The raw phantom is registered as a real datalad SUBDATASET (`sourcedata/<id>`),
+    not a plain dir, so the fixture exercises the nested-dataset structure the
+    campaign runs against (campaign -> study -> derivative).
+    """
+    dest = cache / f"study-{DATASET_ID}"
+    if not (dest / ".datalad").exists():
+        _build_study(dest, rawdata)
+    return dest
+
+
+def _build_study(dest, rawdata):
+    log.info("building fake study at %s", dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # The study is itself a datalad dataset. text2git keeps the metadata (the
+    # dataset_description + the subjects TSV) in git, not annex, so it travels with
+    # a no-content clone (as real OpenNeuroStudies studies do) — else add-dataset's
+    # clone gets broken annex symlinks.
+    subprocess.run(["datalad", "create", "-c", "text2git", str(dest)], check=True)
+    # sourcedata/<id> = the phantom raw, cloned in and registered as a subdataset.
+    src = dest / "sourcedata" / DATASET_ID
+    subprocess.run(
+        ["datalad", "clone", "--dataset", str(dest), str(rawdata), str(src)],
+        check=True,
+    )
+    _write_subjects_tsv(dest / "sourcedata" / "sourcedata+subjects.tsv", src)
+    _write_study_description(dest / "dataset_description.json")
+    subprocess.run(
+        ["datalad", "save", "-d", str(dest), "-m",
+         f"fake study-{DATASET_ID} wrapping the simbids phantom"],
+        check=True,
+    )
+
+
+def _write_subjects_tsv(path, raw):
+    """The per-subject metadata `select` reads: subject_id, datatypes, t1w_num,
+    bold_num (the columns its eligibility filters key on). Derived by scanning the
+    raw BIDS — annexed files show as symlinks, so globbing by name counts them
+    without fetching content.
+    """
+    subs = sorted(p for p in raw.iterdir() if p.name.startswith("sub-"))
+    fieldnames = ["subject_id", "datatypes", "t1w_num", "bold_num"]
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        w.writeheader()
+        for sub in subs:
+            datatypes = sorted(d.name for d in sub.iterdir() if d.is_dir())
+            w.writerow({
+                "subject_id": sub.name,
+                "datatypes": ",".join(datatypes),
+                "t1w_num": len(list(sub.glob("anat/*_T1w.nii*"))),
+                "bold_num": len(list(sub.glob("func/*_bold.nii*"))),
+            })
+
+
+def _write_study_description(path):
+    """The study-level `dataset_description.json` — the upstream OpenNeuroStudies
+    shape, which mechababs never authors or modifies in prod (it clones it). Here
+    we synthesize the same shape so the fixture is faithful.
+    """
+    path.write_text(json.dumps({
+        "Name": f"study-{DATASET_ID}",
+        "BIDSVersion": "1.9.0",
+        "DatasetType": "study",
+        "GeneratedBy": [{"Name": "openneuro-studies"}],
+    }, indent=2) + "\n")
+
+
+def _ref_or_fail(clone):
+    """`validate.clone_ref`, reported as a test failure rather than an exception.
+
+    A pin with no re-clonable ref is a real precondition breach, so fail loudly: a
+    skip here would let `test-cluster` exit 0 having validated nothing.
+    """
+    try:
+        return validate.clone_ref(clone)
+    except validate.RefError as e:
+        pytest.fail(str(e))
+
+
+def _pins_from_campaign(campaign):
+    """The mechababs + babs pins a campaign is running, as bootstrap `URL@REF` specs.
+
+    The scenario's campaign is provisioned from the SAME code the campaign under test is
+    pinned to, which is what makes a green run mean "these tools work on this cluster".
+    Today the pins are the vendored clones (`code/<tool>`), so their checked-out branch
+    is the ref; when the pins become a lockfile this is the one place that has to learn
+    to read it.
+
+    A missing mechababs pin fails rather than skips: it is the provisioning input, so
+    without it there is nothing to validate, and a skip would let `test-cluster` exit 0
+    having validated nothing.
+    """
+    pins = {}
+    for tool in ("mechababs", "babs"):
+        clone = campaign / "code" / tool
+        if not (clone / ".git").exists():
+            continue
+        pins[tool] = f"{clone}@{_ref_or_fail(clone)}"
+    if "mechababs" not in pins:
+        pytest.fail(
+            f"{campaign} carries no mechababs pin at code/mechababs, so there is "
+            f"nothing to provision the scenario from"
+        )
+    return pins
+
+
+@pytest.fixture(scope="session")
+def campaign_under_test(request):
+    """The campaign whose pins provision the scenario — its only provisioning input.
+
+    Required, and a UsageError rather than a skip: a skip would let `test-cluster` exit 0
+    having validated nothing, the worst outcome for a validation command.
+    """
+    value = request.config.getoption("--campaign")
+    if not value:
+        raise pytest.UsageError(
+            "--campaign is required: the scenario provisions its own campaign from an "
+            "existing campaign's pins, so there has to be one to take them from.\n"
+            "Run it as `mechababs test-cluster --cluster <config>` from a campaign venv. "
+            "To test a checkout, bootstrap a dev campaign from it first and point "
+            "test-cluster at that — which is all run_in_podman.sh and run_on_cluster.sh do."
+        )
+    return Path(value).expanduser().resolve()
+
+
+@pytest.fixture(scope="function")
+def campaign(workdir, campaign_under_test):
+    """A freshly bootstrapped campaign for the scenario to work in, one per test.
+
+    Calls the real bootstrap.sh — prod's exact construction path — so each test gets its
+    OWN campaign. That is not incidental: the scenario configures the campaign, adds a
+    dataset, and retires a derivative, so it must never run inside a campaign holding
+    real work.
+
+    There is ONE provisioning input: the pins of the campaign under test, so the scenario
+    exercises exactly the mechababs + babs that campaign is running. A dev run reaches it
+    the way a user does — bootstrap a dev campaign from the checkout, then point
+    `test-cluster` at it — rather than through a second, dev-only route. That is
+    docs/overview.md's one-tool-two-modes rule: dev exercises prod's exact paths, so dev
+    validates prod. Not hypothetical — while the two routes existed they drifted, and a
+    detached-HEAD bug got fixed on one and left broken on the other.
+
+    The unique per-call name keeps bootstrap's refuse-existing-dir guard happy and
+    avoids clobbering a prior run; clean up stale ones with
+    `rm -rf $MECHABABS_E2E_WORKDIR/test-campaign-*`.
+
+    --system-site-packages is opt-in via MECHABABS_E2E_SYSTEM_SITE_PACKAGES (set by
+    run_in_podman.sh for the CentOS7 container, whose 2015 toolchain can't build the
+    newest wheels); a real cluster leaves it unset and builds prod's isolated venv.
+    """
+    pins = _pins_from_campaign(campaign_under_test)
+    # bootstrap.sh is not part of the installed distribution (it is what CREATES the
+    # environment the distribution runs in), so take it from the campaign's own pin —
+    # the same code the campaign is running.
+    bootstrap = campaign_under_test / "code" / "mechababs" / "bootstrap.sh"
+    if not bootstrap.is_file():
+        pytest.fail(
+            f"no bootstrap.sh at {bootstrap}, so there is nothing to build the "
+            f"scenario's campaign with"
+        )
+    path = workdir / f"test-campaign-{uuid.uuid4().hex[:8]}"
+    cmd = [str(bootstrap), str(path), "--mechababs", pins["mechababs"]]
+    if "babs" in pins:
+        cmd += ["--babs", pins["babs"]]
+    if os.environ.get("MECHABABS_E2E_SYSTEM_SITE_PACKAGES"):
+        cmd.append("--system-site-packages")
+    log.info("bootstrapping campaign at %s (mechababs %s)", path, pins["mechababs"])
+    subprocess.run(cmd, check=True)
+    # No config staging here: the tests hand configure the resolved config paths,
+    # exercising its copy-in (the prod path — a user points --cluster/--pipelines at a
+    # config and configure copies it into the campaign's clusters/ + pipelines/).
+    return path

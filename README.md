@@ -34,7 +34,7 @@ New to a cluster? Get the prerequisites in place ([installation.md](docs/install
 ## Docs
 
 - [docs/overview.md](docs/overview.md) — the concepts: the three axes, the campaign as a self-contained provenance object, and the reconciler tick.
-- [docs/installation.md](docs/installation.md) — HPC prerequisites: PATH tools, scratch, the container shim, and the e2e driver venv.
+- [docs/installation.md](docs/installation.md) — HPC prerequisites: PATH tools, scratch, the container shim, and the campaign venv.
 - [docs/reference.md](docs/reference.md) — CLI reference, selection & inclusion, and the config files.
 - [docs/interventions.md](docs/interventions.md) — recovering from failures and changing a running campaign, provenance-safely.
 - [docs/cluster-config-and-testing-tutorial.md](docs/cluster-config-and-testing-tutorial.md) — add your cluster and validate it by running the e2e suite on it.

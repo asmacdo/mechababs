@@ -32,7 +32,7 @@ venv. Afterwards the pinned tools run *by construction*.
 `REF` must be a branch or tag name (not a bare commit sha) — `git clone --branch`
 is how the pin is set.
 
-### 2. `mechababs {configure,add-dataset,iterate,status,retire-derivative}` — operate (run from the campaign venv)
+### 2. `mechababs {configure,add-dataset,iterate,test-cluster,status,retire-derivative}` — operate (run from the campaign venv)
 
 ```bash
 cd my-campaign
@@ -54,6 +54,13 @@ mechababs add-dataset https://github.com/OpenNeuroDatasets/ds005896
 # advance the campaign one reconciler tick (see below)
 mechababs iterate [--batch N] [--dry-run]
 
+# validate a cluster config end to end, using this campaign's pinned tools: runs the
+# e2e scenario (configure -> add-dataset -> iterate: scaffold -> submit -> merge) and
+# asserts a real derivative landed. A stronger check than `babs check-setup`.
+mechababs test-cluster --cluster your-site.yaml   # a path, or a name in clusters/
+                 [--workdir DIR]                 # default: beside this campaign
+                 [-- -k test_full_run]           # after `--`, args go to pytest
+
 # read-only: one row per job across every (dataset, pipeline) cell —
 # dataset · pipeline · sub/ses · job_id · state · time_used/limit · failed · log path
 mechababs status [-o columns|tsv|vd]     # default: an aligned table
@@ -65,6 +72,14 @@ mechababs status [-o columns|tsv|vd]     # default: an aligned table
 mechababs retire-derivative studies/study-ds004044/derivatives/fMRIPrep-25.2.5+minimal
                  [--dry-run]
 ```
+
+`test-cluster` **does not run in the campaign you invoke it from.** The scenario
+configures a campaign, registers a dataset, and retires a derivative, so it builds its
+own throwaway campaign — provisioned from this campaign's pins, so the babs +
+mechababs under test are the ones this campaign records. The campaign supplies the
+environment (pinned tools, venv, workdir), not the workspace. The
+[cluster config & testing tutorial](cluster-config-and-testing-tutorial.md) is the
+full walk-through.
 
 `retire-derivative` exists because a cell that must be redone (a resource change, a
 tool bug, a config fix) leaves a derivative that is no longer wanted in the study but

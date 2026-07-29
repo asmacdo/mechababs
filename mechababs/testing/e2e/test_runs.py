@@ -88,15 +88,15 @@ def _ledger_row(campaign):
     return rows[0]
 
 
-def test_full_run(campaign, cluster_config, rawdata, study):
+def test_full_run(campaign, cluster_config, pipelines, rawdata, study):
     _venv_run(
         campaign,
         "mechababs",
         "configure",
         "--pipelines",
-        f"code/mechababs/examples/pipelines/{STAGE1}.yaml",
+        str(pipelines / f"{STAGE1}.yaml"),
         "--cluster",
-        f"code/mechababs/examples/clusters/{cluster_config}",
+        str(cluster_config),
         "--limit",
         "1",
     )
@@ -272,7 +272,7 @@ def test_full_run(campaign, cluster_config, rawdata, study):
     ), "campaign mainline did not record the retire node"
 
 
-def test_chained_run(campaign, cluster_config, rawdata, study):
+def test_chained_run(campaign, cluster_config, pipelines, rawdata, study):
     """Two simbids stages where stage2 consumes stage1's output by name (issue #72).
 
     Exercises the chaining path unit tests can't reach: the scaffold gate (stage2
@@ -286,9 +286,9 @@ def test_chained_run(campaign, cluster_config, rawdata, study):
         "mechababs",
         "configure",
         "--pipelines",
-        f"code/mechababs/examples/pipelines/{STAGE1}.yaml,code/mechababs/examples/pipelines/{STAGE2}.yaml",
+        f"{pipelines / f'{STAGE1}.yaml'},{pipelines / f'{STAGE2}.yaml'}",
         "--cluster",
-        f"code/mechababs/examples/clusters/{cluster_config}",
+        str(cluster_config),
         "--limit",
         "1",
     )
