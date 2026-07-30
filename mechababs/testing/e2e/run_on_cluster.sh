@@ -29,7 +29,8 @@
 #           tmp-repronim-container-shim.sh bids-simbids
 #   - BABS_SPEC (optional): pin a babs ref to test against an unmerged babs fix. The dev
 #     campaign pins it, and the scenario's campaign inherits it from those pins.
-#     Default is babs main.
+#     Default is babs main. URL@REF takes anything `git clone` accepts, so a local
+#     checkout on the cluster filesystem pins a branch that was never pushed.
 #
 # Usage (extra args pass through to `mechababs test-cluster`, so pytest args go after a
 # literal `--`, the same as running test-cluster by hand):

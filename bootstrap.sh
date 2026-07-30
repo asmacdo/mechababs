@@ -19,6 +19,12 @@ Build a mechababs campaign's environment:
 
   --babs URL@REF          babs pin (default: PennLINC/babs main)
   --mechababs URL@REF     mechababs pin (default: con/mechababs main)
+
+URL is anything `git clone` accepts, including a local path — so
+`--babs /path/to/babs-checkout@my-branch` pins a branch that exists only on
+disk, and a change can be exercised end to end before it is pushed anywhere.
+REF must be a branch or tag name, not a commit sha, since the pin is set by
+`git clone --branch`.
   --system-site-packages  build the venv with access to the ambient Python's
                           installed packages, reusing a pre-built heavy stack
                           instead of rebuilding it (the e2e fixture uses this on
