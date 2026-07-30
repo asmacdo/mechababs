@@ -50,4 +50,4 @@ New to a cluster? Get the prerequisites in place ([installation.md](docs/install
 - [BABS](https://github.com/PennLINC/babs) — the execution engine
 - [ReproNim/containers](https://github.com/ReproNim/containers) — container datasets
 - [FAIRly Big processing workflow](https://github.com/psychoinformatics-de/fairly-big-processing-workflow) — the pattern BABS implements
-- [STAMPED principles](https://github.com/myyoda/principles-paper) — the guiding principles
+- [STAMPED principles](https://github.com/stamped-principles/stamped-paper) — the guiding principles

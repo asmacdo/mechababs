@@ -193,7 +193,7 @@ repo-pointer + status:
 
 ## Principles
 
-The STAMPED paper (`reference/principles-paper/`) should inform all
+The [STAMPED paper](https://github.com/stamped-principles/stamped-paper) should inform all
 design and implementation decisions. When in doubt, ask: does this make
 the research object more **S**elf-contained, **T**racked, **A**ctionable,
 **M**odular, **P**ortable, **E**phemeral, and **D**istributable?
@@ -203,23 +203,6 @@ the research object more **S**elf-contained, **T**racked, **A**ctionable,
 mechababs is an e2e harness for running babs across clusters and many datasets.
 It targets **vanilla babs `main`** by default (`PennLINC/babs`, or a PR branch under test), and can point at a fork when one is needed — but a fork is a liability we'd rather not carry, so prefer pushing what we need upstream.
 (How a campaign vendors + pins the chosen ref: README, "The campaign".)
-
-## Reference repos
-
-Cloned into `reference/` (gitignored). Before using any reference repo,
-**check for upstream updates** (`git -C reference/<repo> pull`).
-
-| Directory | Upstream | Purpose |
-|---|---|---|
-| `principles-paper/` | https://github.com/myyoda/principles-paper | STAMPED properties paper — the principles guiding this project |
-| `OpenNeuroStudies/` | https://github.com/OpenNeuroStudies/OpenNeuroStudies | The superdataset mechababs feeds into |
-| `OpenNeuroDerivatives/` | https://github.com/OpenNeuroDerivatives/OpenNeuroDerivatives | Upstream mirrors for derivative datasets |
-| `fairly-big-processing-workflow/` | https://github.com/psychoinformatics-de/fairly-big-processing-workflow | The FAIRly Big pattern that BABS implements |
-| `containers/` | https://github.com/ReproNim/containers | ReproNim container dataset — archives built SIFs |
-| `babs_demo/` | https://github.com/djarecka/babs_demo | Dorota's babs walkthrough (.env-based cluster config). The `*_bids_layout` scripts are the **canonical demonstration of what babs produces**: a derivative dataset inside a study you make yourself. Read these before reasoning about output structure or `analysis_path` |
-| `babs-containers-run-test/` | (local, Austin's test scripts) | Reference scripts for testing babs init with containers-run branch |
-| `bootstrap_fMRIprep/` | Felix's cerebra.fz-juelich.de gitea | Felix's canonical fmriprep wrapper — reference for opinions repo |
-| `ds001761-fmriprep/`, `ds005374-fmriprep/` | OpenNeuroDerivatives mirrors | Joe's published fmriprep runs (2022 + 2025) — reference for output shape |
 
 ## Where to read in
 
