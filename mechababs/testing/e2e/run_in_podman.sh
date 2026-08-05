@@ -122,7 +122,12 @@ fi
 # The dev campaign: a fresh path per run, because bootstrap refuses an existing one. The
 # scenario's own throwaway campaign lands beside it (test-cluster builds it in the
 # campaign's parent, so the shim stays its sibling).
-DEV_CAMPAIGN="$MECHABABS_E2E_WORKDIR/dev-campaign-$$-$RANDOM"
+# One id for the run, shared by the campaign path and the container name, so it is
+# obvious which container built which campaign. $RANDOM as well as $$ because PIDs are
+# recycled, and under MECHABABS_E2E_KEEP a container from an earlier run is still around
+# to collide with.
+RUN_ID="$$-$RANDOM"
+DEV_CAMPAIGN="$MECHABABS_E2E_WORKDIR/dev-campaign-$RUN_ID"
 echo "dev campaign: $DEV_CAMPAIGN (remove stale ones with" >&2
 echo "    rm -rf $MECHABABS_E2E_WORKDIR/dev-campaign-* $MECHABABS_E2E_WORKDIR/test-campaign-*)" >&2
 
@@ -132,19 +137,55 @@ echo "    rm -rf $MECHABABS_E2E_WORKDIR/dev-campaign-* $MECHABABS_E2E_WORKDIR/te
 BABS_SPEC_ENV=()
 [ -n "${BABS_SPEC:-}" ] && BABS_SPEC_ENV=(-e "BABS_SPEC=$BABS_SPEC")
 
+# The container is always NAMED, so the Ctrl-C handler below has something to address.
 # The campaigns persist on the host bind mount regardless of --rm.
-# MECHABABS_E2E_KEEP=1 additionally keeps the *container* (drops --rm, names it) for
-# post-mortem of the container itself.
+# MECHABABS_E2E_KEEP=1 additionally keeps the *container* (drops --rm) for post-mortem of
+# the container itself.
+CONTAINER="mechababs-e2e-$RUN_ID"
 RM_FLAG=(--rm)
-NAME_FLAG=()
 if [ -n "${MECHABABS_E2E_KEEP:-}" ]; then
-    CONTAINER="mechababs-e2e-$$"
     RM_FLAG=()
-    NAME_FLAG=(--name "$CONTAINER")
     echo "KEEP: container $CONTAINER persists (the campaigns are already on the host" >&2
     echo "    under $MECHABABS_E2E_WORKDIR). Remove the container with:" >&2
     echo "    podman rm $CONTAINER" >&2
 fi
+
+# Ctrl-C has to abort the run, and nothing about that is automatic here (#105). Three
+# separate things swallow the interrupt:
+#   1. Under `podman machine` (every macOS host), the podman CLI is a REMOTE client and
+#      the signal never reaches the container at all.
+#   2. Natively, podman's --sig-proxy does deliver it, but to the container's PID 1 —
+#      tini — which forwards only to its DIRECT child: the `bash -c` wrapper below.
+#      Non-interactive bash neither relays a signal to its foreground child nor runs a
+#      trap until that child returns, and here that child is the whole e2e. So the run
+#      continues to completion, which is the reported "nothing happens".
+#   3. This script would have the same problem: bash defers a trap while a FOREGROUND
+#      command runs, so a handler could not fire until podman exited on its own.
+# So don't depend on signal delivery reaching the workload. Run podman in the
+# background, `wait` for it (bash *does* interrupt `wait` to run a trap), and tear the
+# container down explicitly — killing it kills everything inside, on both podman flavors.
+# A TTY (`-t`) would fix the interactive case by giving the container a line discipline
+# to deliver SIGINT to its foreground process group, but it does nothing for a redirected
+# or CI run, and it would dress the log in pytest's terminal escapes. This works for both.
+# Both halves of the teardown are needed. Stopping the CLIENT covers an interrupt in the
+# first second or two, before the container exists: removing it by name would hit nothing,
+# and bash does not reap the backgrounded client on exit, so it would go on to create and
+# run the container unattended (verified — it reaches the end of bootstrap). Removing the
+# CONTAINER covers every later interrupt, and is what actually stops the work, since
+# pytest, babs and the inner singularity job all live inside it.
+PODMAN_PID=
+abort() {
+    echo >&2
+    echo "interrupted — stopping container $CONTAINER" >&2
+    # An `if` rather than `[ … ] && kill …`, whose non-zero status under `set -e` would
+    # skip the removal below. Empty only if the interrupt beat the assignment below.
+    if [ -n "$PODMAN_PID" ]; then
+        kill "$PODMAN_PID" 2>/dev/null || true
+    fi
+    podman rm --force --time 0 "$CONTAINER" >/dev/null 2>&1 || true
+    exit 130
+}
+trap abort INT TERM
 
 # Bootstrap the dev campaign, then validate the docker cluster config from it. Extra
 # args ("$@") pass through to test-cluster, word boundaries preserved (so e.g.
@@ -154,7 +195,7 @@ fi
 # reads an empty array's expansion as an unbound variable and aborts — and each of these
 # arrays is empty in the default case, so the plain form breaks the script outright on a
 # CentOS 7 / RHEL 7 login node (bash 4.2) or macOS's system bash 3.2.
-podman run ${RM_FLAG[@]+"${RM_FLAG[@]}"} ${NAME_FLAG[@]+"${NAME_FLAG[@]}"} -i \
+podman run ${RM_FLAG[@]+"${RM_FLAG[@]}"} --name "$CONTAINER" -i \
     --platform linux/amd64 \
     -h slurmctl \
     --security-opt label=disable \
@@ -189,4 +230,11 @@ podman run ${RM_FLAG[@]+"${RM_FLAG[@]}"} ${NAME_FLAG[@]+"${NAME_FLAG[@]}"} -i \
         . .venv/bin/activate
         mechababs test-cluster \
             --cluster /mechababs/examples/clusters/test-docker.yaml "$@"
-    ' _ "$@"
+    ' _ "$@" &
+PODMAN_PID=$!
+
+# `wait` rather than running podman in the foreground: this is the line that makes the
+# trap above prompt. Keep podman's exit code as ours, so a failed e2e still fails here.
+RC=0
+wait "$PODMAN_PID" || RC=$?
+exit "$RC"
