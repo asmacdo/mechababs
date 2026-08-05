@@ -63,6 +63,8 @@
 #   mechababs/testing/e2e/run_in_podman.sh -- -k test_full_run
 #   BABS_SPEC=https://github.com/<owner>/babs.git@<branch> \
 #       mechababs/testing/e2e/run_in_podman.sh      # pin the babs under test
+#   BABS_SPEC=$MECHABABS_E2E_WORKDIR/babs-under-test@<branch> \
+#       mechababs/testing/e2e/run_in_podman.sh      # ... or an unpushed local clone
 #   MECHABABS_E2E_KEEP=1 mechababs/testing/e2e/run_in_podman.sh   # keep the container
 set -euo pipefail
 
@@ -133,7 +135,9 @@ echo "    rm -rf $MECHABABS_E2E_WORKDIR/dev-campaign-* $MECHABABS_E2E_WORKDIR/te
 
 # Forward BABS_SPEC (the babs ref under test) into the container if set, so the dev
 # campaign PINS that babs — and the scenario's campaign, provisioned from these pins,
-# inherits it. A public https URL is required (the container clones anonymously).
+# inherits it. An https URL must be public (the container clones anonymously); a local
+# path works too, as long as it is under $MECHABABS_E2E_WORKDIR, which is bind-mounted
+# at the same path inside the container. That is how an unpushed branch gets tested.
 BABS_SPEC_ENV=()
 [ -n "${BABS_SPEC:-}" ] && BABS_SPEC_ENV=(-e "BABS_SPEC=$BABS_SPEC")
 

@@ -32,6 +32,12 @@ venv. Afterwards the pinned tools run *by construction*.
 `REF` must be a branch or tag name (not a bare commit sha) — `git clone --branch`
 is how the pin is set.
 
+`URL` is anything `git clone` accepts, a local path included. So
+`--babs /path/to/babs-checkout@my-branch` pins a branch that exists only on disk,
+and a fix can be exercised through a whole campaign before it is pushed anywhere.
+The pin records that path, so it is for development rather than for a campaign
+whose provenance has to resolve elsewhere later.
+
 ### 2. `mechababs {configure,add-dataset,iterate,test-cluster,status,retire-derivative}` — operate (run from the campaign venv)
 
 ```bash
