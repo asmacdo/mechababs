@@ -11,6 +11,25 @@ As a mechababs user, I want to operate on ~1000 pre-made BIDS studies that each 
 I want to run MRIQC, fMRIPrep `--anat-only`, and fMRIPrep `--level minimal`, where minimal takes its inputs from the anat run.
 I want to prioritize finishing and publishing whole datasets over running the first stage of all thousand, so results land incrementally.
 
+## Choose what gets worked next
+As a user, I can steer which studies the sweep advances and in what order, rather than taking whatever the reconciler picks up.
+Finishing whole studies before starting new ones only pays off if the order is mine to influence.
+
+## Act on one study within a superstudy
+As a user, I can direct mechababs at a specific study and have it advance only that one, so I can finish a chunk deliberately instead of spreading progress across the whole set.
+💬 Scoping by working directory was the initial pitch, but the superstudy still takes writes when a study finishes — so the working directory may not be the right selector.
+
+## Release a finished study
+As a user, once mechababs reports a study finished I can push it and remove it from the cluster.
+mechababs neither does that for me nor is disturbed by it: a released study is never brought back.
+
+## See the state of the set without holding the data
+As a user, I can tell what is done, in flight, and not started across all member studies without those studies being installed locally.
+
+## Run a study to completion under a finite budget
+As a user with limited disk and inodes, I can sweep more studies than fit at once, because finishing and releasing a study frees the space the next one needs.
+💬 Whether a single study's own peak footprint fits is a separate problem, not covered by this.
+
 ## Work in a single study, no campaign
 As a researcher with a single BIDS study, I want to run a BIDS App on it without setting up a campaign.
 The study is the thing I operate on; the many-study machinery should stay out of my way.
