@@ -30,8 +30,8 @@ As a user, I can tell what is done, in flight, and not started across all member
 As a user with limited disk and inodes, I can sweep more studies than fit at once, because finishing and releasing a study frees the space the next one needs.
 💬 Whether a single study's own peak footprint fits is a separate problem, not covered by this.
 
-## Work in a single study, no campaign
-As a researcher with a single BIDS study, I want to run a BIDS App on it without setting up a campaign.
+## Work in a single study, no super-study
+As a researcher with a single BIDS study, I want to run a BIDS App on it without setting up a super-study.
 The study is the thing I operate on; the many-study machinery should stay out of my way.
 
 ## Produce a single derivative, easily
@@ -73,5 +73,5 @@ As a user, I can add a dataset to a campaign after it has started, and the recon
 As a user, I can handle a source dataset changing after processing has started — new subjects or sessions, or changed data on subjects/sessions already processed.
 This is likely handled at the BABS level rather than in mechababs; needs discussion.
 
-## Collect correct provenance on a crippled filesystem
+## Be able to operate on a crippled filesystem
 As a user, I can still collect derivatives with correct provenance on a datalad "crippled filesystem" — one without symlink support, where git-annex runs on an adjusted branch.
