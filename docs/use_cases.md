@@ -112,3 +112,24 @@ This is likely handled at the BABS level rather than in mechababs; needs discuss
 
 ## Be able to operate on a crippled filesystem
 As a user, I can still collect derivatives with correct provenance on a datalad "crippled filesystem" — one without symlink support, where git-annex runs on an adjusted branch.
+
+## Out of scope
+
+Things mechababs deliberately does not do.
+These earn a place beside the use cases because they carry the same weight: a design that requires one of them is answering the wrong question.
+Each is paired with what mechababs must do instead, since "not our job" is only half a requirement.
+
+### mechababs never pushes to a remote
+As a user, I decide when and where results leave the machine they were computed on.
+Publishing a derivative, a study, or a superstudy is my act, with my credentials, on my timing; mechababs produces the objects and reports that they are finished.
+What mechababs must do instead is be unbothered by it — a study I have pushed and removed is not a state it tries to repair (see [Release a finished study](#release-a-finished-study)).
+
+The RIA stores babs pushes to during a run are not an exception to this: they are machinery internal to the derivative, alongside it on the same filesystem, not a publishing destination.
+
+### mechababs never removes or drops data
+As a user, I decide what content is dropped and what datasets are uninstalled — those are destructive and, where no other copy exists, irreversible.
+mechababs does not reclaim space on my behalf, however sure it is that a study is finished.
+
+What mechababs must do instead is *tolerate* the result: content I dropped, or a study I uninstalled, is a normal state and not a failure.
+It should still be able to report what that study's state was, and get back whatever a step actually needs rather than assuming content is present.
+This is what makes [Run a study to completion under a finite budget](#run-a-study-to-completion-under-a-finite-budget) work — I free the space, mechababs keeps going.
