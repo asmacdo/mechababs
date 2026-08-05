@@ -11,6 +11,12 @@ As a mechababs user, I want to operate on ~1000 pre-made BIDS studies that each 
 I want to run MRIQC, fMRIPrep `--anat-only`, and fMRIPrep `--level minimal`, where minimal takes its inputs from the anat run.
 I want to prioritize finishing and publishing whole datasets over running the first stage of all thousand, so results land incrementally.
 
+## Gate an expensive pipeline on QC
+As a user, I want to run a cheap QC app (MRIQC) first and only run the expensive stages (fMRIPrep anat → minimal/full) on the inputs that pass.
+The pass/fail verdict is produced outside mechababs, by review or by an automated rule.
+What would be helpful is a recorded way to subtract the excluded subjects/sessions from the downstream selection.
+This is expressed today by curating the source selection by hand.
+
 ## Choose what gets worked next
 As a user, I can steer which studies the sweep advances and in what order, rather than taking whatever the reconciler picks up.
 Finishing whole studies before starting new ones only pays off if the order is mine to influence.
@@ -30,8 +36,8 @@ As a user, I can tell what is done, in flight, and not started across all member
 As a user with limited disk and inodes, I can sweep more studies than fit at once, because finishing and releasing a study frees the space the next one needs.
 💬 Whether a single study's own peak footprint fits is a separate problem, not covered by this.
 
-## Work in a single study, no super-study
-As a researcher with a single BIDS study, I want to run a BIDS App on it without setting up a super-study.
+## Work in a single study, no superstudy
+As a researcher with a single BIDS study, I want to run a BIDS App on it without setting up a superstudy.
 The study is the thing I operate on; the many-study machinery should stay out of my way.
 
 ## Produce a single derivative, easily
@@ -51,6 +57,10 @@ They are complementary.
 As a mechababs user, I want to create a BIDS study containing a variety of source datasets of different types.
 I want to produce derivatives from a variety of BIDS Apps, each across a chosen subset of those source datasets.
 
+This includes a lab with its own (non-OpenNeuro) BIDS datasets running mechababs across several in-house cohorts on its institution's cluster, and getting the same self-contained, reproducible studies + derivatives — without the data being on OpenNeuro or the studies pre-authored by its tooling.
+Today each raw dataset is hand-wrapped as a study, along with the per-subject datatypes/counts TSV that selection reads; it works, but it is the main barrier to entry.
+This is the demand behind the study-authoring gap in [output_structure.md](output_structure.md): first-class study creation from local raw data.
+
 ## Add derivatives to a study later
 As a researcher, I want to return to a study I processed a year ago and add a new set of derivatives with newer tool versions.
 The earlier derivatives should be left untouched; the new effort records its own environment.
@@ -65,6 +75,10 @@ mechababs has no prior state file to inherit here, so it starts fresh and must c
 
 ## Move a run to another cluster
 As a user with access to more than one cluster, I want to run the same pipeline configuration on a different cluster by changing only the cluster config.
+
+## Consolidate results across clusters
+As a user who has run a campaign on more than one cluster, I want the member studies each cluster worked on to come back together into one superstudy, so that where a study was computed is an operational detail and not a fork in the record.
+💬 This may be no more than a plain `git merge` — worth checking before designing anything.
 
 ## Add a dataset to a running campaign
 As a user, I can add a dataset to a campaign after it has started, and the reconciler picks it up on the next tick.

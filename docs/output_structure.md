@@ -69,8 +69,8 @@ superstudy/
   dataset_description.json     # DatasetType "study"
   studies.tsv                  # 💬 catalog of member studies (+ studies.json sidecar)
   studies+derivatives.tsv      # 💬 map of which derivatives exist per study (OpenNeuroStudies' file)
-  study-<id>/                  # member studies, at root
-  study-<id>/
+  study-<id1>/                 # member studies, at root
+  study-<id2>/
   .mechababs/
     campaigns/
       <label>/                 # a campaign authored here and fanned out to the members
