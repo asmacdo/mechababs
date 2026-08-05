@@ -6,6 +6,19 @@ When a design decision is unclear, it should be resolvable by asking "which use 
 
 The whole document is open for feedback; 💬 marks the points that specifically need it — open questions we want others to weigh in on.
 
+## Terminology 💬
+The words below are used consistently throughout this document and [output_structure.md](output_structure.md); agreeing on them is itself an open question.
+
+- **source dataset** — a raw BIDS dataset, the input to a pipeline.
+- **derivative** — what one BIDS App produced from one source dataset.
+- **study** — the primary unit: one or more source datasets grouped with the derivatives made from them.
+- **superstudy** — a study of studies; an optional layer for operating on many at once.
+- **campaign** — one run's pinned environment and bundle of app configs, recorded in each study it touches. Not a dataset.
+- **sweep** — running a campaign across the member studies of a superstudy.
+
+A **level** is one of those nested scopes, and the hierarchy is named after a tree: the **leaves** are the derivatives, the **root** is the outermost superstudy.
+💬 So "up" means toward the root — which reads backwards for anyone picturing a superstudy sitting on top of its members, and is worth settling before more of the docs lean on it.
+
 ## Sweep many pre-made studies
 As a mechababs user, I want to operate on ~1000 pre-made BIDS studies that each contain one raw source dataset.
 I want to run MRIQC, fMRIPrep `--anat-only`, and fMRIPrep `--level minimal`, where minimal takes its inputs from the anat run.
