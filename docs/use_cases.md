@@ -32,6 +32,16 @@ mechababs neither does that for me nor is disturbed by it: a released study is n
 ## See the state of the set without holding the data
 As a user, I can tell what is done, in flight, and not started across all member studies without those studies being installed locally.
 
+## Observe the campaign at any level
+As a user, I want the same view of progress at every level of the hierarchy — a single derivative, a study, the whole superstudy — so I can zoom out to see how a sweep is going and in to a specific failure without switching tools.
+
+## Trust that a summary agrees with what it summarizes
+As a user, I want each level's summary to be derived from the level beneath it rather than maintained alongside it, so the numbers at the top cannot disagree with the detail underneath.
+This is the pattern OpenNeuroStudies, AnnexTube, MyKrok and the BIDS inheritance/summarization principle already use — higher-level TSVs produced from lower-level ones — and it is what makes a view of the whole set cheap enough to render.
+
+## Read the state with tools other than mechababs
+As a user or tool author, I want the files mechababs keeps its state in to be documented and conventional — BIDS study layout, and [BIDS common conventions on TSV files](https://bids-specification.readthedocs.io/en/stable/common-principles.html#tabular-files) for the tabular ones — so a dashboard, a script, or another lab's tooling can read them without knowing mechababs internals.
+
 ## Run a study to completion under a finite budget
 As a user with limited disk and inodes, I can sweep more studies than fit at once, because finishing and releasing a study frees the space the next one needs.
 💬 Whether a single study's own peak footprint fits is a separate problem, not covered by this.
