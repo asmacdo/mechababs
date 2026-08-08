@@ -64,16 +64,17 @@ singularity_args:
   - -B /dartfs/rc/lab/D/DBIC/DBIC/CON/asmacdo/mechababs/license.txt:/SGLR/FREESURFER_HOME/license.txt
   - --env TEMPLATEFLOW_HOME=/templateflow
 
-# Chained input: Project 1's anat-only output. FIX ME PER RUN:
-# the origin_url is an absolute path that must point at the
-# Project 1 babs-project's output_ria. There is no placeholder
-# substitution here yet.
+# Chained input: the anat-only stage's output. The key names WHICH upstream
+# by matching the producing pipeline's short_name (fMRIPrep-25.2.5+anat); that
+# name match is how iterate assembles the chain. origin_url is intentionally
+# omitted — the upstream RIA doesn't exist until anat has run + merged, so
+# iterate resolves it per run and injects it at scaffold (a per-run absolute RIA
+# path, not a config constant).
 input_datasets:
   fMRIPrep-25.2.5+anat:
     required_files:
       - "*fMRIPrep-25.2.5+anat*.zip"
     is_zipped: true
-    origin_url: "ria+file:///dartfs/rc/lab/D/DBIC/DBIC/CON/asmacdo/mechababs/processing/openneuro-pipe-2026-05-17/ds005896-fmriprep-anat/babs-project/output_ria#~data"
     path_in_babs: sourcedata/fMRIPrep-25.2.5+anat
 
 cluster_resources:
