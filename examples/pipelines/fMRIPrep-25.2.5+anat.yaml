@@ -44,17 +44,12 @@ bids_app_args:
   --stop-on-first-crash: ""
   # Pass the HOST path. BABS rewrites this flag's value to
   # /SGLR/FREESURFER_HOME/license.txt in the generated singularity
-  # invocation; on the add-containers-run-v2 branch BABS does NOT
-  # auto-bind, so we bind manually in singularity_args below.
-  # TODO babs should not mess with these args.
+  # invocation, and binds it there.
   --fs-license-file: "/dartfs/rc/lab/D/DBIC/DBIC/CON/asmacdo/mechababs/license.txt"
   --nprocs: "2"
   --omp-nthreads: "2"
   --mem-mb: "16000"
 
-# License bind: BABS rewrites --fs-license-file to
-# /SGLR/FREESURFER_HOME/license.txt but the add-containers-run-v2
-# path doesn't auto-bind it anymore, so do it manually.
 singularity_args:
   - --containall
   # --pwd pins CWD to the bound ds clone; without it --containall drops CWD to a
@@ -63,7 +58,6 @@ singularity_args:
   - --pwd "${PWD}"
   - -B $JOB_TMP:/tmp
   - -B /dartfs/rc/lab/D/DBIC/DBIC/CON/asmacdo/templateflow:/templateflow
-  - -B /dartfs/rc/lab/D/DBIC/DBIC/CON/asmacdo/mechababs/license.txt:/SGLR/FREESURFER_HOME/license.txt
   - --env TEMPLATEFLOW_HOME=/templateflow
 
 # Resource sizing: anat-only is dominated by FreeSurfer recon-all,

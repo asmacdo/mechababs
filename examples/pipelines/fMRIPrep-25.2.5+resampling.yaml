@@ -70,7 +70,6 @@ singularity_args:
   - --pwd "${PWD}"
   - -B $JOB_TMP:/tmp
   - -B /dartfs/rc/lab/D/DBIC/DBIC/CON/asmacdo/templateflow:/templateflow
-  - -B /dartfs/rc/lab/D/DBIC/DBIC/CON/asmacdo/mechababs/license.txt:/SGLR/FREESURFER_HOME/license.txt
   - --env TEMPLATEFLOW_HOME=/templateflow
 
 # Chained input: the anat-only stage's output. The key names WHICH upstream
