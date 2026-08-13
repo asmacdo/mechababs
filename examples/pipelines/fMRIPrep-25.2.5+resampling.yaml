@@ -95,7 +95,7 @@ cluster_resources:
   # temporary_disk_space: 200G
   customized_text: |
     #SBATCH --cpus-per-task=8
-    #SBATCH --mem=32G
+    #SBATCH --mem=40G
     #SBATCH --nodes=1
     #SBATCH --ntasks=1
 
