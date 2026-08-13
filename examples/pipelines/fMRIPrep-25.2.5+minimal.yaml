@@ -31,10 +31,6 @@ output_ria_path: ".babs/output_ria"
 # The output is the cheapest viable starting point for someone who
 # wants to do their own resampling.
 #
-# --output-spaces and --cifti-output below are inert at this level
-# (verified: no space-* or .dtseries.nii in the output). They are kept
-# so every fmriprep stage shares one flag set.
-#
 # Pair-runs with fMRIPrep-25.2.5+full.yaml off the same anat
 # scaffold so we can compare the two outputs directly.
 bids_app_args:
