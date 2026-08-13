@@ -34,7 +34,7 @@ bids_app_args:
   $SUBJECT_SELECTION_FLAG: "--participant-label"
   -w: ".git/tmp/wkdir"
   --level: "resampling"
-  --output-spaces: "MNI152NLin2009cAsym:res-2 MNI152NLin6Asym:res-2"
+  --output-spaces: "MNI152NLin2009cAsym:res-2:res-native MNI152NLin6Asym:res-2:res-native fsaverage"
   --cifti-output: "91k"
   --random-seed: "12345"
   --skull-strip-fixed-seed: ""
