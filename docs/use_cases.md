@@ -4,10 +4,8 @@ The user stories mechababs is designed to serve — the requirements the rest of
 A mix of what works today and what we are building toward; expected to grow.
 When a design decision is unclear, it should be resolvable by asking "which use case does this serve?"
 
-The whole document is open for feedback; 💬 marks the points that specifically need it — open questions we want others to weigh in on.
-
-## Terminology 💬
-The words below are used consistently throughout this document and [output_structure.md](output_structure.md); agreeing on them is itself an open question.
+## Terminology
+The words below are used consistently throughout this document and [output_structure.md](output_structure.md).
 
 - **source dataset** — a raw BIDS dataset, the input to a pipeline.
 - **derivative** — what one BIDS App produced from one source dataset.
@@ -38,8 +36,8 @@ Finishing whole studies before starting new ones only pays off if the order is m
 
 ## Act on one study within a superstudy
 As a user, I can direct mechababs at a specific study and have it advance only that one, so I can concentrate limited cluster resources on finishing a study rather than spreading progress across the whole set (see [Run a study to completion under a finite budget](#run-a-study-to-completion-under-a-finite-budget)).
-A **selector is required**; the *mechanism* is open.
-💬 Scoping by working directory was the initial pitch, but the superstudy still takes writes when a study finishes — so the working directory may not be the right selector, and an explicit study (or campaign) argument may be needed instead.
+The selector is an explicit study argument: the working directory gives the operating *level* (a campaign is operated from where it was configured), and the argument narrows within it.
+Scoping by working directory alone was considered and rejected — the superstudy still takes writes when a study finishes, so the working directory cannot be the selector.
 
 ## Release a finished study
 As a user, once mechababs reports a study finished I can push it and remove it from the cluster.
@@ -62,7 +60,7 @@ As a user or tool author, I want the files mechababs keeps its state in to be do
 As a user with limited cluster resources — disk and inodes, but also job slots, CPU, and RAM — I can sweep more studies than fit at once, because finishing and releasing a study frees what the next one needs.
 Storage is the binding one: getting a finished study *off* the cluster as soon as it is done is how space is reclaimed, so the workflow favors finishing whole studies over advancing every study's first stage.
 This is *why* order ([Choose what gets worked next](#choose-what-gets-worked-next)) and a per-study [selector](#act-on-one-study-within-a-superstudy) matter — they are how the user concentrates finite resources on completing-and-offloading.
-💬 Whether a single study's own peak footprint fits is a separate problem, not covered by this.
+Whether a single study's own peak footprint fits is a separate problem, not covered by this.
 
 ## Work in a single study, no superstudy
 As a researcher with a single BIDS study, I want to run a BIDS App on it without setting up a superstudy.
@@ -123,9 +121,9 @@ As a user running a large sweep, when a bug is found and fixed in a new release,
 As a user, when new subjects or sessions are added to a source dataset after processing has started, the reconciler picks them up on a later tick and processes them alongside the rest.
 This is the additive case: no already-produced derivative is invalidated, so it is the same shape as adding a dataset to a running campaign, one grain finer.
 
-## Handle a source dataset's data changing after processing 💬
+## Handle a source dataset's data changing after processing
 As a user, I can handle data changing on subjects or sessions that have already been processed — the harder case, because derivatives already produced from that data may now be stale.
-💬 This likely belongs at the BABS level rather than in mechababs, and overlaps what Yarik is exploring in OpenNeuroStudies (representing such state changes uniformly across a submodule hierarchy); needs discussion.
+This likely belongs at the BABS level rather than in mechababs, and overlaps what Yarik is exploring in OpenNeuroStudies (representing such state changes uniformly across a submodule hierarchy); it is open, to be discussed.
 
 ## Be able to operate on a crippled filesystem
 As a user, I can still collect derivatives with correct provenance on a datalad "crippled filesystem" — one without symlink support, where git-annex runs on an adjusted branch.

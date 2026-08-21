@@ -4,8 +4,6 @@
 It is not what we produce today, and the study-first shape below is under active design.
 Where today's output deviates from this target, there is an open issue for the gap — or this document is wrong and should change.
 
-The whole document is open for feedback; 💬 marks the points that specifically need it — open questions we want others to weigh in on.
-
 ## Everything is a dataset
 
 Every level that is a **dataset** here is a datalad dataset, and valid BIDS (`dataset_description.json` and `LICENSE` in each root) — except where noted, as possible future improvements to BIDS.
@@ -16,7 +14,8 @@ It does not reshape data: a derivative is created **in its final home**, inside 
 
 The **study is the primary unit.**
 Today we rely on studies cloned from [OpenNeuroStudies](https://github.com/OpenNeuroStudies/OpenNeuroStudies), which already describe the raw data and any prior derivatives.
-In principle mechababs can *operate* on any valid BIDS study, but 💬 **creating** one is a gap: authoring the study — from raw data, or by assembling assorted source datasets — and generating the metadata files it depends on (the per-subject datatypes/counts TSV that selection reads, and the catalogs) are today handled by OpenNeuro tooling, so this is a real barrier to entry for anyone outside that ecosystem.
+In principle mechababs can *operate* on any valid BIDS study, but **creating** one is a gap: authoring the study — from raw data, or by assembling assorted source datasets — and generating the metadata files it depends on (the per-subject datatypes/counts TSV that selection reads, and the catalogs) are today handled by OpenNeuro tooling, so this is a real barrier to entry for anyone outside that ecosystem.
+Study authoring stays out of mechababs' scope; the answer is a shared study template or generator to recommend (e.g. [brain-bbqs/study-template](https://github.com/brain-bbqs/study-template)), and settling on one is open work.
 A single study is fully operable on its own: no campaign or superstudy required.
 The superstudy is an optional layer for running many studies at once.
 
@@ -41,21 +40,25 @@ study-<id>/
         campaign.yaml          #   the BIDS-App-config bundle (+ depends_on chain) + cluster choice
         bids-app-configs/      #   the individual app configs (mriqc, fmriprep-anat, ...)
         clusters/              #   cluster config(s)
+        env.sh                 #   source to select this campaign + activate its venv
         pyproject.toml         #   declares mechababs @ git+..., babs @ git+...
         uv.lock                #   the resolved, reproducible environment
-        <statefile>            #   this study's cells for this campaign
-    derivative-attempts/       # 💬 retired derivatives, kept for their evidence
+        sourcedata+derivatives.tsv  # the statefile: this study's cells for this campaign
+        inclusions/            #   the requested subject list per cell, pinned at scaffold
 ```
 
 A study can hold **more than one** `sourcedata/<id>`; a campaign selects which to process (the `(study, sourcedata)` pair is the coarse selection; subjects/configs are the fine selection).
+When the study holds exactly one raw BIDS dataset, the generic slots `sourcedata/raw` or `sourcedata/rawbids` are preferred; `sourcedata/<id>` covers the multiple-datasets case.
 Derivative directory names follow the upstream convention — `<Tool>-<Ver>` in the tool's own casing (`fMRIPrep-25.1.1`, `MRIQC-24.0.2`) — plus `+<stage>` where a run has stages (`fMRIPrep-25.1.1+anat`).
+When the sourcedata slot is a generic one (`sourcedata/raw`, `sourcedata/rawbids`) that suffix is enough; otherwise the derivative also carries the source-dataset id — `<Tool>-<Ver>+<stage>+<id>/` (e.g. `fMRIPrep-25.1.1+anat+ds000001`) — since a cell is (source dataset × app config) and the name would collide when a study holds several source datasets.
 
 **A campaign is a config-epoch run, not a dataset.**
 `.mechababs/campaigns/<label>/` is where a study records each campaign that touched it: one pinned environment (`uv.lock` fixes `mechababs` + `babs` by git commit — a fork is just a different URL), one bundle of BIDS-App configs, and the state of that study's cells.
 A study **accumulates** campaigns over time — a set of derivatives now, another a year later with newer tools, each its own `<label>` — and because the record is the study's own, the study stays operable standalone: clone it, `uv sync` the campaign's lock, and everything needed to add to it or reproduce it is inside.
 
-**`.mechababs/derivative-attempts/`** 💬 holds derivatives that had to be redone (a resource change, a tool bug, a config fix): `mechababs retire-derivative` moves the dataset here and resets its cell in one transition, so the evidence — logs, git history, `datalad run` records of *why* it was redone — is kept rather than deleted.
-💬 **Open:** whether these should live inside the study at all — they would then travel with a published study, which we may not want. Needs discussion.
+**Retired derivatives live outside the study.**
+A derivative that had to be redone (a resource change, a tool bug, a config fix) is retired, not deleted: `mechababs retire-derivative` moves it to a required target directory that must be **outside the study** (a destination inside is refused) and resets its cell in the same transition.
+The evidence — logs, git history, `datalad run` records of *why* it was redone — is kept, and because the archive is outside the study, retired attempts never travel with a published study.
 
 ---
 
@@ -67,28 +70,31 @@ The superstudy is a *pattern, not a fixed dataset* — OpenNeuroStudies can be o
 ```
 superstudy/
   dataset_description.json     # DatasetType "study"
-  studies.tsv                  # 💬 catalog of member studies (+ studies.json sidecar)
-  studies+derivatives.tsv      # 💬 map of which derivatives exist per study (OpenNeuroStudies' file)
+  studies.tsv                  # OpenNeuroStudies' own catalog (authored upstream, when present)
+  studies+derivatives.tsv      # OpenNeuroStudies' own derivative map (authored upstream, when present)
   study-<id1>/                 # member studies, at root
   study-<id2>/
   .mechababs/
     campaigns/
-      <label>/                 # a campaign authored here and fanned out to the members
-        campaign.yaml          #   the bundle + `studies:` (inline list OR selected-studies.tsv)
-        bids-app-configs/  clusters/  pyproject.toml  uv.lock
-        selected-studies.tsv   #   the (study, sourcedata) subset this campaign runs on
+      <label>/                 # a campaign configured at this level
+        campaign.yaml          #   the BIDS-App-config bundle + cluster choice
+        bids-app-configs/  clusters/  env.sh  pyproject.toml  uv.lock
+        studies+sourcedata.tsv #   membership: the (study, sourcedata) pairs this campaign runs on
 ```
 
-A superstudy campaign dir mirrors a study's, with one complementary difference: it carries **membership** (`campaign.yaml`'s `studies:` field — an inline list *or* a `selected-studies.tsv`) and **no statefile** — the state shards to the member studies, and the superstudy computes the rollup from them.
+A superstudy campaign dir mirrors a study's, with one complementary difference: it carries **membership** (`studies+sourcedata.tsv`) and **no statefile** — detailed per-cell state shards to the member studies, and the superstudy computes the rollup from them on demand.
 So a study has `+state / −membership` (it *is* one study); a superstudy has `+membership / −state` (it coordinates many).
+The one committed state at the super is deliberately coarse: a per-member lifecycle status (`pending` / `active` / `complete`) alongside the membership, updated only at material transitions (a member starts; a member's last cell merges) — never per tick.
 
 `mechababs campaign init` is the same command at either level.
-At a superstudy it authors the config once and distributes a copy into each selected member's `.mechababs/campaigns/<label>/`.
+At a superstudy it touches only the superstudy's own campaign dir — no members are selected yet, so there is nothing to fan out to.
+A member's campaign footprint (config copy, lock, empty statefile shard) is written when `add-dataset` first selects a source dataset in it; a member added later gets its footprint the same way, so there is no separate catch-up step.
 
 **Homing a superstudy is optional.** The orchestration provenance lives in the studies (each study's git history, its `datalad run` records, its copied-down config), so the superstudy holds nothing durable the members don't — it can be re-derived from them. It *can* be published to a durable home (be OpenNeuroStudies, or a dedicated superdataset) but does not have to be.
 
-💬 **`studies.tsv`** — this catalog name is overloaded: OpenNeuroStudies already has a `studies.tsv` and `studies+derivatives.tsv` (authoritative indexes). Whether the superstudy's catalog reuses that file or needs its own name is a question to raise. (The campaign's `selected-studies.tsv` is a distinct thing — a per-campaign subset, in `.mechababs/`, not the root catalog.)
-💬 A study-of-studies is also a gap in BIDS — BIDS describes no study containing studies, though OpenNeuroStudies already uses the pattern. **TODO: raise with BIDS.**
+The root `studies.tsv` / `studies+derivatives.tsv` are OpenNeuroStudies' own authoritative indexes, present when the superstudy is OpenNeuroStudies (or another catalog-keeping superdataset); mechababs never writes them.
+mechababs' catalog is the campaign's `studies+sourcedata.tsv` under `.mechababs/` — a distinct file with a distinct owner, so the names do not collide.
+A study-of-studies is also a gap in BIDS — BIDS describes no study containing studies, though OpenNeuroStudies already uses the pattern. **TODO: raise with BIDS.**
 
 ---
 
@@ -113,9 +119,10 @@ The BIDS app writes `dataset_description.json` and `sub-*` here.
 
 Inputs are registered by **URL**, not local path, so the recorded provenance re-resolves anywhere.
 
-### `prov/` — orchestration provenance 💬
+### `prov/` — orchestration provenance
 
-💬 This section is under active design — the shape below was not fully settled even before study-first, and study-first changes where the `Bundle` points: **to the study** (which now holds the orchestration record) rather than to a separate campaign dataset.
+This section is under active design and is **out of scope for the study-first implementation** — the `datalad run` command capture in the study is the provenance that implementation delivers, and the BEP028 record below is tracked separately.
+The shape was not fully settled even before study-first; study-first changes where the `Bundle` points: **to the study** (which now holds the orchestration record) rather than to a separate campaign dataset.
 
 The BIDS app records itself in its own `dataset_description.json`. `prov/` records the tools that *composed and ran* it,
 following [BEP028 / BIDS-Prov](https://github.com/bids-standard/BEP028_BIDSprov): `prov/prov-<label>_<suffix>.json`.
