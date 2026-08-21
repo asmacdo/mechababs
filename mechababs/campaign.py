@@ -32,6 +32,7 @@ and "the environment this campaign records" can drift apart in either direction.
 against tools that did not produce it.
 """
 
+import csv
 import hashlib
 import json
 import os
@@ -45,6 +46,10 @@ CAMPAIGNS_DIRNAME = "campaigns"
 
 CONFIG_FILENAME = "campaign.yaml"
 STATE_FILENAME = "sourcedata+derivatives.tsv"
+# The single-writer flock (spec: the campaign, not the study, is the writer unit).
+# Beside the statefile it guards, and gitignored from inside the campaign dir — a
+# lock left in the tree would otherwise dirty the study every `iterate`.
+LOCK_FILENAME = "." + STATE_FILENAME + ".lock"
 APPS_DIRNAME = "bids-app-configs"
 CLUSTERS_DIRNAME = "clusters"
 INCLUSIONS_DIRNAME = "inclusions"
@@ -88,6 +93,10 @@ def state_path(study, label):
     return campaign_dir(study, label) / STATE_FILENAME
 
 
+def lock_path(study, label):
+    return campaign_dir(study, label) / LOCK_FILENAME
+
+
 def apps_dir(study, label):
     return campaign_dir(study, label) / APPS_DIRNAME
 
@@ -125,6 +134,35 @@ def venv_path(study, label):
 def initial_header():
     """The header line of a fresh statefile — no rows; add-dataset writes those."""
     return "\t".join(STATE_COLUMNS) + "\n"
+
+
+def read_state(study, label):
+    """The shard's cells, in file order — one dict per (source dataset x app) row.
+
+    Row order is meaningful: ``iterate`` advances cells in it (spec, "Ordering is
+    unchanged"), so readers and writers preserve it rather than sorting.
+    """
+    with open(state_path(study, label), newline="") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
+def write_state(study, label, rows):
+    """Rewrite the shard with ``STATE_COLUMNS`` and ``rows``, in order.
+
+    The schema is the module's, not the file's: unlike the wide ledger it replaces,
+    a tall statefile's columns do not vary with the campaign's app bundle.
+    """
+    with open(state_path(study, label), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=STATE_COLUMNS, delimiter="\t",
+                           lineterminator="\n")
+        w.writeheader()
+        for row in rows:
+            w.writerow({c: row.get(c, "") for c in STATE_COLUMNS})
+
+
+def cell_key(row):
+    """A cell's identity: the (source dataset, app config) pair. Unique in a shard."""
+    return (row["source_dataset"], row["app_config"])
 
 
 def lock_digest(lock_text):

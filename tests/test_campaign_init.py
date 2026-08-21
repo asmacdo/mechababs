@@ -103,11 +103,13 @@ def test_campaign_yaml_records_the_bundle_order_cluster_and_limit(study, configs
     }
 
 
-def test_the_venv_is_gitignored_from_inside_the_campaign(study, configs, stub_env):
+def test_the_venv_and_the_flock_are_gitignored_from_inside_the_campaign(
+        study, configs, stub_env):
     # mechababs' footprint stays under .mechababs/; the study's own .gitignore is
     # upstream's and is not touched
     campaign = init(study, configs)
-    assert (campaign / ".gitignore").read_text() == ".venv/\n"
+    assert (campaign / ".gitignore").read_text().split() == [
+        ".venv/", campaign_mod.LOCK_FILENAME]
     assert not (study / ".gitignore").exists()
 
 

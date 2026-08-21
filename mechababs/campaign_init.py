@@ -27,7 +27,6 @@ shells out to, is named by ``--babs URL@REF``.
 import json
 import re
 import shutil
-import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -37,6 +36,7 @@ from pathlib import Path
 import yaml
 
 from mechababs import campaign as campaign_mod
+from mechababs.utils import datalad_save, run
 
 BABS_DEFAULT = "https://github.com/PennLINC/babs.git@main"
 
@@ -53,26 +53,7 @@ CAMPAIGN_EXTRAS = [
 # A label names a directory and is exported as an env var, so keep it boring.
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-DATALAD = str(Path(sys.prefix) / "bin" / "datalad")
 UV = "uv"
-
-
-def run(*cmd, **kwargs):
-    """Run a command, echoing it; abort on non-zero exit."""
-    print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr)
-    subprocess.run([str(c) for c in cmd], check=True, **kwargs)
-
-
-def datalad_save(study, message, path):
-    """Commit the campaign's files to the study, path-scoped, straight into git.
-
-    ``--to-git``: every file here is small text that a clone must be able to read
-    without fetching annex content — the lock especially, since rebuilding the
-    environment from a fresh clone is the whole reproduction story.
-    """
-    datalad = DATALAD if Path(DATALAD).exists() else "datalad"
-    run(datalad, "save", "--dataset", str(study), "--message", message,
-        "--to-git", str(path))
 
 
 # --------------------------------------------------------------------------
@@ -343,10 +324,13 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
 
     campaign.mkdir(parents=True)
 
-    # The venv is ephemeral and rebuilt from the lock. Ignore it from INSIDE the
-    # campaign dir, so mechababs' whole footprint stays under .mechababs/ and the
-    # study's own .gitignore is left alone.
-    (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
+    # The venv is ephemeral and rebuilt from the lock; the flock is a runtime
+    # artifact. Ignore both from INSIDE the campaign dir, so mechababs' whole
+    # footprint stays under .mechababs/ and the study's own .gitignore is left alone.
+    # Untracked-but-not-ignored files here would dirty the study, which the
+    # transition verbs' clean-in guard reads as unattributable work.
+    (campaign / ".gitignore").write_text(
+        f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.LOCK_FILENAME}\n")
 
     apps = resolve_apps(campaign / campaign_mod.APPS_DIRNAME, app_args)
     cluster_file = stage_config(

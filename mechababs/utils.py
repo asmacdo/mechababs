@@ -32,11 +32,50 @@ node is attributable; a dirty tree raises rather than absorbing unrelated change
 """
 
 import fcntl
+import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 from mechababs.state import LOCK_FILENAME
+
+# The datalad of the environment mechababs is running in, not whatever is on PATH:
+# the campaign's venv is where the pinned tools live, and a `uvx`-run command has a
+# datalad the ambient PATH does not.
+DATALAD = str(Path(sys.prefix) / "bin" / "datalad")
+
+
+def run(*cmd, **kwargs):
+    """Run a command, echoing it; abort on non-zero exit."""
+    print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr)
+    subprocess.run([str(c) for c in cmd], check=True, **kwargs)
+
+
+def datalad_save(study, message, path):
+    """Commit ``path`` to the study, path-scoped, straight into git.
+
+    ``--to-git``: the files mechababs writes under ``.mechababs/`` are small text
+    that a clone must be able to read without fetching annex content — the lock and
+    the statefile especially, since rebuilding the environment and reading the
+    campaign's cells from a fresh clone is the whole reproduction story.
+
+    Path-scoped so a commit says exactly what it changed and never absorbs unrelated
+    work sitting in the study.
+    """
+    datalad = DATALAD if Path(DATALAD).exists() else "datalad"
+    run(datalad, "save", "--dataset", str(study), "--message", message,
+        "--to-git", str(path))
+
+
+@contextmanager
+def flocked(lock):
+    """Hold an exclusive flock on ``lock`` (created if absent) for the block."""
+    with open(lock, "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 @contextmanager
@@ -47,13 +86,8 @@ def locked(campaign):
     `retire-derivative` from interleaving: each holds this for the whole
     read-modify-write of the ledger and the nest it describes.
     """
-    lock = Path(campaign) / LOCK_FILENAME
-    with open(lock, "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+    with flocked(Path(campaign) / LOCK_FILENAME):
+        yield
 
 
 @contextmanager
