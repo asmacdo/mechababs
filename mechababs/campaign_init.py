@@ -34,6 +34,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from importlib import metadata
 from pathlib import Path
 
@@ -85,23 +86,62 @@ def describe_result(result):
     return str(message)
 
 
-def datalad_save(study, message, path):
-    """Commit the campaign's files to the study, path-scoped.
+class PendingSave:
+    """The save a ``campaign_save_scope`` block is working toward.
 
-    Straight into git, but that is the campaign's own ``.gitattributes`` doing it
-    (see ``GITATTRIBUTES``), not a flag on this save.
+    The block sets ``message``: a useful label names what the block did (the apps it
+    staged, the cell it advanced), which is not knowable at entry — and entry is
+    where the clean-in check has to happen.
+    """
+
+    def __init__(self):
+        self.message = None
+
+
+@contextmanager
+def campaign_save_scope(root, path):
+    """Clean in, one commit out: whatever the block writes at ``path``, committed.
+
+    **Clean in.** ``path`` must be clean *before* the block writes, so the commit is
+    attributable — everything in it is this block's work, and no pre-existing edit is
+    silently absorbed into a mechababs-authored commit. ``campaign init`` passes it
+    trivially (its target does not exist yet); the guard belongs here rather than at
+    the caller because the callers that follow — ``add-dataset`` saving the statefile,
+    scaffold pinning an inclusion — write into a directory a human may have touched.
+
+    The check is **path-scoped**, which is also what makes it cheap: a campaign dir
+    holds no subdatasets, so this is a status over a handful of small files rather
+    than a walk of the study's sourcedata.
+
+    Files land in git rather than annex, but that is the campaign's own
+    ``.gitattributes`` doing it (see ``GITATTRIBUTES``), not a flag on this save.
 
     Through ``datalad.api``, not a shelled-out ``datalad``: datalad is a declared
     dependency, so it is importable wherever this runs — including the ``uvx``
-    install, which has no ``bin/datalad`` on PATH to find. Same call the rest of
-    the codebase makes (``utils.datalad_save_scope``).
+    install, which has no ``bin/datalad`` beside the interpreter to find. (Sibling to
+    ``utils.datalad_save_scope``, whose clean-in is whole-dataset and whose save is
+    ``since=``-based; here the scope is one directory, so both can be path-scoped.)
     """
-    results = Dataset(str(study)).save(
-        path=str(path), message=message,
-        result_renderer="disabled", on_failure="ignore", return_type="list")
+    ds = Dataset(str(root))
+    dirty = ds.status(path=str(path), untracked="all", result_renderer="disabled",
+                      on_failure="ignore", return_type="list")
+    dirty = [r for r in dirty if r.get("state") != "clean"]
+    if dirty:
+        sys.exit(f"refusing to write into {path}: it is not clean, and the commit "
+                 f"would absorb changes mechababs did not make.\n" +
+                 "\n".join(f"  {r.get('state')}: {r.get('path')}" for r in dirty))
+
+    pending = PendingSave()
+    yield pending
+    if not pending.message:
+        raise RuntimeError(f"campaign_save_scope({path}) exited with no message set")
+
+    results = ds.save(path=str(path), message=pending.message,
+                      result_renderer="disabled", on_failure="ignore",
+                      return_type="list")
     failed = [r for r in results if r.get("status") not in ("ok", "notneeded")]
     if failed:
-        sys.exit(f"failed to commit the campaign into {study}\n" +
+        sys.exit(f"failed to commit {path} into {root}\n" +
                  "\n".join(f"  {r.get('status')}: {r.get('path')} "
                            f"({describe_result(r)})" for r in failed))
 
@@ -386,54 +426,58 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
     if not app_args:
         sys.exit("--apps must name at least one BIDS-App config")
 
-    campaign.mkdir(parents=True)
+    # Everything that writes runs inside the scope: it checks the target is clean
+    # first, and commits what the block produced as one attributable node.
+    with campaign_save_scope(study, campaign) as save:
+        campaign.mkdir(parents=True)
 
-    # First file in, before anything it has to govern: git-annex reads the working
-    # tree's attributes as it adds, so the attribute must never be younger than a
-    # save that could reach these paths.
-    (campaign / ".gitattributes").write_text(GITATTRIBUTES)
+        # First file in, before anything it has to govern: git-annex reads the
+        # working tree's attributes as it adds, so the attribute must never be
+        # younger than a save that could reach these paths.
+        (campaign / ".gitattributes").write_text(GITATTRIBUTES)
 
-    # The venv is ephemeral and rebuilt from the lock. Ignore it from INSIDE the
-    # campaign dir, so mechababs' whole footprint stays under .mechababs/ and the
-    # study's own .gitignore is left alone.
-    (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
+        # The venv is ephemeral and rebuilt from the lock. Ignore it from INSIDE the
+        # campaign dir, so mechababs' whole footprint stays under .mechababs/ and the
+        # study's own .gitignore is left alone.
+        (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
 
-    apps = resolve_apps(campaign / campaign_mod.APPS_DIRNAME, app_args)
-    cluster_file = stage_config(
-        campaign / campaign_mod.CLUSTERS_DIRNAME, cluster_arg, "cluster")
+        apps = resolve_apps(campaign / campaign_mod.APPS_DIRNAME, app_args)
+        cluster_file = stage_config(
+            campaign / campaign_mod.CLUSTERS_DIRNAME, cluster_arg, "cluster")
 
-    config = {
-        "label": label,
-        "apps": [f"{campaign_mod.APPS_DIRNAME}/{filename}" for filename, _, _ in apps],
-        "cluster": f"{campaign_mod.CLUSTERS_DIRNAME}/{cluster_file}",
-        "limit": limit,
-    }
-    (campaign / campaign_mod.CONFIG_FILENAME).write_text(
-        yaml.safe_dump(config, sort_keys=False))
+        config = {
+            "label": label,
+            "apps": [f"{campaign_mod.APPS_DIRNAME}/{filename}"
+                     for filename, _, _ in apps],
+            "cluster": f"{campaign_mod.CLUSTERS_DIRNAME}/{cluster_file}",
+            "limit": limit,
+        }
+        (campaign / campaign_mod.CONFIG_FILENAME).write_text(
+            yaml.safe_dump(config, sort_keys=False))
 
-    # Header only: which source datasets a campaign acts on is an explicit
-    # selection, made by `add-dataset`, not implied by init.
-    (campaign / campaign_mod.STATE_FILENAME).write_text(campaign_mod.initial_header())
+        # Header only: which source datasets a campaign acts on is an explicit
+        # selection, made by `add-dataset`, not implied by init.
+        (campaign / campaign_mod.STATE_FILENAME).write_text(
+            campaign_mod.initial_header())
 
-    if mechababs_spec:
-        mechababs_req, mechababs_source = "mechababs", git_source(
-            *parse_source_spec(mechababs_spec, "mechababs"))
-    else:
-        mechababs_req, mechababs_source = running_mechababs_pin()
-    # No --babs: babs stays a plain dependency, so uv resolves the latest release
-    # from PyPI and freezes that version in the lock. A git ref is the override, for
-    # running a PR branch (or a local one) through a campaign.
-    babs_source = git_source(*parse_source_spec(babs_spec, "babs")) if babs_spec else None
-    (campaign / campaign_mod.PYPROJECT_FILENAME).write_text(
-        render_pyproject(label, mechababs_req, mechababs_source, babs_source))
+        if mechababs_spec:
+            mechababs_req, mechababs_source = "mechababs", git_source(
+                *parse_source_spec(mechababs_spec, "mechababs"))
+        else:
+            mechababs_req, mechababs_source = running_mechababs_pin()
+        # No --babs: babs stays a plain dependency, so uv resolves the latest release
+        # from PyPI and freezes that version in the lock. A git ref is the override,
+        # for running a PR branch (or a local one) through a campaign.
+        babs_source = (git_source(*parse_source_spec(babs_spec, "babs"))
+                       if babs_spec else None)
+        (campaign / campaign_mod.PYPROJECT_FILENAME).write_text(
+            render_pyproject(label, mechababs_req, mechababs_source, babs_source))
 
-    write_env_sh(campaign, label)
-    build_env(campaign, label)
+        write_env_sh(campaign, label)
+        build_env(campaign, label)
 
-    datalad_save(
-        study,
-        f"mechababs campaign init {label} "
-        f"(apps: {', '.join(name for _, name, _ in apps)}; cluster: {cluster_file})",
-        campaign,
-    )
+        save.message = (
+            f"mechababs campaign init {label} "
+            f"(apps: {', '.join(name for _, name, _ in apps)}; "
+            f"cluster: {cluster_file})")
     return campaign

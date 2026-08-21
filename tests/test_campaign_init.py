@@ -9,6 +9,7 @@ test at the foot of this file.
 
 import shutil
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -61,11 +62,14 @@ def stub_env(monkeypatch):
         calls["build_env"] = campaign
         return pretend_build_env(campaign, label)
 
-    def fake_save(study, message, path):
-        calls["save"] = (study, message, path)
+    @contextmanager
+    def fake_save_scope(root, path):
+        pending = campaign_init.PendingSave()
+        yield pending
+        calls["save"] = (root, pending.message, path)
 
     monkeypatch.setattr(campaign_init, "build_env", fake_build_env)
-    monkeypatch.setattr(campaign_init, "datalad_save", fake_save)
+    monkeypatch.setattr(campaign_init, "campaign_save_scope", fake_save_scope)
     return calls
 
 
@@ -173,6 +177,63 @@ def test_campaign_files_land_in_git_not_annex(tmp_path, configs, monkeypatch):
     assert not [name for name in entries if f"/{campaign_mod.VENV_DIRNAME}/" in name]
     assert subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
                           capture_output=True, text=True, check=True).stdout == ""
+
+
+# --- the save scope ---------------------------------------------------------
+
+@pytest.fixture
+def real_study(tmp_path):
+    """A real datalad dataset — the save scope talks to git, so it needs one."""
+    if shutil.which("git-annex") is None:
+        pytest.skip("git-annex is needed for a real datalad dataset")
+    from datalad.api import Dataset
+
+    root = tmp_path / "real-study"
+    Dataset(str(root)).create(result_renderer="disabled")
+    return root
+
+
+def test_the_save_scope_commits_only_its_own_target(real_study):
+    target = real_study / ".mechababs" / "campaigns" / "nprep"
+    (real_study / "upstream-edit.txt").write_text("someone else's work\n")
+
+    with campaign_init.campaign_save_scope(real_study, target) as save:
+        target.mkdir(parents=True)
+        (target / "campaign.yaml").write_text("label: nprep\n")
+        save.message = "campaign init nprep"
+
+    log = subprocess.run(["git", "-C", str(real_study), "log", "-1", "--format=%s"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    assert log == "campaign init nprep"
+    # the unrelated edit is still sitting there, untouched and uncommitted
+    assert subprocess.run(["git", "-C", str(real_study), "status", "--porcelain"],
+                          capture_output=True, text=True,
+                          check=True).stdout == "?? upstream-edit.txt\n"
+
+
+def test_the_save_scope_refuses_a_target_that_is_already_dirty(real_study):
+    # add-dataset's case: a hand-edit sitting in the campaign dir would otherwise be
+    # swept into a commit attributed to mechababs
+    target = real_study / ".mechababs" / "campaigns" / "nprep"
+    target.mkdir(parents=True)
+    (target / "hand-edit.yaml").write_text("someone was here\n")
+
+    with pytest.raises(SystemExit) as e:
+        with campaign_init.campaign_save_scope(real_study, target):
+            pass                      # never reached: the guard is at entry
+    assert "hand-edit.yaml" in str(e.value)
+
+
+def test_the_save_scope_ignores_dirt_outside_its_target(real_study):
+    # path-scoped, so a dirty study elsewhere is not this save's problem — and the
+    # check never walks the study's sourcedata
+    target = real_study / ".mechababs" / "campaigns" / "nprep"
+    (real_study / "elsewhere.txt").write_text("dirty\n")
+
+    with campaign_init.campaign_save_scope(real_study, target) as save:
+        target.mkdir(parents=True)
+        (target / "campaign.yaml").write_text("label: nprep\n")
+        save.message = "campaign init nprep"
 
 
 # --- the pins ---------------------------------------------------------------
@@ -325,8 +386,14 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
                       check=False).returncode != 0:
         pytest.skip("uv not available")
     saved = {}
-    monkeypatch.setattr(campaign_init, "datalad_save",
-                        lambda s, m, p: saved.update(path=p))
+
+    @contextmanager
+    def fake_save_scope(root, path):
+        pending = campaign_init.PendingSave()
+        yield pending
+        saved["path"] = path
+
+    monkeypatch.setattr(campaign_init, "campaign_save_scope", fake_save_scope)
 
     checkout = Path(__file__).resolve().parent.parent
     branch = subprocess.run(["git", "-C", str(checkout), "rev-parse",
