@@ -37,6 +37,7 @@ and "the environment this campaign records" can drift apart in either direction.
 against tools that did not produce it.
 """
 
+import csv
 import hashlib
 import json
 import os
@@ -50,12 +51,17 @@ CAMPAIGNS_DIRNAME = "campaigns"
 
 CONFIG_FILENAME = "campaign.yaml"
 STATE_FILENAME = "sourcedata+derivatives.tsv"
+# The single-writer flock (spec: the campaign, not the study, is the writer unit).
+# Beside the statefile it guards, and gitignored from inside the campaign dir — a
+# lock left in the tree would otherwise dirty the study every `iterate`. Named for
+# the file lock it is, NOT `UV_LOCK_FILENAME`: that is uv.lock, three lines down.
+FLOCK_FILENAME = "." + STATE_FILENAME + ".lock"
 APPS_DIRNAME = "bids-app-configs"
 CLUSTERS_DIRNAME = "clusters"
 INCLUSIONS_DIRNAME = "inclusions"
 ENV_FILENAME = "env.sh"
 PYPROJECT_FILENAME = "pyproject.toml"
-LOCK_FILENAME = "uv.lock"
+UV_LOCK_FILENAME = "uv.lock"
 VENV_DIRNAME = ".venv"
 
 # Written into the venv (so it is gitignored and per-environment by construction)
@@ -99,6 +105,10 @@ def state_path(study, label):
     return campaign_dir(study, label) / STATE_FILENAME
 
 
+def flock_path(root, label):
+    return campaign_dir(root, label) / FLOCK_FILENAME
+
+
 def apps_dir(root, label):
     return campaign_dir(root, label) / APPS_DIRNAME
 
@@ -119,8 +129,8 @@ def pyproject_path(root, label):
     return campaign_dir(root, label) / PYPROJECT_FILENAME
 
 
-def lock_path(root, label):
-    return campaign_dir(root, label) / LOCK_FILENAME
+def uv_lock_path(root, label):
+    return campaign_dir(root, label) / UV_LOCK_FILENAME
 
 
 def venv_path(root, label):
@@ -136,6 +146,35 @@ def venv_path(root, label):
 def initial_header():
     """The header line of a fresh statefile — no rows; add-dataset writes those."""
     return "\t".join(STATE_COLUMNS) + "\n"
+
+
+def read_state(study, label):
+    """The shard's cells, in file order — one dict per (source dataset x app) row.
+
+    Row order is meaningful: ``iterate`` advances cells in it (spec, "Ordering is
+    unchanged"), so readers and writers preserve it rather than sorting.
+    """
+    with open(state_path(study, label), newline="") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
+def write_state(study, label, rows):
+    """Rewrite the shard with ``STATE_COLUMNS`` and ``rows``, in order.
+
+    The schema is the module's, not the file's: unlike the wide ledger it replaces,
+    a tall statefile's columns do not vary with the campaign's app bundle.
+    """
+    with open(state_path(study, label), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=STATE_COLUMNS, delimiter="\t",
+                           lineterminator="\n")
+        w.writeheader()
+        for row in rows:
+            w.writerow({c: row.get(c, "") for c in STATE_COLUMNS})
+
+
+def cell_key(row):
+    """A cell's identity: the (source dataset, app config) pair. Unique in a shard."""
+    return (row["source_dataset"], row["app_config"])
 
 
 def lock_digest(lock_text):
@@ -208,15 +247,15 @@ def require_env_match(root, label):
             f"  source {env_path(root, label)}"
         )
 
-    lock = lock_path(root, label)
+    lock = uv_lock_path(root, label)
     if not lock.is_file():
-        sys.exit(f"campaign {label!r} has no {LOCK_FILENAME} ({lock})")
+        sys.exit(f"campaign {label!r} has no {UV_LOCK_FILENAME} ({lock})")
     committed = lock_digest(lock.read_text())
     stamp = read_env_stamp(venv)
     if stamp is None or stamp.get("lock_sha256") != committed:
         sys.exit(
             f"the venv of campaign {label!r} does not match its committed "
-            f"{LOCK_FILENAME}\n"
+            f"{UV_LOCK_FILENAME}\n"
             "The lock and the environment have drifted — either the lock was "
             "bumped and the venv not rebuilt, or the venv was built from a lock "
             "that is no longer committed.\n"

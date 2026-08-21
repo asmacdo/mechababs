@@ -8,22 +8,16 @@ is bootstrap.sh's job.
 """
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
-from mechababs import __version__
+from mechababs import __version__, campaign_init, construct, guard, state
+from mechababs import add_dataset as add_dataset_mod
 from mechababs import campaign as campaign_mod
-from mechababs import campaign_init
-from mechababs import construct
-from mechababs import guard
 from mechababs import iterate as iterate_mod
 from mechababs import retire as retire_mod
-from mechababs import select
-from mechababs import state
 from mechababs import status as status_mod
 from mechababs import study as study_mod
-from mechababs import utils
 from mechababs import validate as validate_mod
 
 
@@ -132,86 +126,26 @@ def cmd_configure(args):
     return 0
 
 
-STUDY_URL_TEMPLATE = "https://github.com/OpenNeuroStudies/study-{ds_id}"
-
-
-def default_study_url(ds_id):
-    """The OpenNeuroStudies study for a dataset, by convention (``study-<id>``)."""
-    return STUDY_URL_TEMPLATE.format(ds_id=ds_id)
-
-
 def cmd_add_dataset(args):
-    """Register a dataset: clone its study into the campaign, append one ledger row.
+    """Select a source dataset already in a study into the selected campaign.
 
-    The derivative is produced inside a study (cloned from OpenNeuroStudies), so
-    add-dataset clones that study now — ``study-<id>`` by convention, or ``--study``
-    to override (a non-OpenNeuro study, e.g. an e2e fixture). Only the study
-    skeleton is fetched (submodule pointers); sourcedata content is pulled later by
-    ``babs init``.
+    Sniff + add-state-entry: read the study's per-subject metadata for this source
+    dataset to fill the cell's identity columns, then write one cell per app in the
+    campaign's bundle. No data is installed, and no inclusion is generated (that is
+    scaffold's, where the eligibility rule applies).
 
-    Derives ``processing_level`` from the cloned study's metadata TSV (has-sessions
-    → session) and records it as an INPUT column — iterate reads it, never overwrites
-    it, and it is hand-editable. ``--processing-level`` sets it explicitly, bypassing
-    the derivation — needed for a study without the metadata TSV (e.g. an e2e
-    fixture). On a read failure with no override it is left blank (set it by hand).
-    All pipeline columns start empty; no inclusion is generated (selection is
-    pipeline-axis, deferred to deploy — see scaffold).
+    Runs from the campaign root — the study — like every operating verb;
+    ``--sourcedata`` is a path inside it.
     """
-    campaign = _ensure_campaign(args)
-    guard.require_clean_pins(campaign)
-
-    ds_id = iterate_mod.dataset_id(args.url)
-    study_url = args.study or default_study_url(ds_id)
-
-    # Clone the study into the campaign (registers it as a subdataset). Outside the
-    # ledger lock — it's slow and touches no ledger state. A present study dir means
-    # this dataset was already added; the ledger dedup below is the authority, but
-    # bail early rather than let datalad clone fail on a non-empty target.
-    study_dest = campaign / "studies" / f"study-{ds_id}"
-    if study_dest.exists():
-        sys.exit(f"study already present at {study_dest.relative_to(campaign)} "
-                 f"— already added? (reset: remove it and the ledger row)")
-    print(f"cloning study {study_url} -> {study_dest.relative_to(campaign)}", file=sys.stderr)
-    subprocess.run(
-        ["datalad", "clone", "--dataset", str(campaign), study_url,
-         str(study_dest.relative_to(campaign))],
-        cwd=str(campaign), check=True,
-    )
-
-    # processing_level is a dataset property (has-sessions -> session), derived from
-    # the CLONED study's metadata TSV and recorded as an INPUT column (iterate reads
-    # it, never overwrites; hand-editable). scaffold re-reads the same local TSV for
-    # the per-(dataset,pipeline) inclusion — a different axis, same file, no network.
-    # --processing-level sets it explicitly (a non-OpenNeuro study without the TSV).
-    if args.processing_level:
-        processing_level = args.processing_level
-        print(f"using --processing-level {processing_level} for {ds_id} "
-              f"(bypassing metadata derivation)", file=sys.stderr)
-    else:
-        try:
-            _, processing_level = select.read_study_metadata(study_dest)
-        except Exception as e:
-            processing_level = ""
-            print(f"warning: could not derive processing_level for {ds_id} ({e}); "
-                  f"left blank — set it in the ledger before iterate", file=sys.stderr)
-
-    with utils.locked(campaign):
-        cols = state.header(campaign)
-        rows = state.read_rows(campaign)
-        if any(r["dataset_id"] == ds_id for r in rows):
-            sys.exit(f"already registered: {ds_id}")
-        row = {c: "" for c in cols}
-        row["dataset_id"] = ds_id
-        row["study_url"] = study_url
-        row["processing_level"] = processing_level
-        rows.append(row)
-        state.write_rows(campaign, cols, rows)
-        state.save(campaign,
-                   f"add-dataset {ds_id} (study {study_url}, "
-                   f"{processing_level or 'level TBD'})")
-
-    print(f"registered {ds_id} (study {study_url}, "
-          f"processing_level: {processing_level or 'blank'})", file=sys.stderr)
+    added = add_dataset_mod.add(args.sourcedata)
+    cell = added[0]                        # identity is the same across a dataset's cells
+    size = f"{cell['n_subjects']} subjects"
+    if cell["n_sessions"]:
+        size += f", {cell['n_sessions']} sessions"
+    print(f"selected {cell['source_dataset']} ({cell['processing_level']}-level, "
+          f"{size}) — {len(added)} cell(s): "
+          f"{', '.join(Path(row['app_config']).stem for row in added)}", file=sys.stderr)
+    print("Next: mechababs iterate", file=sys.stderr)
     return 0
 
 
@@ -326,16 +260,21 @@ def main():
                          "(default: all)")
     pc.set_defaults(func=cmd_configure)
 
-    pa = sub.add_parser("add-dataset", help="clone a dataset's study, append a ledger row")
-    pa.add_argument("url", help="the dataset's upstream URL (its identity)")
-    pa.add_argument("--campaign-path", type=Path, default=Path("."),
-                    help="the campaign dataset (default: current directory)")
-    pa.add_argument("--study", default=None,
-                    help="the study to clone (default: OpenNeuroStudies/study-<id> by "
-                         "convention); override for a non-OpenNeuro study, e.g. a test fixture")
-    pa.add_argument("--processing-level", choices=["subject", "session"], default=None,
-                    help="set processing_level explicitly, bypassing OpenNeuroStudies "
-                         "derivation (needed for a non-OpenNeuro dataset)")
+    pa = sub.add_parser(
+        "add-dataset",
+        help="select a source dataset already in a study into this campaign",
+        description=(
+            "Select which data the campaign acts on. Run from the study root (the "
+            "campaign root); --sourcedata names a source dataset ALREADY in the "
+            "study, and one cell per app in the campaign's bundle is written into "
+            "the study's statefile. add-dataset does not "
+            "install data and does not generate a subject inclusion (that happens "
+            "at scaffold, where the app's eligibility rule applies)."
+        ),
+    )
+    pa.add_argument("--sourcedata", metavar="PATH", required=True,
+                    help="a source dataset already in this study "
+                         "(e.g. sourcedata/ds000001)")
     pa.set_defaults(func=cmd_add_dataset)
 
     pi = sub.add_parser("iterate", help="advance pending pipelines one scaffold transition")

@@ -30,18 +30,16 @@ whole campaign.
 import json
 import re
 import shutil
-import subprocess
 import sys
 import urllib.parse
 import urllib.request
-from contextlib import contextmanager
 from importlib import metadata
 from pathlib import Path
 
 import yaml
-from datalad.api import Dataset
 
 from mechababs import campaign as campaign_mod
+from mechababs.utils import campaign_save_scope, run
 
 # Runtime tools a campaign needs beyond mechababs + babs themselves — the same set
 # requirements-campaign.txt installs into a bootstrap-built venv. Kept as a literal
@@ -66,84 +64,6 @@ LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 GITATTRIBUTES = "* annex.largefiles=nothing\n"
 
 UV = "uv"
-
-
-def run(*cmd, **kwargs):
-    """Run a command, echoing it; abort on non-zero exit."""
-    print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr)
-    subprocess.run([str(c) for c in cmd], check=True, **kwargs)
-
-
-def describe_result(result):
-    """A datalad result record's own explanation, in one line.
-
-    ``message`` is a plain string, a lazy ``(format, *args)`` tuple, or absent — so
-    a naive f-string prints a tuple at the user when it matters most.
-    """
-    message = result.get("message") or result.get("action", "no detail")
-    if isinstance(message, tuple):
-        message = message[0] % message[1:]
-    return str(message)
-
-
-class PendingSave:
-    """The save a ``campaign_save_scope`` block is working toward.
-
-    The block sets ``message``: a useful label names what the block did (the apps it
-    staged, the cell it advanced), which is not knowable at entry — and entry is
-    where the clean-in check has to happen.
-    """
-
-    def __init__(self):
-        self.message = None
-
-
-@contextmanager
-def campaign_save_scope(root, path):
-    """Clean in, one commit out: whatever the block writes at ``path``, committed.
-
-    **Clean in.** ``path`` must be clean *before* the block writes, so the commit is
-    attributable — everything in it is this block's work, and no pre-existing edit is
-    silently absorbed into a mechababs-authored commit. ``campaign init`` passes it
-    trivially (its target does not exist yet); the guard belongs here rather than at
-    the caller because the callers that follow — ``add-dataset`` saving the statefile,
-    scaffold pinning an inclusion — write into a directory a human may have touched.
-
-    The check is **path-scoped**, which is also what makes it cheap: a campaign dir
-    holds no subdatasets, so this is a status over a handful of small files rather
-    than a walk of the study's sourcedata.
-
-    Files land in git rather than annex, but that is the campaign's own
-    ``.gitattributes`` doing it (see ``GITATTRIBUTES``), not a flag on this save.
-
-    Through ``datalad.api``, not a shelled-out ``datalad``: datalad is a declared
-    dependency, so it is importable wherever this runs — including the ``uvx``
-    install, which has no ``bin/datalad`` beside the interpreter to find. (Sibling to
-    ``utils.datalad_save_scope``, whose clean-in is whole-dataset and whose save is
-    ``since=``-based; here the scope is one directory, so both can be path-scoped.)
-    """
-    ds = Dataset(str(root))
-    dirty = ds.status(path=str(path), untracked="all", result_renderer="disabled",
-                      on_failure="ignore", return_type="list")
-    dirty = [r for r in dirty if r.get("state") != "clean"]
-    if dirty:
-        sys.exit(f"refusing to write into {path}: it is not clean, and the commit "
-                 f"would absorb changes mechababs did not make.\n" +
-                 "\n".join(f"  {r.get('state')}: {r.get('path')}" for r in dirty))
-
-    pending = PendingSave()
-    yield pending
-    if not pending.message:
-        raise RuntimeError(f"campaign_save_scope({path}) exited with no message set")
-
-    results = ds.save(path=str(path), message=pending.message,
-                      result_renderer="disabled", on_failure="ignore",
-                      return_type="list")
-    failed = [r for r in results if r.get("status") not in ("ok", "notneeded")]
-    if failed:
-        sys.exit(f"failed to commit {path} into {root}\n" +
-                 "\n".join(f"  {r.get('status')}: {r.get('path')} "
-                           f"({describe_result(r)})" for r in failed))
 
 
 # --------------------------------------------------------------------------
@@ -363,7 +283,7 @@ def build_env(campaign, label):
     run(UV, "sync", "--project", str(campaign), "--frozen")
     venv = campaign / campaign_mod.VENV_DIRNAME
     campaign_mod.write_env_stamp(
-        venv, label, (campaign / campaign_mod.LOCK_FILENAME).read_text())
+        venv, label, (campaign / campaign_mod.UV_LOCK_FILENAME).read_text())
     return venv
 
 
@@ -436,10 +356,13 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
         # younger than a save that could reach these paths.
         (campaign / ".gitattributes").write_text(GITATTRIBUTES)
 
-        # The venv is ephemeral and rebuilt from the lock. Ignore it from INSIDE the
-        # campaign dir, so mechababs' whole footprint stays under .mechababs/ and the
-        # study's own .gitignore is left alone.
-        (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
+        # The venv is ephemeral and rebuilt from the lock; the flock is a runtime
+        # artifact. Ignore both from INSIDE the campaign dir, so mechababs' whole
+        # footprint stays under .mechababs/ and the study's own .gitignore is left
+        # alone. Untracked-but-not-ignored files here would dirty the study, which
+        # the clean-in guards read as unattributable work.
+        (campaign / ".gitignore").write_text(
+            f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.FLOCK_FILENAME}\n")
 
         apps = resolve_apps(campaign / campaign_mod.APPS_DIRNAME, app_args)
         cluster_file = stage_config(

@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from mechababs import campaign as campaign_mod
-from mechababs import campaign_init
+from mechababs import campaign_init, utils
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def pretend_build_env(campaign, label):
     """What `build_env` leaves behind, without running uv: a stamped venv + a lock."""
     venv = campaign / campaign_mod.VENV_DIRNAME
     venv.mkdir()
-    (campaign / campaign_mod.LOCK_FILENAME).write_text("# resolved\n")
+    (campaign / campaign_mod.UV_LOCK_FILENAME).write_text("# resolved\n")
     campaign_mod.write_env_stamp(venv, label, "# resolved\n")
     return venv
 
@@ -64,7 +64,7 @@ def stub_env(monkeypatch):
 
     @contextmanager
     def fake_save_scope(root, path):
-        pending = campaign_init.PendingSave()
+        pending = utils.PendingSave()
         yield pending
         calls["save"] = (root, pending.message, path)
 
@@ -113,11 +113,13 @@ def test_campaign_yaml_records_the_bundle_order_cluster_and_limit(study, configs
     }
 
 
-def test_the_venv_is_gitignored_from_inside_the_campaign(study, configs, stub_env):
+def test_the_venv_and_the_flock_are_gitignored_from_inside_the_campaign(
+        study, configs, stub_env):
     # mechababs' footprint stays under .mechababs/; the study's own .gitignore is
     # upstream's and is not touched
     campaign = init(study, configs)
-    assert (campaign / ".gitignore").read_text() == ".venv/\n"
+    assert (campaign / ".gitignore").read_text().split() == [
+        ".venv/", campaign_mod.FLOCK_FILENAME]
     assert not (study / ".gitignore").exists()
 
 
@@ -172,7 +174,7 @@ def test_campaign_files_land_in_git_not_annex(tmp_path, configs, monkeypatch):
     assert not annexed, f"annexed instead of git: {annexed}"
     # the attribute file itself is committed, or a clone routes its own writes wrong
     assert ".mechababs/campaigns/nprep/.gitattributes" in entries
-    assert f".mechababs/campaigns/nprep/{campaign_mod.LOCK_FILENAME}" in entries
+    assert f".mechababs/campaigns/nprep/{campaign_mod.UV_LOCK_FILENAME}" in entries
     # the venv is ignored, not committed
     assert not [name for name in entries if f"/{campaign_mod.VENV_DIRNAME}/" in name]
     assert subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
@@ -389,7 +391,7 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
 
     @contextmanager
     def fake_save_scope(root, path):
-        pending = campaign_init.PendingSave()
+        pending = utils.PendingSave()
         yield pending
         saved["path"] = path
 
@@ -405,7 +407,7 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
         mechababs_spec=f"{checkout}@{branch}",
     )
 
-    lock = (campaign / campaign_mod.LOCK_FILENAME).read_text()
+    lock = (campaign / campaign_mod.UV_LOCK_FILENAME).read_text()
     assert 'name = "babs"' in lock and 'name = "mechababs"' in lock
     # the venv is where env.sh will look, and stamped with the lock that built it
     venv = campaign / campaign_mod.VENV_DIRNAME

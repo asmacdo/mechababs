@@ -17,7 +17,7 @@ def make_campaign(tmp_path, label="nprep", lock_text="lock-v1\n", *, stamp=True)
     cdir = campaign_mod.campaign_dir(tmp_path, label)
     cdir.mkdir(parents=True)
     campaign_mod.config_path(tmp_path, label).write_text("label: nprep\n")
-    campaign_mod.lock_path(tmp_path, label).write_text(lock_text)
+    campaign_mod.uv_lock_path(tmp_path, label).write_text(lock_text)
     venv = campaign_mod.venv_path(tmp_path, label)
     venv.mkdir()
     if stamp:
@@ -72,7 +72,7 @@ def test_env_match_refuses_another_python(tmp_path, monkeypatch):
 def test_env_match_refuses_a_venv_that_predates_a_bumped_lock(tmp_path, monkeypatch):
     make_campaign(tmp_path, lock_text="lock-v1\n")
     # the lock was bumped (mid-sweep version bump) and the venv not rebuilt
-    campaign_mod.lock_path(tmp_path, "nprep").write_text("lock-v2\n")
+    campaign_mod.uv_lock_path(tmp_path, "nprep").write_text("lock-v2\n")
     pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
     with pytest.raises(SystemExit) as e:
         campaign_mod.require_env_match(tmp_path, "nprep")

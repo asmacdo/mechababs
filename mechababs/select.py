@@ -1,9 +1,16 @@
-"""select.py — choose eligible subjects/sessions from a study's sourcedata metadata.
+"""select.py — read a study's sourcedata metadata: the add-dataset sniff, and selection.
 
-Reads a dataset's per-study metadata TSV (``sourcedata/sourcedata+subjects[+sessions].tsv``)
-from the **cloned study** — git-tracked there, or ``datalad get`` if annexed —
-aggregates rows sharing a ``(sub[,ses])`` key, applies the pipeline's *declarative*
-eligibility rule (from its ``selection:`` config), and writes an inclusion CSV for
+Two readers of one file, at two different moments. ``add-dataset`` **sniffs** a
+source dataset when it is selected into a campaign — how many subjects, how many
+sessions, and therefore whether the cell runs subject- or session-level; those are
+the statefile's identity columns. Scaffold later **selects** from the same file,
+applying a pipeline's eligibility rule to produce that cell's inclusion list.
+
+Both read the study's per-subject metadata TSV
+(``sourcedata/sourcedata+subjects[+sessions].tsv``) from the study on disk —
+git-tracked there, or ``datalad get`` if annexed. Selection aggregates rows sharing
+a ``(sub[,ses])`` key, applies the pipeline's *declarative* eligibility rule (from
+its ``selection:`` config), and writes an inclusion CSV for
 ``babs init --list-sub-file``.
 
 Once the TSV text + rule are in hand, selection is a **pure function** of them: no
@@ -24,6 +31,13 @@ from pathlib import Path
 
 SUBJECTS_SESSIONS_TSV = "sourcedata/sourcedata+subjects+sessions.tsv"
 SUBJECTS_TSV = "sourcedata/sourcedata+subjects.tsv"
+
+# OpenNeuroStudies writes one metadata TSV per *study*, keyed by a `source_id`
+# column, because a study may hold several source datasets. It spells "this dataset
+# has no sessions" as this literal, not as an empty cell.
+SOURCE_ID_COLUMN = "source_id"
+SESSION_ID_COLUMN = "session_id"
+NA = "n/a"
 
 
 def safe_int(s):
@@ -50,6 +64,70 @@ def read_study_metadata(study):
             return path.read_text(), level
     raise RuntimeError(f"no sourcedata metadata TSV in {study} "
                        f"({SUBJECTS_SESSIONS_TSV} or {SUBJECTS_TSV})")
+
+
+def has_session(row):
+    """True if this metadata row names a real session (not absent, not ``n/a``)."""
+    return (row.get(SESSION_ID_COLUMN) or "").strip().lower() not in ("", NA)
+
+
+def rows_for_source_dataset(tsv_text, source_id):
+    """The metadata rows describing one source dataset. Raises if there are none.
+
+    A study's metadata TSV covers every source dataset in it, keyed by ``source_id``.
+    Two shapes are accepted, because both exist in the wild:
+
+    - **no ``source_id`` column, or exactly one distinct value** — the study
+      describes a single source dataset, so every row is that dataset's. This is what
+      lets a generic sourcedata slot (``sourcedata/raw``) work: the directory name is
+      not the dataset's id and must not be matched against one.
+    - **several distinct values** — the study holds several source datasets, so
+      ``source_id`` is matched against the sourcedata directory's name. A name that
+      matches none is the user pointing at data the metadata does not describe, and
+      is refused with the ids that *are* described.
+    """
+    rows = list(csv.DictReader(io.StringIO(tsv_text), delimiter="\t"))
+    ids = {(r.get(SOURCE_ID_COLUMN) or "").strip() for r in rows}
+    ids.discard("")
+    if len(ids) > 1:
+        rows = [r for r in rows
+                if (r.get(SOURCE_ID_COLUMN) or "").strip() == source_id]
+        if not rows:
+            raise RuntimeError(
+                f"the study metadata describes no source dataset {source_id!r} "
+                f"(it describes: {', '.join(sorted(ids))})")
+    elif not rows:
+        raise RuntimeError("the study metadata TSV has no rows")
+    return rows
+
+
+def summarize(rows):
+    """The identity facts ``add-dataset`` records for a cell, from metadata rows.
+
+    ``processing_level`` is read from the **data**, not from which file the metadata
+    came in: a dataset is session-level exactly when its rows name real sessions.
+    ``n_sessions`` counts sessions across all subjects (upstream's ``sessions_num``),
+    and is blank rather than 0 for a subject-level dataset — the number is not
+    applicable there, and a 0 would read as "sessions, none of them".
+    """
+    sessions = {(r["subject_id"], r[SESSION_ID_COLUMN]) for r in rows if has_session(r)}
+    return {
+        "processing_level": "session" if sessions else "subject",
+        "n_subjects": str(len({r["subject_id"] for r in rows})),
+        "n_sessions": str(len(sessions)) if sessions else "",
+    }
+
+
+def sniff_source_dataset(study, source_id):
+    """Read the study's metadata TSV and summarize one source dataset in it.
+
+    The study's own file: ``add-dataset`` selects data already present, so the
+    summary is read from the study rather than fetched from the catalog it was
+    cloned from. (``read_study_metadata`` still ``datalad get``s the TSV's content
+    if the study annexed it — OpenNeuroStudies keeps it in git, so normally not.)
+    """
+    tsv_text, _ = read_study_metadata(study)
+    return summarize(rows_for_source_dataset(tsv_text, source_id))
 
 
 def build_eligibility(rule):
