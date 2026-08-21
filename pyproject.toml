@@ -9,6 +9,11 @@ description = "Automation glue for running BIDS apps across many datasets on HPC
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml",
+    # >=1.6 is a floor, not a preference: mechababs' change-making transitions are
+    # `datalad run`-captured, and the wrapped command commits its own work (babs
+    # init and friends). Released datalad 1.4 silently drops the run record in that
+    # case; 1.6 added the cmd_made_commits / dirty-committed machinery that keeps it
+    # (and lets `datalad.run.dirty-committed=error` stay armed).
     "datalad>=1.6",
     "datalad-container",
 ]
