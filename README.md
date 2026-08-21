@@ -1,7 +1,6 @@
 # mechababs
 
-Automation glue for running BIDS apps across many OpenNeuro datasets on HPC
-clusters using [BABS](https://github.com/PennLINC/babs).
+Automation glue for running BIDS apps across many OpenNeuro datasets on HPC clusters using [BABS](https://github.com/PennLINC/babs).
 
 mechababs is an end-to-end harness for running BABS across clusters and many datasets.
 It runs **vanilla** BABS by default (`PennLINC/babs` main, or a PR branch under test), and can use a babs fork when one is needed.
