@@ -38,6 +38,7 @@ from importlib import metadata
 from pathlib import Path
 
 import yaml
+from datalad.api import Dataset
 
 from mechababs import campaign as campaign_mod
 
@@ -63,7 +64,6 @@ LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # reached a real subdataset.
 GITATTRIBUTES = "* annex.largefiles=nothing\n"
 
-DATALAD = str(Path(sys.prefix) / "bin" / "datalad")
 UV = "uv"
 
 
@@ -73,14 +73,37 @@ def run(*cmd, **kwargs):
     subprocess.run([str(c) for c in cmd], check=True, **kwargs)
 
 
+def describe_result(result):
+    """A datalad result record's own explanation, in one line.
+
+    ``message`` is a plain string, a lazy ``(format, *args)`` tuple, or absent — so
+    a naive f-string prints a tuple at the user when it matters most.
+    """
+    message = result.get("message") or result.get("action", "no detail")
+    if isinstance(message, tuple):
+        message = message[0] % message[1:]
+    return str(message)
+
+
 def datalad_save(study, message, path):
     """Commit the campaign's files to the study, path-scoped.
 
     Straight into git, but that is the campaign's own ``.gitattributes`` doing it
     (see ``GITATTRIBUTES``), not a flag on this save.
+
+    Through ``datalad.api``, not a shelled-out ``datalad``: datalad is a declared
+    dependency, so it is importable wherever this runs — including the ``uvx``
+    install, which has no ``bin/datalad`` on PATH to find. Same call the rest of
+    the codebase makes (``utils.datalad_save_scope``).
     """
-    datalad = DATALAD if Path(DATALAD).exists() else "datalad"
-    run(datalad, "save", "--dataset", str(study), "--message", message, str(path))
+    results = Dataset(str(study)).save(
+        path=str(path), message=message,
+        result_renderer="disabled", on_failure="ignore", return_type="list")
+    failed = [r for r in results if r.get("status") not in ("ok", "notneeded")]
+    if failed:
+        sys.exit(f"failed to commit the campaign into {study}\n" +
+                 "\n".join(f"  {r.get('status')}: {r.get('path')} "
+                           f"({describe_result(r)})" for r in failed))
 
 
 # --------------------------------------------------------------------------
