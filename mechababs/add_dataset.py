@@ -32,10 +32,8 @@ from pathlib import Path
 import yaml
 
 from mechababs import campaign as campaign_mod
-from mechababs import campaign_init
-from mechababs import select
+from mechababs import campaign_init, select, utils
 from mechababs import study as study_mod
-from mechababs import utils
 
 
 def find_study(sourcedata):
@@ -125,7 +123,11 @@ def add(sourcedata):
         # generalization work, so say what is missing rather than guessing at counts.
         sys.exit(f"cannot read the study metadata for {source_dataset}: {e}")
 
-    with utils.flocked(campaign_mod.flock_path(study, label)):
+    # Flock first (the campaign's single-writer guarantee), clean-in second (the
+    # statefile must be untouched before this write, so the commit is attributable),
+    # then the read-modify-write — committed as one node when the scope exits.
+    with utils.flocked(campaign_mod.flock_path(study, label)), \
+         utils.campaign_save_scope(study, campaign_mod.state_path(study, label)) as save:
         rows = campaign_mod.read_state(study, label)
         existing = {campaign_mod.cell_key(r) for r in rows}
         check_dependencies(source_dataset, apps, existing)
@@ -143,11 +145,8 @@ def add(sourcedata):
                      f"for every app in its bundle — nothing to add.")
 
         campaign_mod.write_state(study, label, rows + added)
-        utils.datalad_save(
-            study,
+        save.message = (
             f"mechababs add-dataset {source_dataset} "
             f"({identity['processing_level']}-level; "
-            f"{', '.join(row['app_config'] for row in added)})",
-            campaign_mod.state_path(study, label),
-        )
+            f"{', '.join(row['app_config'] for row in added)})")
     return added

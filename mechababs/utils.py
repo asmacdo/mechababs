@@ -37,12 +37,9 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-from mechababs.state import LOCK_FILENAME
+from datalad.api import Dataset
 
-# The datalad of the environment mechababs is running in, not whatever is on PATH:
-# the campaign's venv is where the pinned tools live, and a `uvx`-run command has a
-# datalad the ambient PATH does not.
-DATALAD = str(Path(sys.prefix) / "bin" / "datalad")
+from mechababs.state import LOCK_FILENAME
 
 
 def run(*cmd, **kwargs):
@@ -51,20 +48,76 @@ def run(*cmd, **kwargs):
     subprocess.run([str(c) for c in cmd], check=True, **kwargs)
 
 
-def datalad_save(study, message, path):
-    """Commit ``path`` to the study, path-scoped, straight into git.
+def describe_result(result):
+    """A datalad result record's own explanation, in one line.
 
-    ``--to-git``: the files mechababs writes under ``.mechababs/`` are small text
-    that a clone must be able to read without fetching annex content — the lock and
-    the statefile especially, since rebuilding the environment and reading the
-    campaign's cells from a fresh clone is the whole reproduction story.
-
-    Path-scoped so a commit says exactly what it changed and never absorbs unrelated
-    work sitting in the study.
+    ``message`` is a plain string, a lazy ``(format, *args)`` tuple, or absent — so
+    a naive f-string prints a tuple at the user when it matters most.
     """
-    datalad = DATALAD if Path(DATALAD).exists() else "datalad"
-    run(datalad, "save", "--dataset", str(study), "--message", message,
-        "--to-git", str(path))
+    message = result.get("message") or result.get("action", "no detail")
+    if isinstance(message, tuple):
+        message = message[0] % message[1:]
+    return str(message)
+
+
+class PendingSave:
+    """The save a ``campaign_save_scope`` block is working toward.
+
+    The block sets ``message``: a useful label names what the block did (the apps it
+    staged, the cell it advanced), which is not knowable at entry — and entry is
+    where the clean-in check has to happen.
+    """
+
+    def __init__(self):
+        self.message = None
+
+
+@contextmanager
+def campaign_save_scope(root, path):
+    """Clean in, one commit out: whatever the block writes at ``path``, committed.
+
+    **Clean in.** ``path`` must be clean *before* the block writes, so the commit is
+    attributable — everything in it is this block's work, and no pre-existing edit is
+    silently absorbed into a mechababs-authored commit. ``campaign init`` passes it
+    trivially (its target does not exist yet); the guard matters for the callers that
+    write into a directory a human may have touched — ``add-dataset`` saving the
+    statefile, scaffold pinning an inclusion.
+
+    The check is **path-scoped**, which is also what makes it cheap: a campaign dir
+    holds no subdatasets, so this is a status over a handful of small files rather
+    than a walk of the study's sourcedata.
+
+    Files land in git rather than annex, but that is the campaign's own
+    ``.gitattributes`` (written at init) doing it, not a flag on this save.
+
+    Through ``datalad.api``, not a shelled-out ``datalad``: datalad is a declared
+    dependency, so it is importable wherever this runs — including the ``uvx``
+    install, which has no ``bin/datalad`` beside the interpreter to find. (Sibling to
+    ``datalad_save_scope`` below, whose clean-in is whole-dataset and whose save is
+    ``since=``-based; here the scope is one directory, so both can be path-scoped.)
+    """
+    ds = Dataset(str(root))
+    dirty = ds.status(path=str(path), untracked="all", result_renderer="disabled",
+                      on_failure="ignore", return_type="list")
+    dirty = [r for r in dirty if r.get("state") != "clean"]
+    if dirty:
+        sys.exit(f"refusing to write into {path}: it is not clean, and the commit "
+                 f"would absorb changes mechababs did not make.\n" +
+                 "\n".join(f"  {r.get('state')}: {r.get('path')}" for r in dirty))
+
+    pending = PendingSave()
+    yield pending
+    if not pending.message:
+        raise RuntimeError(f"campaign_save_scope({path}) exited with no message set")
+
+    results = ds.save(path=str(path), message=pending.message,
+                      result_renderer="disabled", on_failure="ignore",
+                      return_type="list")
+    failed = [r for r in results if r.get("status") not in ("ok", "notneeded")]
+    if failed:
+        sys.exit(f"failed to commit {path} into {root}\n" +
+                 "\n".join(f"  {r.get('status')}: {r.get('path')} "
+                           f"({describe_result(r)})" for r in failed))
 
 
 @contextmanager

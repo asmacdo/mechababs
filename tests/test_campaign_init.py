@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from mechababs import campaign as campaign_mod
-from mechababs import campaign_init
+from mechababs import campaign_init, utils
 
 
 @pytest.fixture
@@ -64,7 +64,7 @@ def stub_env(monkeypatch):
 
     @contextmanager
     def fake_save_scope(root, path):
-        pending = campaign_init.PendingSave()
+        pending = utils.PendingSave()
         yield pending
         calls["save"] = (root, pending.message, path)
 
@@ -391,7 +391,7 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
 
     @contextmanager
     def fake_save_scope(root, path):
-        pending = campaign_init.PendingSave()
+        pending = utils.PendingSave()
         yield pending
         saved["path"] = path
 

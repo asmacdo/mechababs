@@ -7,6 +7,8 @@ shard. The one step that reaches outside the process (the `datalad save`) is stu
 that it is *asked for*, path-scoped, is asserted.
 """
 
+from contextlib import contextmanager
+
 import pytest
 import yaml
 
@@ -75,10 +77,22 @@ def campaign(study, monkeypatch):
 
 @pytest.fixture
 def saves(monkeypatch):
-    """Stub the datalad save; record what it was asked to commit."""
+    """Stub the save scope; record what each block committed and its message.
+
+    The fixture studies here are plain directories, not datalad datasets, so the
+    real scope (a datalad status + save) is replaced with a null scope that still
+    honors the contract: yields a PendingSave, requires a message on exit.
+    """
     calls = []
-    monkeypatch.setattr(add_dataset.utils, "datalad_save",
-                        lambda study, message, path: calls.append((study, message, path)))
+
+    @contextmanager
+    def null_scope(root, path):
+        pending = add_dataset.utils.PendingSave()
+        yield pending
+        assert pending.message, "scope exited with no message set"
+        calls.append((root, pending.message, path))
+
+    monkeypatch.setattr(add_dataset.utils, "campaign_save_scope", null_scope)
     return calls
 
 
