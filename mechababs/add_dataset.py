@@ -82,7 +82,7 @@ def campaign_apps(study, label):
             for rel in apps]
 
 
-def check_dependencies(source_dataset, apps, existing):
+def check_dependencies(source_dataset, apps):
     """Refuse a cell whose producer would not be in the shard once this add lands.
 
     ``depends_on`` is resolved as a **row lookup within one shard** — the same source
@@ -90,11 +90,12 @@ def check_dependencies(source_dataset, apps, existing):
     that can never resolve, and the reconciler would silently park the cell forever.
     Failing here, at the moment the cell is written, is the loud version.
 
-    Adding the whole bundle at once (the normal case) satisfies its own edges: the
-    producer is either already in the shard or in this same batch.
+    The bundle is fixed at ``campaign init`` and always added whole (bundle growth is
+    deliberately unsupported — con/mechababs#116), so the producer can only be in this
+    same batch; the check guards a hand-assembled ``campaign.yaml`` that init's own
+    bundle check never saw.
     """
-    present = {app for src, app in existing if src == source_dataset}
-    present |= {name for name, _ in apps}
+    present = {name for name, _ in apps}
     for name, upstream in apps:
         if upstream and upstream not in present:
             sys.exit(
@@ -129,21 +130,18 @@ def add(sourcedata):
     with utils.flocked(campaign_mod.flock_path(study, label)), \
          utils.campaign_save_scope(study, campaign_mod.state_path(study, label)) as save:
         rows = campaign_mod.read_state(study, label)
-        existing = {campaign_mod.cell_key(r) for r in rows}
-        check_dependencies(source_dataset, apps, existing)
+        # The bundle is fixed at init, so a dataset is selected whole or not at all —
+        # re-adding refuses. To run more apps on this data, start a new campaign
+        # (a new config epoch): bundle growth is deliberately unsupported (#116).
+        if any(r["source_dataset"] == source_dataset for r in rows):
+            sys.exit(f"{source_dataset} is already selected into campaign {label!r}.\n"
+                     f"The app bundle is fixed at campaign init — to run more apps "
+                     f"on this data, create a new campaign.")
+        check_dependencies(source_dataset, apps)
 
-        added = []
-        for name, upstream in apps:
-            if (source_dataset, name) in existing:
-                print(f"already selected, leaving as it is: {source_dataset} x {name}",
-                      file=sys.stderr)
-                continue
-            added.append({"source_dataset": source_dataset, "app_config": name,
-                          "depends_on": upstream, **identity})
-        if not added:
-            sys.exit(f"{source_dataset} is already selected into campaign {label!r} "
-                     f"for every app in its bundle — nothing to add.")
-
+        added = [{"source_dataset": source_dataset, "app_config": name,
+                  "depends_on": upstream, **identity}
+                 for name, upstream in apps]
         campaign_mod.write_state(study, label, rows + added)
         save.message = (
             f"mechababs add-dataset {source_dataset} "

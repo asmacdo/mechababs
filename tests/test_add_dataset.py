@@ -202,16 +202,8 @@ def test_a_dangling_depends_on_is_refused(study, campaign, saves):
     assert campaign_mod.read_state(study, "nprep") == []
 
 
-def test_a_producer_already_in_the_shard_satisfies_the_edge(study, campaign, saves):
-    campaign("fMRIPrep-25.2.5+minimal.yaml", rows=[{
-        "source_dataset": "sourcedata/ds000001",
-        "app_config": "fMRIPrep-25.2.5+anat",
-    }])
-    assert len(add_dataset.add(study / "sourcedata" / "ds000001")) == 1
-
-
-def test_the_producer_must_be_for_the_SAME_source_dataset(study, campaign, saves):
-    # a dependency is a shard-local row lookup keyed on (source dataset, app)
+def test_another_datasets_producer_row_does_not_satisfy_the_edge(study, campaign, saves):
+    # the edge is per source dataset; ds000002's anat cell says nothing about ds000001
     campaign("fMRIPrep-25.2.5+minimal.yaml", rows=[{
         "source_dataset": "sourcedata/ds000002",
         "app_config": "fMRIPrep-25.2.5+anat",
@@ -239,16 +231,17 @@ def test_a_second_source_dataset_gets_its_own_cells(study, campaign, saves):
                             ("sourcedata/ds000002", "MRIQC-24.0.2")]
 
 
-def test_an_app_added_to_the_bundle_later_fills_in_the_missing_cell(study, campaign,
-                                                                   saves):
-    # the shard already holds the mriqc cell; only the new app's cell is written, and
-    # the existing row is left exactly as it is (it may carry babs/merged state)
+def test_bundle_growth_is_unsupported_a_partial_dataset_still_refuses(study, campaign,
+                                                                      saves):
+    # the bundle is fixed at init (growth deliberately unsupported — #116): a dataset
+    # with ANY cell refuses whole, and its existing state is left exactly as it is
     campaign("MRIQC-24.0.2.yaml", "fMRIPrep-25.2.5+anat.yaml", rows=[{
         "source_dataset": "sourcedata/ds000001", "app_config": "MRIQC-24.0.2",
         "babs": "derivatives/MRIQC-24.0.2", "merged": "yes",
     }])
-    added = add_dataset.add(study / "sourcedata" / "ds000001")
-    assert [r["app_config"] for r in added] == ["fMRIPrep-25.2.5+anat"]
+    with pytest.raises(SystemExit) as e:
+        add_dataset.add(study / "sourcedata" / "ds000001")
+    assert "new campaign" in str(e.value)
     assert campaign_mod.read_state(study, "nprep")[0]["merged"] == "yes"
 
 
