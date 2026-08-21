@@ -41,10 +41,9 @@ import yaml
 from mechababs import campaign as campaign_mod
 from mechababs.utils import campaign_save_scope, run
 
-# Runtime tools a campaign needs beyond mechababs + babs themselves — the same set
-# requirements-campaign.txt installs into a bootstrap-built venv. Kept as a literal
-# because this command may run from an ephemeral uvx install, which has the
-# mechababs *package* but not the repo file.
+# Runtime tools a campaign needs beyond mechababs + babs themselves. A literal rather
+# than a requirements file in the repo, because this command may run from an ephemeral
+# uvx install, which has the mechababs *package* but no repo file to read.
 CAMPAIGN_EXTRAS = [
     "con-duct",     # usage/resource logs alongside every run
     "visidata",     # interactive TSV viewer for the statefile
@@ -73,10 +72,8 @@ UV = "uv"
 def parse_source_spec(spec, what):
     """Split a ``URL@REF`` pin. ``URL`` is anything git clones, a local path included.
 
-    The ``URL@REF`` shape (and the requirement that ``REF`` be given rather than
-    defaulted) is carried over from ``bootstrap.sh``: naming the ref explicitly is
-    what makes "run a campaign against this PR branch" a config change instead of a
-    code change.
+    ``REF`` is required rather than defaulted: naming it explicitly is what makes
+    "run a campaign against this PR branch" a config change instead of a code change.
     """
     url, sep, ref = spec.rpartition("@")
     if not sep or not url or not ref:
