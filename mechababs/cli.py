@@ -158,11 +158,13 @@ def cmd_add_dataset(args):
         sys.exit("add-dataset needs --sourcedata PATH: the source dataset, already "
                  "in a study, that this campaign should act on")
     added = add_dataset_mod.add(args.sourcedata)
-    print(f"selected {added[0]['source_dataset']} "
-          f"({added[0]['processing_level']}-level, {added[0]['n_subjects']} subjects"
-          + (f", {added[0]['n_sessions']} sessions" if added[0]["n_sessions"] else "")
-          + f"): {len(added)} cell(s) — "
-          + ", ".join(row["app_config"] for row in added), file=sys.stderr)
+    cell = added[0]                        # identity is the same across a dataset's cells
+    size = f"{cell['n_subjects']} subjects"
+    if cell["n_sessions"]:
+        size += f", {cell['n_sessions']} sessions"
+    print(f"selected {cell['source_dataset']} ({cell['processing_level']}-level, "
+          f"{size}) — {len(added)} cell(s): "
+          f"{', '.join(row['app_config'] for row in added)}", file=sys.stderr)
     print("Next: mechababs iterate", file=sys.stderr)
     return 0
 
