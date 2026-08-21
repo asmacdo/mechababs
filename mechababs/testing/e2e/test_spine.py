@@ -22,8 +22,8 @@ what keeps the whole thing at the couple-of-minutes mark.
 import csv
 import logging
 import os
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -72,11 +72,15 @@ def _driver_mechababs():
 
     `campaign init` is the one verb that runs *before* a campaign environment exists
     (in prod, `uvx --from git+…`), so it necessarily comes from outside the campaign.
-    Here that is the install the suite itself is running from.
+    Here that is the install the suite itself is running from — found beside the
+    running interpreter, not on PATH, where a stray host install of mechababs would
+    shadow the code under test.
     """
-    exe = shutil.which("mechababs")
-    assert exe, "no `mechababs` on PATH — the code under test is not installed"
-    return exe
+    exe = Path(sys.executable).parent / "mechababs"
+    assert exe.is_file(), (
+        f"no `mechababs` beside {sys.executable} — the code under test is not "
+        "installed in the environment running this suite")
+    return str(exe)
 
 
 def _in_campaign(study, label, *args, check=True):
