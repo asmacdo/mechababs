@@ -263,7 +263,8 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
     mechababs pin is this checkout, so no mechababs release is needed; babs comes
     from its default URL.
     """
-    if subprocess.run(["uv", "--version"], capture_output=True).returncode != 0:
+    if subprocess.run(["uv", "--version"], capture_output=True,
+                      check=False).returncode != 0:
         pytest.skip("uv not available")
     saved = {}
     monkeypatch.setattr(campaign_init, "datalad_save",

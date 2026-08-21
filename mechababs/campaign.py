@@ -38,6 +38,8 @@ import os
 import sys
 from pathlib import Path
 
+from mechababs import study as study_mod
+
 MECHABABS_DIR = ".mechababs"
 CAMPAIGNS_DIRNAME = "campaigns"
 
@@ -212,3 +214,18 @@ def require_env_match(study, label):
             f"  venv:  {venv}"
         )
     return campaign
+
+
+def require_selected_campaign(path="."):
+    """The three preconditions every *operating* verb shares, in one call.
+
+    In a study (``require_study_root``), with a campaign selected
+    (``selected_label``), running the environment that campaign records
+    (``require_env_match``). Returns ``(study, label, campaign_dir)``.
+
+    ``campaign init`` is the one command that does not take this: it runs before
+    the environment exists — it is what creates it.
+    """
+    study = study_mod.require_study_root(path)
+    label = selected_label()
+    return study, label, require_env_match(study, label)

@@ -84,3 +84,20 @@ def test_env_match_refuses_a_venv_mechababs_did_not_build(tmp_path, monkeypatch)
     pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
     with pytest.raises(SystemExit):
         campaign_mod.require_env_match(tmp_path, "nprep")
+
+
+def test_require_selected_campaign_bundles_the_three_preconditions(tmp_path, monkeypatch):
+    (tmp_path / ".datalad").mkdir()
+    make_campaign(tmp_path)
+    monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
+    pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
+    study, label, campaign = campaign_mod.require_selected_campaign(tmp_path)
+    assert (study, label, campaign) == (
+        tmp_path.resolve(), "nprep", campaign_mod.campaign_dir(tmp_path, "nprep"))
+
+
+def test_require_selected_campaign_refuses_outside_a_study(tmp_path, monkeypatch):
+    make_campaign(tmp_path)                      # a campaign dir, but no dataset root
+    monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
+    with pytest.raises(SystemExit):
+        campaign_mod.require_selected_campaign(tmp_path)

@@ -101,8 +101,7 @@ def git_source(url, ref):
     be run through a whole campaign before it is pushed anywhere (at the cost of a
     pin that resolves nowhere else — the accepted dev-mode trade).
     """
-    if url.startswith("git+"):
-        url = url[len("git+"):]
+    url = url.removeprefix("git+")
     local = Path(url)
     if local.exists():
         url = local.resolve().as_uri()
@@ -163,7 +162,7 @@ def stage_config(dest_dir, arg, what):
             sys.exit(f"{what} config URL has no filename: {arg}")
         dest = dest_dir / name
         print(f"+ fetch {arg} -> {dest}", file=sys.stderr)
-        with urllib.request.urlopen(arg) as response:          # noqa: S310 (http/https only)
+        with urllib.request.urlopen(arg) as response:      # http/https only, checked above
             dest.write_bytes(response.read())
         return name
     source = Path(arg)
