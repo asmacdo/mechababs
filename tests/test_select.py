@@ -87,3 +87,60 @@ def test_session_level_on_subjects_only_raises(tmp_path):
     with pytest.raises(RuntimeError):
         select.generate_inclusion(SUBJECTS_TSV, MRIQC, tmp_path / "inc.csv",
                                   processing_level="session")
+
+
+# --- the add-dataset sniff --------------------------------------------------
+#
+# The same file selection reads, at the other moment: when a source dataset is
+# selected into a campaign, to fill the cell's identity columns.
+
+# The upstream OpenNeuroStudies shape: one TSV per STUDY, keyed by source_id, with
+# `n/a` spelling "this dataset has no sessions".
+MULTI_SOURCE_TSV = (
+    "source_id\tsubject_id\tsession_id\tdatatypes\tt1w_num\tbold_num\n"
+    "ds000001\tsub-01\tn/a\tanat,func\t1\t3\n"
+    "ds000001\tsub-02\tn/a\tanat,func\t1\t3\n"
+    "ds000002\tsub-01\tses-01\tanat\t1\t0\n"
+    "ds000002\tsub-01\tses-02\tfunc\t0\t2\n"
+    "ds000002\tsub-02\tses-01\tanat,func\t1\t2\n"
+)
+
+
+def test_sniff_counts_subjects_of_a_subject_level_dataset():
+    rows = select.rows_for_source_dataset(MULTI_SOURCE_TSV, "ds000001")
+    assert select.summarize(rows) == {
+        "processing_level": "subject", "n_subjects": "2", "n_sessions": ""}
+
+
+def test_sniff_counts_sessions_across_subjects():
+    rows = select.rows_for_source_dataset(MULTI_SOURCE_TSV, "ds000002")
+    assert select.summarize(rows) == {
+        "processing_level": "session", "n_subjects": "2", "n_sessions": "3"}
+
+
+def test_a_lone_source_dataset_needs_no_name_match():
+    # a generic slot (sourcedata/raw) is not the dataset's id, so it must not be
+    # matched against one — the study describes a single source dataset either way
+    tsv = "source_id\tsubject_id\tdatatypes\tt1w_num\nds000001\tsub-01\tanat\t1\n"
+    assert select.summarize(select.rows_for_source_dataset(tsv, "raw"))["n_subjects"] == "1"
+
+
+def test_a_tsv_without_a_source_id_column_is_the_lone_dataset_too():
+    # the shape the e2e fixture (and any hand-built study) writes: SUBJECTS_TSV at
+    # the top of this file, three subjects, no source_id and no session_id
+    assert select.summarize(
+        select.rows_for_source_dataset(SUBJECTS_TSV, "ds000001")
+    ) == {"processing_level": "subject", "n_subjects": "3", "n_sessions": ""}
+
+
+def test_an_unknown_source_dataset_is_refused_with_the_known_ids():
+    with pytest.raises(RuntimeError) as e:
+        select.rows_for_source_dataset(MULTI_SOURCE_TSV, "ds999999")
+    assert "ds000001" in str(e.value) and "ds000002" in str(e.value)
+
+
+def test_sniff_reads_the_study_on_disk(tmp_path):
+    (tmp_path / "sourcedata").mkdir()
+    (tmp_path / select.SUBJECTS_TSV).write_text(MULTI_SOURCE_TSV)
+    assert select.sniff_source_dataset(tmp_path, "ds000002")["processing_level"] == \
+        "session"
