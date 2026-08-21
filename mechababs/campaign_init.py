@@ -122,8 +122,13 @@ def running_mechababs_pin():
     """
     try:
         dist = metadata.distribution("mechababs")
-    except metadata.PackageNotFoundError:      # running from a bare checkout
-        return "mechababs", None
+    except metadata.PackageNotFoundError:
+        # Running from a bare checkout (PYTHONPATH, no install): there is no
+        # install metadata to read, and an unsourced "mechababs" requirement
+        # would send uv to PyPI, where mechababs does not exist — a confusing
+        # resolver error far from the cause. Fail here, naming the fix.
+        sys.exit("cannot detect the running mechababs install (no distribution "
+                 "metadata) — pass --mechababs URL@REF to pin it explicitly")
     raw = dist.read_text("direct_url.json")
     if not raw:
         return f"mechababs=={dist.version}", None
