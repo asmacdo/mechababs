@@ -15,13 +15,16 @@ from a pinned ref::
 Everything after it runs from the venv this builds.
 
 **The lock is the provenance.** ``uv lock`` resolves ``mechababs`` and ``babs`` to
-exact commits and writes them into ``uv.lock``, which is committed to the study.
-That file — not a vendored code clone — is what says which tools ran, and a mid-campaign
-version bump is an edit to it, with its git history as the record of the campaign's
-config epochs. The mechababs pin is read from the running install (PEP 610
-``direct_url.json``), so the campaign records the mechababs the user actually
-invoked rather than a ref they would have to retype; babs, which mechababs only
-shells out to, is named by ``--babs URL@REF``.
+exact versions (a commit, for a git source) and writes them into ``uv.lock``, which
+is committed to the study. That file — not a vendored code clone — is what says which
+tools ran, and a mid-campaign version bump is an edit to it, with its git history as
+the record of the campaign's config epochs. The mechababs pin is read from the running
+install (PEP 610 ``direct_url.json``), so the campaign records the mechababs the user
+actually invoked rather than a ref they would have to retype; babs, which mechababs
+only shells out to, defaults to its latest **release** — declared as a plain
+dependency and frozen to an exact version by the lock — and ``--babs URL@REF`` pins a
+git checkout instead, which is how a PR branch (or a local one) gets run through a
+whole campaign.
 """
 
 import json
@@ -37,8 +40,6 @@ from pathlib import Path
 import yaml
 
 from mechababs import campaign as campaign_mod
-
-BABS_DEFAULT = "https://github.com/PennLINC/babs.git@main"
 
 # Runtime tools a campaign needs beyond mechababs + babs themselves — the same set
 # requirements-campaign.txt installs into a bootstrap-built venv. Kept as a literal
@@ -241,16 +242,23 @@ def _toml_inline(source):
     return "{ " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in source.items()) + " }"
 
 
-def render_pyproject(label, mechababs_req, mechababs_source, babs_source):
+def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None):
     """The campaign's dependency declaration — a uv *virtual* project.
 
     No ``[build-system]``: the campaign is not a package to build, it is a set of
     pinned dependencies for ``uv lock`` / ``uv sync`` to resolve and install.
+
+    A tool with no ``[tool.uv.sources]`` entry is a plain dependency, resolved from
+    PyPI and frozen to an exact released version by the lock — the default for both
+    babs and a registry-installed mechababs. A source entry overrides that with a
+    git (or path) checkout.
     """
     deps = [mechababs_req, "babs", *CAMPAIGN_EXTRAS]
-    sources = {"babs": babs_source}
+    sources = {}
     if mechababs_source:
         sources["mechababs"] = mechababs_source
+    if babs_source:
+        sources["babs"] = babs_source
 
     lines = [
         f"# The environment for mechababs campaign {label!r}.",
@@ -267,8 +275,10 @@ def render_pyproject(label, mechababs_req, mechababs_source, babs_source):
         "dependencies = [",
     ]
     lines += [f"    {_toml_str(d)}," for d in deps]
-    lines += ["]", "", "[tool.uv.sources]"]
-    lines += [f"{name} = {_toml_inline(source)}" for name, source in sources.items()]
+    lines += ["]"]
+    if sources:
+        lines += ["", "[tool.uv.sources]"]
+        lines += [f"{name} = {_toml_inline(source)}" for name, source in sources.items()]
     return "\n".join(lines) + "\n"
 
 
@@ -329,7 +339,7 @@ def write_env_sh(campaign, label):
 # --------------------------------------------------------------------------
 
 def init(study, label, app_args, cluster_arg, *, limit=None,
-         babs_spec=BABS_DEFAULT, mechababs_spec=None):
+         babs_spec=None, mechababs_spec=None):
     """Create campaign ``label`` in ``study``. Returns the campaign directory.
 
     Writes only under ``.mechababs/campaigns/<label>/`` — mechababs' change to a
@@ -375,7 +385,10 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
             *parse_source_spec(mechababs_spec, "mechababs"))
     else:
         mechababs_req, mechababs_source = running_mechababs_pin()
-    babs_source = git_source(*parse_source_spec(babs_spec, "babs"))
+    # No --babs: babs stays a plain dependency, so uv resolves the latest release
+    # from PyPI and freezes that version in the lock. A git ref is the override, for
+    # running a PR branch (or a local one) through a campaign.
+    babs_source = git_source(*parse_source_spec(babs_spec, "babs")) if babs_spec else None
     (campaign / campaign_mod.PYPROJECT_FILENAME).write_text(
         render_pyproject(label, mechababs_req, mechababs_source, babs_source))
 

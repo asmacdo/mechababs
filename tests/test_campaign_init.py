@@ -129,6 +129,16 @@ def test_the_campaign_is_saved_into_the_study(study, configs, stub_env):
 
 # --- the pins ---------------------------------------------------------------
 
+def test_babs_defaults_to_the_released_version_from_pypi(study, configs, stub_env):
+    # no --babs: a plain dependency with no source entry, so uv resolves the latest
+    # release and the lock freezes the exact version. Git is the override, not the default.
+    campaign = init(study, configs)
+    pyproject = (campaign / campaign_mod.PYPROJECT_FILENAME).read_text()
+    assert '    "babs",' in pyproject
+    sources = pyproject.partition("[tool.uv.sources]")[2].splitlines()
+    assert not [line for line in sources if line.startswith("babs = ")]
+
+
 def test_pyproject_pins_mechababs_and_babs_by_ref(study, configs, stub_env):
     campaign = init(study, configs,
                     babs_spec="https://github.com/PennLINC/babs.git@v0.5.0",
@@ -261,7 +271,7 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
 
     Marked so the fast suite skips it — it runs `uv` and reaches the network. The
     mechababs pin is this checkout, so no mechababs release is needed; babs comes
-    from its default URL.
+    from PyPI, its default.
     """
     if subprocess.run(["uv", "--version"], capture_output=True,
                       check=False).returncode != 0:
