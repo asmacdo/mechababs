@@ -71,6 +71,7 @@ def campaign(study, monkeypatch):
         campaign_mod.write_env_stamp(venv, "nprep", "lock-v1\n")
         monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
         monkeypatch.setattr("sys.prefix", str(venv))
+        monkeypatch.chdir(study)          # operating verbs run from the campaign root
         return cdir
     return build
 
@@ -101,38 +102,38 @@ def cells(study):
             for r in campaign_mod.read_state(study, "nprep")]
 
 
-# --- finding the study ------------------------------------------------------
+# --- resolving the sourcedata (from the study root) -------------------------
 
-def test_the_study_is_found_by_walking_up_from_the_sourcedata(study, campaign, saves):
+def test_sourcedata_is_taken_relative_to_the_study_root(study, campaign, saves):
+    campaign("MRIQC-24.0.2.yaml")
+    add_dataset.add("sourcedata/ds000001")      # relative, exactly as the user types it
+    assert cells(study) == [("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")]
+
+
+def test_an_absolute_path_inside_the_study_also_works(study, campaign, saves):
     campaign("MRIQC-24.0.2.yaml")
     add_dataset.add(study / "sourcedata" / "ds000001")
-    assert cells(study) == [("sourcedata/ds000001", "MRIQC-24.0.2")]
+    assert cells(study) == [("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")]
 
 
-def test_the_walk_starts_above_the_sourcedata_not_at_it(study):
-    # the source dataset is a dataset root of its own; the study is the one ABOVE it
-    found, rel = add_dataset.find_study(study / "sourcedata" / "ds000001")
-    assert (found, rel) == (study.resolve(), "sourcedata/ds000001")
-
-
-def test_a_sourcedata_outside_any_study_is_refused(tmp_path):
+def test_a_path_outside_the_study_is_refused(study, tmp_path):
     loose = tmp_path / "loose" / "ds000001"
     loose.mkdir(parents=True)
     with pytest.raises(SystemExit) as e:
-        add_dataset.find_study(loose)
-    assert "not inside a study" in str(e.value)
+        add_dataset.resolve_sourcedata(study, loose)
+    assert "not inside this study" in str(e.value)
 
 
 def test_a_sourcedata_that_is_not_there_is_refused(study):
     # add-dataset selects data already present; it never installs any
     with pytest.raises(SystemExit) as e:
-        add_dataset.find_study(study / "sourcedata" / "ds999999")
+        add_dataset.resolve_sourcedata(study, "sourcedata/ds999999")
     assert "does not install" in str(e.value)
 
 
 def test_a_file_is_not_a_source_dataset(study):
     with pytest.raises(SystemExit):
-        add_dataset.find_study(study / "sourcedata" / "sourcedata+subjects.tsv")
+        add_dataset.resolve_sourcedata(study, "sourcedata/sourcedata+subjects.tsv")
 
 
 # --- the sniff --------------------------------------------------------------
@@ -142,7 +143,7 @@ def test_identity_columns_come_from_the_studys_metadata(study, campaign, saves):
     add_dataset.add(study / "sourcedata" / "ds000001")
     row, = campaign_mod.read_state(study, "nprep")
     assert row == {
-        "source_dataset": "sourcedata/ds000001", "app_config": "MRIQC-24.0.2",
+        "source_dataset": "sourcedata/ds000001", "app_config": "bids-app-configs/MRIQC-24.0.2.yaml",
         "processing_level": "subject", "n_subjects": "2", "n_sessions": "",
         "depends_on": "", "babs": "", "merged": "",
     }
@@ -171,9 +172,9 @@ def test_one_cell_per_app_in_the_bundle_in_bundle_order(study, campaign, saves):
              "fMRIPrep-25.2.5+minimal.yaml")
     add_dataset.add(study / "sourcedata" / "ds000001")
     assert cells(study) == [
-        ("sourcedata/ds000001", "MRIQC-24.0.2"),
-        ("sourcedata/ds000001", "fMRIPrep-25.2.5+anat"),
-        ("sourcedata/ds000001", "fMRIPrep-25.2.5+minimal"),
+        ("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml"),
+        ("sourcedata/ds000001", "bids-app-configs/fMRIPrep-25.2.5+anat.yaml"),
+        ("sourcedata/ds000001", "bids-app-configs/fMRIPrep-25.2.5+minimal.yaml"),
     ]
 
 
@@ -181,8 +182,9 @@ def test_depends_on_comes_from_the_app_config(study, campaign, saves):
     campaign("fMRIPrep-25.2.5+anat.yaml", "fMRIPrep-25.2.5+minimal.yaml")
     added = add_dataset.add(study / "sourcedata" / "ds000001")
     assert [(r["app_config"], r["depends_on"]) for r in added] == [
-        ("fMRIPrep-25.2.5+anat", ""),
-        ("fMRIPrep-25.2.5+minimal", "fMRIPrep-25.2.5+anat"),
+        ("bids-app-configs/fMRIPrep-25.2.5+anat.yaml", ""),
+        ("bids-app-configs/fMRIPrep-25.2.5+minimal.yaml",
+         "bids-app-configs/fMRIPrep-25.2.5+anat.yaml"),
     ]
 
 
@@ -206,7 +208,7 @@ def test_another_datasets_producer_row_does_not_satisfy_the_edge(study, campaign
     # the edge is per source dataset; ds000002's anat cell says nothing about ds000001
     campaign("fMRIPrep-25.2.5+minimal.yaml", rows=[{
         "source_dataset": "sourcedata/ds000002",
-        "app_config": "fMRIPrep-25.2.5+anat",
+        "app_config": "bids-app-configs/fMRIPrep-25.2.5+anat.yaml",
     }])
     with pytest.raises(SystemExit):
         add_dataset.add(study / "sourcedata" / "ds000001")
@@ -220,15 +222,15 @@ def test_re_adding_the_same_dataset_adds_nothing_and_says_so(study, campaign, sa
     with pytest.raises(SystemExit) as e:
         add_dataset.add(study / "sourcedata" / "ds000001")
     assert "already selected" in str(e.value)
-    assert cells(study) == [("sourcedata/ds000001", "MRIQC-24.0.2")]
+    assert cells(study) == [("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")]
 
 
 def test_a_second_source_dataset_gets_its_own_cells(study, campaign, saves):
     campaign("MRIQC-24.0.2.yaml")
     add_dataset.add(study / "sourcedata" / "ds000001")
     add_dataset.add(study / "sourcedata" / "ds000002")
-    assert cells(study) == [("sourcedata/ds000001", "MRIQC-24.0.2"),
-                            ("sourcedata/ds000002", "MRIQC-24.0.2")]
+    assert cells(study) == [("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml"),
+                            ("sourcedata/ds000002", "bids-app-configs/MRIQC-24.0.2.yaml")]
 
 
 def test_bundle_growth_is_unsupported_a_partial_dataset_still_refuses(study, campaign,
@@ -236,7 +238,7 @@ def test_bundle_growth_is_unsupported_a_partial_dataset_still_refuses(study, cam
     # the bundle is fixed at init (growth deliberately unsupported — #116): a dataset
     # with ANY cell refuses whole, and its existing state is left exactly as it is
     campaign("MRIQC-24.0.2.yaml", "fMRIPrep-25.2.5+anat.yaml", rows=[{
-        "source_dataset": "sourcedata/ds000001", "app_config": "MRIQC-24.0.2",
+        "source_dataset": "sourcedata/ds000001", "app_config": "bids-app-configs/MRIQC-24.0.2.yaml",
         "babs": "derivatives/MRIQC-24.0.2", "merged": "yes",
     }])
     with pytest.raises(SystemExit) as e:

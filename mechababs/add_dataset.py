@@ -33,40 +33,42 @@ import yaml
 
 from mechababs import campaign as campaign_mod
 from mechababs import campaign_init, select, utils
-from mechababs import study as study_mod
 
 
-def find_study(sourcedata):
-    """The study enclosing ``sourcedata``: the nearest dataset root **above** it.
+def resolve_sourcedata(study, sourcedata):
+    """``--sourcedata`` as a study-relative path; refuse anything outside or absent.
 
-    The user names the data, not the study — ``add-dataset --sourcedata
-    sourcedata/ds000001`` — and the same command works whether that path sits in a
-    lone study or in a member of a superstudy, because walking up answers both.
-
-    The walk starts at the *parent*: a source dataset is itself a datalad subdataset,
-    so it is a dataset root, and starting at the path itself would elect the
-    sourcedata as its own study.
+    add-dataset runs from the campaign root — the study — like every operating verb,
+    so the path is taken relative to it (an absolute path inside the study is fine
+    too). There is no locator machinery: where you stand *is* the study.
     """
+    study = Path(study)
     path = Path(sourcedata)
-    if not path.exists():
-        sys.exit(f"no such sourcedata: {path}\n"
+    src = (path if path.is_absolute() else study / path).resolve()
+    if not src.is_relative_to(study):
+        sys.exit(f"{src} is not inside this study ({study}).\n"
+                 f"add-dataset runs from the study root and selects data inside it.")
+    if not src.exists():
+        sys.exit(f"no such sourcedata: {src}\n"
                  f"add-dataset selects a source dataset that is already in the study "
                  f"— it does not install one.")
-    if not path.is_dir():
-        sys.exit(f"not a directory: {path}\n"
+    if not src.is_dir():
+        sys.exit(f"not a directory: {src}\n"
                  f"--sourcedata names a source dataset's directory (e.g. "
                  f"sourcedata/ds000001), not a file inside it.")
-    path = path.resolve()
-    for parent in path.parents:
-        if study_mod.is_study_root(parent):
-            return parent, path.relative_to(parent).as_posix()
-    sys.exit(f"{path} is not inside a study (no datalad/git dataset above it).\n"
-             f"mechababs operates inside an existing BIDS study — the source dataset "
-             f"lives in one, under sourcedata/.")
+    return src.relative_to(study).as_posix()
 
 
 def campaign_apps(study, label):
-    """The campaign's ordered app bundle as ``[(name, depends_on), …]``.
+    """The campaign's ordered app bundle as ``[(app_config, depends_on), …]``.
+
+    ``app_config`` — the cell's identity — is the **campaign-relative config path**
+    (``bids-app-configs/MRIQC-24.0.2.yaml``), exactly as ``campaign.yaml`` lists it;
+    the filename stem is only a derived, human-facing form. ``depends_on`` is
+    *declared* in an app config by the producer's stem (the natural name to write)
+    and resolved here to the producer's path, so both statefile identity columns
+    hold the same kind of thing. An undeclarable stem stays unresolved and fails
+    the dependency check below with the declared text in the message.
 
     Read from the campaign's own copies of the configs, not from wherever the user
     originally kept them: the copy in the study is what the run reproduces from.
@@ -76,10 +78,13 @@ def campaign_apps(study, label):
     if not apps:
         sys.exit(f"campaign {label!r} has no apps in "
                  f"{campaign_mod.CONFIG_FILENAME} — nothing to add a dataset to")
-    return [(campaign_init.app_name(rel),
-             campaign_init.declared_depends_on(
-                 campaign_mod.campaign_dir(study, label) / rel))
-            for rel in apps]
+    by_stem = {Path(rel).stem: rel for rel in apps}
+    pairs = []
+    for rel in apps:
+        declared = campaign_init.declared_depends_on(
+            campaign_mod.campaign_dir(study, label) / rel)
+        pairs.append((rel, by_stem.get(declared, declared) if declared else ""))
+    return pairs
 
 
 def check_dependencies(source_dataset, apps):
@@ -108,12 +113,11 @@ def check_dependencies(source_dataset, apps):
 def add(sourcedata):
     """Select ``sourcedata`` into the selected campaign. Returns the rows added.
 
-    The study is the one enclosing ``sourcedata`` — found by walking up, not taken
-    from the working directory — so the campaign guard runs against the study that is
-    actually written to.
+    Runs from the campaign root: the study is the current directory (the same rule
+    every operating verb follows), and ``sourcedata`` is a path inside it.
     """
-    study, source_dataset = find_study(sourcedata)
-    _, label, _ = campaign_mod.require_selected_campaign(study)
+    study, label, _ = campaign_mod.require_selected_campaign()
+    source_dataset = resolve_sourcedata(study, sourcedata)
 
     apps = campaign_apps(study, label)
     try:

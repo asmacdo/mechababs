@@ -11,15 +11,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from mechababs import __version__
+from mechababs import __version__, campaign_init, construct, guard, state
 from mechababs import add_dataset as add_dataset_mod
 from mechababs import campaign as campaign_mod
-from mechababs import campaign_init
-from mechababs import construct
-from mechababs import guard
 from mechababs import iterate as iterate_mod
 from mechababs import retire as retire_mod
-from mechababs import state
 from mechababs import status as status_mod
 from mechababs import study as study_mod
 from mechababs import validate as validate_mod
@@ -138,8 +134,8 @@ def cmd_add_dataset(args):
     campaign's bundle. No data is installed, and no inclusion is generated (that is
     scaffold's, where the eligibility rule applies).
 
-    The study is found by walking UP from ``--sourcedata``, so the same command
-    works for a lone study and for a member of a superstudy.
+    Runs from the campaign root — the study — like every operating verb;
+    ``--sourcedata`` is a path inside it.
     """
     added = add_dataset_mod.add(args.sourcedata)
     cell = added[0]                        # identity is the same across a dataset's cells
@@ -148,7 +144,7 @@ def cmd_add_dataset(args):
         size += f", {cell['n_sessions']} sessions"
     print(f"selected {cell['source_dataset']} ({cell['processing_level']}-level, "
           f"{size}) — {len(added)} cell(s): "
-          f"{', '.join(row['app_config'] for row in added)}", file=sys.stderr)
+          f"{', '.join(Path(row['app_config']).stem for row in added)}", file=sys.stderr)
     print("Next: mechababs iterate", file=sys.stderr)
     return 0
 
@@ -268,16 +264,17 @@ def main():
         "add-dataset",
         help="select a source dataset already in a study into this campaign",
         description=(
-            "Select which data the campaign acts on. --sourcedata names a source "
-            "dataset that is ALREADY in a study; the enclosing study is found by "
-            "walking up from that path, and one cell per app in the campaign's "
-            "bundle is written into that study's statefile. add-dataset does not "
+            "Select which data the campaign acts on. Run from the study root (the "
+            "campaign root); --sourcedata names a source dataset ALREADY in the "
+            "study, and one cell per app in the campaign's bundle is written into "
+            "the study's statefile. add-dataset does not "
             "install data and does not generate a subject inclusion (that happens "
             "at scaffold, where the app's eligibility rule applies)."
         ),
     )
     pa.add_argument("--sourcedata", metavar="PATH", required=True,
-                    help="a source dataset already in a study (e.g. sourcedata/ds000001)")
+                    help="a source dataset already in this study "
+                         "(e.g. sourcedata/ds000001)")
     pa.set_defaults(func=cmd_add_dataset)
 
     pi = sub.add_parser("iterate", help="advance pending pipelines one scaffold transition")
