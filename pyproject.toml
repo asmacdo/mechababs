@@ -9,6 +9,11 @@ description = "Automation glue for running BIDS apps across many datasets on HPC
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml",
+    # >=1.6 is a floor, not a preference: mechababs' change-making transitions are
+    # `datalad run`-captured, and the wrapped command commits its own work (babs
+    # init and friends). Released datalad 1.4 silently drops the run record in that
+    # case; 1.6 added the cmd_made_commits / dirty-committed machinery that keeps it
+    # (and lets `datalad.run.dirty-committed=error` stay armed).
     "datalad>=1.6",
     "datalad-container",
 ]
@@ -24,6 +29,11 @@ mechababs = "mechababs.cli:main"
 # where the packaged e2e conftest registers --cluster-config a second time and
 # collection fails outright.
 testpaths = ["tests"]
+# The unit suite must run with no cluster, no container, and no network. The one
+# test that really resolves a campaign environment needs `uv` and the network, so
+# it is marked and deselected by default; run it with `pytest -m uv_build`.
+markers = ["uv_build: really runs `uv lock` + `uv sync` (needs uv and the network)"]
+addopts = "-m 'not uv_build'"
 # Live phase markers during the long steps (venv build, babs init, later job
 # deploys) so a run isn't a silent wait. Add `-s` on top to stream the raw
 # subprocess output (the pip build, babs submit, ...) when you need to dig in.
