@@ -40,7 +40,7 @@ Each campaign has an `env.sh` that selects it and activates its venv in one step
 ```bash
 source .mechababs/campaigns/nprep/env.sh
 ```
-With one campaign it is the default anyway; with several, the selection `env.sh` exports is what names it.
+The selection `env.sh` exports (`MECHABABS_CAMPAIGN`) is what names the campaign you're operating on — always explicit, whether the study has one campaign or five.
 mechababs refuses to act if the running environment doesn't match the campaign's committed lock, so you can't run the wrong tools by accident.
 
 ## Add data
