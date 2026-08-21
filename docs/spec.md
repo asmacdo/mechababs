@@ -49,7 +49,7 @@ Entries marked **Open** are named holes we have not decided.
 - **Columns:**
   - identity (inputs, written at `add-dataset`, never overwritten): `source_dataset`, `app_config`, `processing_level` (sub vs sub+ses), `n_subjects` / `n_sessions`.
     `source_dataset` is the sourcedata's **study-relative path** (`sourcedata/ds000001`), not a bare id: it is what the user named, it is what scaffold wires into babs, and it does not assume the sourcedata sits at `sourcedata/<id>`.
-    The derivative's `+<id>` suffix is that path's last component.
+    When a derivative carries an `+<id>` suffix, the id is that path's last component — and the generic slots (`sourcedata/raw`, `sourcedata/rawbids`) carry none, per the naming rule in "Layout & input".
     `processing_level` is read from the metadata rows themselves — session-level exactly when they name real sessions — rather than from which of the two metadata filenames the study happens to use.
     `n_sessions` counts sessions across all subjects, and is blank rather than 0 for a subject-level dataset.
   - topology (derived from the app config): `depends_on` (the upstream `app_config`, or empty).
