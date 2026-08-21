@@ -7,6 +7,7 @@ activate script. The real env build is exercised by the `uv_build` integration
 test at the foot of this file.
 """
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -38,6 +39,15 @@ def configs(tmp_path):
     return src
 
 
+def pretend_build_env(campaign, label):
+    """What `build_env` leaves behind, without running uv: a stamped venv + a lock."""
+    venv = campaign / campaign_mod.VENV_DIRNAME
+    venv.mkdir()
+    (campaign / campaign_mod.LOCK_FILENAME).write_text("# resolved\n")
+    campaign_mod.write_env_stamp(venv, label, "# resolved\n")
+    return venv
+
+
 @pytest.fixture
 def stub_env(monkeypatch):
     """Stub the env build + datalad save; record that each was asked for.
@@ -48,12 +58,8 @@ def stub_env(monkeypatch):
     calls = {}
 
     def fake_build_env(campaign, label):
-        venv = campaign / campaign_mod.VENV_DIRNAME
-        venv.mkdir()
-        (campaign / campaign_mod.LOCK_FILENAME).write_text("# resolved\n")
-        campaign_mod.write_env_stamp(venv, label, "# resolved\n")
         calls["build_env"] = campaign
-        return venv
+        return pretend_build_env(campaign, label)
 
     def fake_save(study, message, path):
         calls["save"] = (study, message, path)
@@ -125,6 +131,48 @@ def test_the_campaign_is_saved_into_the_study(study, configs, stub_env):
     saved_study, message, path = stub_env["save"]
     assert (saved_study, path) == (study, campaign)
     assert "campaign init nprep" in message
+
+
+# --- git routing ------------------------------------------------------------
+
+def test_the_campaign_declares_its_own_git_routing(study, configs, stub_env):
+    # an attribute on the campaign dir, so it holds for every writer into it — not
+    # a flag one save happens to pass
+    campaign = init(study, configs)
+    assert (campaign / ".gitattributes").read_text() == campaign_init.GITATTRIBUTES
+
+
+def test_campaign_files_land_in_git_not_annex(tmp_path, configs, monkeypatch):
+    """In a real datalad dataset: every campaign file is in git, none annexed.
+
+    The routing is git-annex's decision at add time, so only a real `datalad save`
+    into a real dataset proves the `.gitattributes` does it. Local only — no network.
+    """
+    if shutil.which("git-annex") is None:
+        pytest.skip("git-annex is needed to prove a file was NOT annexed")
+    from datalad.api import Dataset
+
+    root = tmp_path / "real-study"
+    Dataset(str(root)).create(result_renderer="disabled")
+    monkeypatch.setattr(campaign_init, "build_env", pretend_build_env)
+
+    campaign = campaign_init.init(root, "nprep", [str(configs / "MRIQC-24.0.2.yaml")],
+                                  str(configs / "dartmouth.yaml"))
+
+    listing = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-s", "--", str(campaign.relative_to(root))],
+        capture_output=True, text=True, check=True).stdout.splitlines()
+    entries = {line.split("\t", 1)[1]: line.split()[0] for line in listing}
+    # 120000 is a symlink — how an annexed file is committed
+    annexed = [name for name, mode in entries.items() if mode != "100644"]
+    assert not annexed, f"annexed instead of git: {annexed}"
+    # the attribute file itself is committed, or a clone routes its own writes wrong
+    assert ".mechababs/campaigns/nprep/.gitattributes" in entries
+    assert f".mechababs/campaigns/nprep/{campaign_mod.LOCK_FILENAME}" in entries
+    # the venv is ignored, not committed
+    assert not [name for name in entries if f"/{campaign_mod.VENV_DIRNAME}/" in name]
+    assert subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+                          capture_output=True, text=True, check=True).stdout == ""
 
 
 # --- the pins ---------------------------------------------------------------

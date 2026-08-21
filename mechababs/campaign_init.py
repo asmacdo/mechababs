@@ -54,6 +54,15 @@ CAMPAIGN_EXTRAS = [
 # A label names a directory and is exported as an env var, so keep it boring.
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
+# Everything mechababs writes under a campaign dir is small text that a clone must
+# be able to read *without* fetching annex content — the lock above all, since
+# rebuilding the environment from a fresh clone is the whole reproduction story.
+# So the routing is declared once, as an attribute on the campaign dir, instead of
+# being asked for per save: it then holds for every later writer into the campaign,
+# and no save has to carry a `to_git` flag that would mis-route the moment its scope
+# reached a real subdataset.
+GITATTRIBUTES = "* annex.largefiles=nothing\n"
+
 DATALAD = str(Path(sys.prefix) / "bin" / "datalad")
 UV = "uv"
 
@@ -65,15 +74,13 @@ def run(*cmd, **kwargs):
 
 
 def datalad_save(study, message, path):
-    """Commit the campaign's files to the study, path-scoped, straight into git.
+    """Commit the campaign's files to the study, path-scoped.
 
-    ``--to-git``: every file here is small text that a clone must be able to read
-    without fetching annex content — the lock especially, since rebuilding the
-    environment from a fresh clone is the whole reproduction story.
+    Straight into git, but that is the campaign's own ``.gitattributes`` doing it
+    (see ``GITATTRIBUTES``), not a flag on this save.
     """
     datalad = DATALAD if Path(DATALAD).exists() else "datalad"
-    run(datalad, "save", "--dataset", str(study), "--message", message,
-        "--to-git", str(path))
+    run(datalad, "save", "--dataset", str(study), "--message", message, str(path))
 
 
 # --------------------------------------------------------------------------
@@ -357,6 +364,11 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
         sys.exit("--apps must name at least one BIDS-App config")
 
     campaign.mkdir(parents=True)
+
+    # First file in, before anything it has to govern: git-annex reads the working
+    # tree's attributes as it adds, so the attribute must never be younger than a
+    # save that could reach these paths.
+    (campaign / ".gitattributes").write_text(GITATTRIBUTES)
 
     # The venv is ephemeral and rebuilt from the lock. Ignore it from INSIDE the
     # campaign dir, so mechababs' whole footprint stays under .mechababs/ and the
