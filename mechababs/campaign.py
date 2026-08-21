@@ -48,8 +48,9 @@ CONFIG_FILENAME = "campaign.yaml"
 STATE_FILENAME = "sourcedata+derivatives.tsv"
 # The single-writer flock (spec: the campaign, not the study, is the writer unit).
 # Beside the statefile it guards, and gitignored from inside the campaign dir — a
-# lock left in the tree would otherwise dirty the study every `iterate`.
-LOCK_FILENAME = "." + STATE_FILENAME + ".lock"
+# lock left in the tree would otherwise dirty the study every `iterate`. Named for
+# the file lock it is, NOT `LOCK_FILENAME`: that is uv.lock, three lines down.
+FLOCK_FILENAME = "." + STATE_FILENAME + ".lock"
 APPS_DIRNAME = "bids-app-configs"
 CLUSTERS_DIRNAME = "clusters"
 INCLUSIONS_DIRNAME = "inclusions"
@@ -93,8 +94,8 @@ def state_path(study, label):
     return campaign_dir(study, label) / STATE_FILENAME
 
 
-def lock_path(study, label):
-    return campaign_dir(study, label) / LOCK_FILENAME
+def flock_path(study, label):
+    return campaign_dir(study, label) / FLOCK_FILENAME
 
 
 def apps_dir(study, label):

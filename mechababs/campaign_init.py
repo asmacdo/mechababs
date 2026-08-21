@@ -330,7 +330,7 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
     # Untracked-but-not-ignored files here would dirty the study, which the
     # transition verbs' clean-in guard reads as unattributable work.
     (campaign / ".gitignore").write_text(
-        f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.LOCK_FILENAME}\n")
+        f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.FLOCK_FILENAME}\n")
 
     apps = resolve_apps(campaign / campaign_mod.APPS_DIRNAME, app_args)
     cluster_file = stage_config(

@@ -109,7 +109,7 @@ def test_the_venv_and_the_flock_are_gitignored_from_inside_the_campaign(
     # upstream's and is not touched
     campaign = init(study, configs)
     assert (campaign / ".gitignore").read_text().split() == [
-        ".venv/", campaign_mod.LOCK_FILENAME]
+        ".venv/", campaign_mod.FLOCK_FILENAME]
     assert not (study / ".gitignore").exists()
 
 

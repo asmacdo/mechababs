@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from mechababs import __version__
+from mechababs import add_dataset as add_dataset_mod
 from mechababs import campaign as campaign_mod
 from mechababs import campaign_init
 from mechababs import construct
@@ -141,7 +142,37 @@ def default_study_url(ds_id):
 
 
 def cmd_add_dataset(args):
+    """Select a source dataset already in a study into the selected campaign.
+
+    Sniff + add-state-entry: read the study's per-subject metadata for this source
+    dataset to fill the cell's identity columns, then write one cell per app in the
+    campaign's bundle. No data is installed, and no inclusion is generated (that is
+    scaffold's, where the eligibility rule applies).
+
+    The study is found by walking UP from ``--sourcedata``, so the same command
+    works for a lone study and for a member of a superstudy.
+    """
+    if args.url is not None:
+        return cmd_add_dataset_legacy(args)
+    if not args.sourcedata:
+        sys.exit("add-dataset needs --sourcedata PATH: the source dataset, already "
+                 "in a study, that this campaign should act on")
+    added = add_dataset_mod.add(args.sourcedata)
+    print(f"selected {added[0]['source_dataset']} "
+          f"({added[0]['processing_level']}-level, {added[0]['n_subjects']} subjects"
+          + (f", {added[0]['n_sessions']} sessions" if added[0]["n_sessions"] else "")
+          + f"): {len(added)} cell(s) — "
+          + ", ".join(row["app_config"] for row in added), file=sys.stderr)
+    print("Next: mechababs iterate", file=sys.stderr)
+    return 0
+
+
+def cmd_add_dataset_legacy(args):
     """Register a dataset: clone its study into the campaign, append one ledger row.
+
+    TRANSITIONAL — the pre-study-first ``add-dataset <url>``, kept working while the
+    study-first spine lands chunk by chunk on this branch. It goes when the e2e is
+    re-pointed at the study-first path; nothing new should reach for it.
 
     The derivative is produced inside a study (cloned from OpenNeuroStudies), so
     add-dataset clones that study now — ``study-<id>`` by convention, or ``--study``
@@ -324,16 +355,28 @@ def main():
                          "(default: all)")
     pc.set_defaults(func=cmd_configure)
 
-    pa = sub.add_parser("add-dataset", help="clone a dataset's study, append a ledger row")
-    pa.add_argument("url", help="the dataset's upstream URL (its identity)")
+    pa = sub.add_parser(
+        "add-dataset",
+        help="select a source dataset already in a study into this campaign",
+        description=(
+            "Select which data the campaign acts on. --sourcedata names a source "
+            "dataset that is ALREADY in a study; the enclosing study is found by "
+            "walking up from that path, and one cell per app in the campaign's "
+            "bundle is written into that study's statefile. add-dataset does not "
+            "install data and does not generate a subject inclusion (that happens "
+            "at scaffold, where the app's eligibility rule applies)."
+        ),
+    )
+    pa.add_argument("--sourcedata", metavar="PATH",
+                    help="a source dataset already in a study (e.g. sourcedata/ds000001)")
+    # TRANSITIONAL: the pre-study-first form, kept working while the study-first
+    # spine lands chunk by chunk. Removed with the e2e re-point.
+    pa.add_argument("url", nargs="?", default=None, help=argparse.SUPPRESS)
     pa.add_argument("--campaign-path", type=Path, default=Path("."),
-                    help="the campaign dataset (default: current directory)")
-    pa.add_argument("--study", default=None,
-                    help="the study to clone (default: OpenNeuroStudies/study-<id> by "
-                         "convention); override for a non-OpenNeuro study, e.g. a test fixture")
+                    help=argparse.SUPPRESS)
+    pa.add_argument("--study", default=None, help=argparse.SUPPRESS)
     pa.add_argument("--processing-level", choices=["subject", "session"], default=None,
-                    help="set processing_level explicitly, bypassing OpenNeuroStudies "
-                         "derivation (needed for a non-OpenNeuro dataset)")
+                    help=argparse.SUPPRESS)
     pa.set_defaults(func=cmd_add_dataset)
 
     pi = sub.add_parser("iterate", help="advance pending pipelines one scaffold transition")

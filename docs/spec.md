@@ -48,6 +48,10 @@ Entries marked **Open** are named holes we have not decided.
 - **The statefile is per-(study, campaign), tall, at `.mechababs/campaigns/<label>/sourcedata+derivatives.tsv`.** One row per (source dataset × app config) cell — a map of source datasets to derivatives, named after OpenNeuroStudies' `studies+derivatives.tsv` one level down. A BIDS-conventional TSV so other tools can read it.
 - **Columns:**
   - identity (inputs, written at `add-dataset`, never overwritten): `source_dataset`, `app_config`, `processing_level` (sub vs sub+ses), `n_subjects` / `n_sessions`.
+    `source_dataset` is the sourcedata's **study-relative path** (`sourcedata/ds000001`), not a bare id: it is what the user named, it is what scaffold wires into babs, and it does not assume the sourcedata sits at `sourcedata/<id>`.
+    The derivative's `+<id>` suffix is that path's last component.
+    `processing_level` is read from the metadata rows themselves — session-level exactly when they name real sessions — rather than from which of the two metadata filenames the study happens to use.
+    `n_sessions` counts sessions across all subjects, and is blank rather than 0 for a subject-level dataset.
   - topology (derived from the app config): `depends_on` (the upstream `app_config`, or empty).
   - durable derived (reconciled each tick): `babs` (the derivative path once scaffolded — empty = not started), `merged` (set once merged — empty = not yet).
   - State is read off these — `babs` empty → scaffold; `babs` set + `merged` empty → active; `merged` set → done. Volatile job status stays in babs (queried live), never a column.
@@ -106,6 +110,8 @@ Entries marked **Open** are named holes we have not decided.
   - `add-dataset --sourcedata <path>` — the study is already present (lone study, or a member under a superstudy); walk up from the path to the enclosing study and write into its statefile.
   - `add-dataset --study <url> --sourcedata <path-in-study>` — the study is not present yet; `--study` is accepted **only as a URL to clone** a member in first (a superstudy-only act — a lone study has nothing to clone), then as above.
 - **What `add-dataset` does: sniff + add-state-entry, not inclusion.** Sniff = verify the sourcedata exists in the study and read its summary metadata (per-subject datatypes/counts) to fill the cell's identity columns. Add-state-entry = write the cells (this source dataset × the campaign's apps, with `depends_on`) into the enclosing study's statefile shard, empty and unscaffolded, for the active campaign. The subject inclusion list is generated later, at scaffold time — not here.
+  - **The sniff matches on `source_id` only when the study describes more than one source dataset.** A study's metadata TSV covers every source dataset in it, keyed by `source_id`. With several, the sourcedata directory's name selects among them (an unmatched name is refused, naming the ids that *are* described). With one — or with no `source_id` column at all — every row is that dataset's, which is what lets a generic slot (`sourcedata/raw`, whose directory name is not a dataset id) work.
+  - **Re-adding never duplicates a cell.** A `(source dataset, app)` already in the shard is left exactly as it is, state and all; only the missing cells are written, so a campaign whose bundle grew gains the new app's cell without a separate verb. When every cell is already there, `add-dataset` refuses rather than writing an empty commit.
 
 ## Provenance (`prov/`)
 
