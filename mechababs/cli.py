@@ -334,9 +334,11 @@ def main():
     pci.add_argument("--limit", type=int, default=None,
                      help="cap each source dataset's inclusion to the first N eligible "
                           "subjects (default: all)")
-    pci.add_argument("--babs", default=campaign_init.BABS_DEFAULT, metavar="URL@REF",
-                     help=f"the babs to pin (default: {campaign_init.BABS_DEFAULT}). "
-                          f"URL is anything git clones, a local checkout included.")
+    pci.add_argument("--babs", default=None, metavar="URL@REF",
+                     help="pin babs to a git checkout instead of the default, which is "
+                          "the latest babs release from PyPI, frozen to an exact version "
+                          "by the lock. URL is anything git clones, a local checkout "
+                          "included — which is how a PR branch gets run through a campaign.")
     pci.add_argument("--mechababs", default=None, metavar="URL@REF",
                      help="the mechababs to pin (default: whichever mechababs is "
                           "running this command, pinned by its resolved commit)")

@@ -91,8 +91,8 @@ def test_require_selected_campaign_bundles_the_three_preconditions(tmp_path, mon
     make_campaign(tmp_path)
     monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
     pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
-    study, label, campaign = campaign_mod.require_selected_campaign(tmp_path)
-    assert (study, label, campaign) == (
+    root, label, campaign = campaign_mod.require_selected_campaign(tmp_path)
+    assert (root, label, campaign) == (
         tmp_path.resolve(), "nprep", campaign_mod.campaign_dir(tmp_path, "nprep"))
 
 

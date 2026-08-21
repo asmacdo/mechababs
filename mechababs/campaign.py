@@ -1,20 +1,25 @@
-"""campaign.py — a campaign's layout inside a study, its selection, and its env guard.
+"""campaign.py — a campaign's layout, its selection, and its env guard.
 
 A campaign is a **config epoch**, not a dataset: one pinned environment, one bundle
-of BIDS-App configs, one cluster, and the state of this study's cells under it. It
-lives at ``<study>/.mechababs/campaigns/<label>/`` (docs/output_structure.md), and a
-study accumulates campaigns over time — a set of derivatives now, another a year
+of BIDS-App configs, one cluster, and the state of that root's cells under it. It
+lives at ``<root>/.mechababs/campaigns/<label>/`` (docs/output_structure.md), and a
+root accumulates campaigns over time — a set of derivatives now, another a year
 later with newer tools, each its own ``<label>``.
 
+``root`` throughout this module is the **operating-level root**: the study or the
+superstudy the campaign is configured at, whose footprint is identical either way.
+``study`` is reserved for parameters that must be a lone or member study — only
+``state_path``, since a statefile exists only at a study.
+
 ```
-<study>/.mechababs/campaigns/<label>/
+<root>/.mechababs/campaigns/<label>/
   campaign.yaml               the app bundle (ordered) + cluster choice + limit
   bids-app-configs/           the app configs, copied in
   clusters/                   the cluster config, copied in
   env.sh                      source to select this campaign + activate its venv
   pyproject.toml              declares mechababs + babs
   uv.lock                     the resolved environment — the provenance record
-  sourcedata+derivatives.tsv  the statefile: this study's cells for this campaign
+  sourcedata+derivatives.tsv  the statefile: this study's cells (at a study only)
   inclusions/                 the requested subject list per cell, pinned at scaffold
   .venv/                      gitignored, rebuilt from the lock
 ```
@@ -78,58 +83,64 @@ DERIVED_COLUMNS = ["babs", "merged"]
 STATE_COLUMNS = IDENTITY_COLUMNS + TOPOLOGY_COLUMNS + DERIVED_COLUMNS
 
 
-def campaigns_dir(study):
-    return Path(study) / MECHABABS_DIR / CAMPAIGNS_DIRNAME
+def campaigns_dir(root):
+    return Path(root) / MECHABABS_DIR / CAMPAIGNS_DIRNAME
 
 
-def campaign_dir(study, label):
-    return campaigns_dir(study) / label
+def campaign_dir(root, label):
+    return campaigns_dir(root) / label
 
 
-def config_path(study, label):
-    return campaign_dir(study, label) / CONFIG_FILENAME
+def config_path(root, label):
+    return campaign_dir(root, label) / CONFIG_FILENAME
 
 
 def state_path(study, label):
+    """``study``, not ``root``: a statefile exists only at a study.
+
+    The one asymmetry in the campaign footprint. A superstudy's campaign dir carries
+    membership instead — per-cell state shards to the member studies, and the
+    superstudy computes its rollup from them.
+    """
     return campaign_dir(study, label) / STATE_FILENAME
 
 
-def flock_path(study, label):
-    return campaign_dir(study, label) / FLOCK_FILENAME
+def flock_path(root, label):
+    return campaign_dir(root, label) / FLOCK_FILENAME
 
 
-def apps_dir(study, label):
-    return campaign_dir(study, label) / APPS_DIRNAME
+def apps_dir(root, label):
+    return campaign_dir(root, label) / APPS_DIRNAME
 
 
-def clusters_dir(study, label):
-    return campaign_dir(study, label) / CLUSTERS_DIRNAME
+def clusters_dir(root, label):
+    return campaign_dir(root, label) / CLUSTERS_DIRNAME
 
 
-def inclusions_dir(study, label):
-    return campaign_dir(study, label) / INCLUSIONS_DIRNAME
+def inclusions_dir(root, label):
+    return campaign_dir(root, label) / INCLUSIONS_DIRNAME
 
 
-def env_path(study, label):
-    return campaign_dir(study, label) / ENV_FILENAME
+def env_path(root, label):
+    return campaign_dir(root, label) / ENV_FILENAME
 
 
-def pyproject_path(study, label):
-    return campaign_dir(study, label) / PYPROJECT_FILENAME
+def pyproject_path(root, label):
+    return campaign_dir(root, label) / PYPROJECT_FILENAME
 
 
-def lock_path(study, label):
-    return campaign_dir(study, label) / LOCK_FILENAME
+def lock_path(root, label):
+    return campaign_dir(root, label) / LOCK_FILENAME
 
 
-def venv_path(study, label):
+def venv_path(root, label):
     """The campaign's venv — one venv per campaign, beside the lock it was built from.
 
     This is where ``uv sync --project <campaign-dir>`` puts it, which is what lets
     ``env.sh`` be committed: the path is derivable from the campaign dir, not
     recorded anywhere.
     """
-    return campaign_dir(study, label) / VENV_DIRNAME
+    return campaign_dir(root, label) / VENV_DIRNAME
 
 
 def initial_header():
@@ -211,7 +222,7 @@ def selected_label():
     return label
 
 
-def require_env_match(study, label):
+def require_env_match(root, label):
     """Refuse unless this process is running the environment the campaign records.
 
     Two failures, both of which would attribute a run to tools that did not produce
@@ -220,12 +231,12 @@ def require_env_match(study, label):
     (or before a bumped lock was built). The fix for the second is
     ``mechababs campaign update-env``, which the message names.
     """
-    campaign = campaign_dir(study, label)
-    if not config_path(study, label).is_file():
-        sys.exit(f"no campaign {label!r} in this study (looked for "
-                 f"{config_path(study, label)})")
+    campaign = campaign_dir(root, label)
+    if not config_path(root, label).is_file():
+        sys.exit(f"no campaign {label!r} here (looked for "
+                 f"{config_path(root, label)})")
 
-    venv = venv_path(study, label).resolve()
+    venv = venv_path(root, label).resolve()
     prefix = Path(sys.prefix).resolve()
     if prefix != venv:
         sys.exit(
@@ -233,10 +244,10 @@ def require_env_match(study, label):
             f"  expected: {venv}\n"
             f"  running:  {prefix}\n"
             f"Source the campaign's env.sh:\n"
-            f"  source {env_path(study, label)}"
+            f"  source {env_path(root, label)}"
         )
 
-    lock = lock_path(study, label)
+    lock = lock_path(root, label)
     if not lock.is_file():
         sys.exit(f"campaign {label!r} has no {LOCK_FILENAME} ({lock})")
     committed = lock_digest(lock.read_text())
@@ -258,13 +269,13 @@ def require_env_match(study, label):
 def require_selected_campaign(path="."):
     """The three preconditions every *operating* verb shares, in one call.
 
-    In a study (``require_study_root``), with a campaign selected
+    At a study root (``require_study_root``), with a campaign selected
     (``selected_label``), running the environment that campaign records
-    (``require_env_match``). Returns ``(study, label, campaign_dir)``.
+    (``require_env_match``). Returns ``(root, label, campaign_dir)``.
 
     ``campaign init`` is the one command that does not take this: it runs before
     the environment exists — it is what creates it.
     """
-    study = study_mod.require_study_root(path)
+    root = study_mod.require_study_root(path)
     label = selected_label()
-    return study, label, require_env_match(study, label)
+    return root, label, require_env_match(root, label)
