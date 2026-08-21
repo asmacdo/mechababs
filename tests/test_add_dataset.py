@@ -65,7 +65,7 @@ def campaign(study, monkeypatch):
         campaign_mod.state_path(study, "nprep").write_text(campaign_mod.initial_header())
         if rows:
             campaign_mod.write_state(study, "nprep", rows)
-        campaign_mod.lock_path(study, "nprep").write_text("lock-v1\n")   # uv.lock
+        campaign_mod.uv_lock_path(study, "nprep").write_text("lock-v1\n")   # uv.lock
         venv = campaign_mod.venv_path(study, "nprep")
         venv.mkdir()
         campaign_mod.write_env_stamp(venv, "nprep", "lock-v1\n")

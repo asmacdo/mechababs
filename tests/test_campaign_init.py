@@ -44,7 +44,7 @@ def pretend_build_env(campaign, label):
     """What `build_env` leaves behind, without running uv: a stamped venv + a lock."""
     venv = campaign / campaign_mod.VENV_DIRNAME
     venv.mkdir()
-    (campaign / campaign_mod.LOCK_FILENAME).write_text("# resolved\n")
+    (campaign / campaign_mod.UV_LOCK_FILENAME).write_text("# resolved\n")
     campaign_mod.write_env_stamp(venv, label, "# resolved\n")
     return venv
 
@@ -174,7 +174,7 @@ def test_campaign_files_land_in_git_not_annex(tmp_path, configs, monkeypatch):
     assert not annexed, f"annexed instead of git: {annexed}"
     # the attribute file itself is committed, or a clone routes its own writes wrong
     assert ".mechababs/campaigns/nprep/.gitattributes" in entries
-    assert f".mechababs/campaigns/nprep/{campaign_mod.LOCK_FILENAME}" in entries
+    assert f".mechababs/campaigns/nprep/{campaign_mod.UV_LOCK_FILENAME}" in entries
     # the venv is ignored, not committed
     assert not [name for name in entries if f"/{campaign_mod.VENV_DIRNAME}/" in name]
     assert subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
@@ -407,7 +407,7 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
         mechababs_spec=f"{checkout}@{branch}",
     )
 
-    lock = (campaign / campaign_mod.LOCK_FILENAME).read_text()
+    lock = (campaign / campaign_mod.UV_LOCK_FILENAME).read_text()
     assert 'name = "babs"' in lock and 'name = "mechababs"' in lock
     # the venv is where env.sh will look, and stamped with the lock that built it
     venv = campaign / campaign_mod.VENV_DIRNAME

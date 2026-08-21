@@ -54,14 +54,14 @@ STATE_FILENAME = "sourcedata+derivatives.tsv"
 # The single-writer flock (spec: the campaign, not the study, is the writer unit).
 # Beside the statefile it guards, and gitignored from inside the campaign dir — a
 # lock left in the tree would otherwise dirty the study every `iterate`. Named for
-# the file lock it is, NOT `LOCK_FILENAME`: that is uv.lock, three lines down.
+# the file lock it is, NOT `UV_LOCK_FILENAME`: that is uv.lock, three lines down.
 FLOCK_FILENAME = "." + STATE_FILENAME + ".lock"
 APPS_DIRNAME = "bids-app-configs"
 CLUSTERS_DIRNAME = "clusters"
 INCLUSIONS_DIRNAME = "inclusions"
 ENV_FILENAME = "env.sh"
 PYPROJECT_FILENAME = "pyproject.toml"
-LOCK_FILENAME = "uv.lock"
+UV_LOCK_FILENAME = "uv.lock"
 VENV_DIRNAME = ".venv"
 
 # Written into the venv (so it is gitignored and per-environment by construction)
@@ -129,8 +129,8 @@ def pyproject_path(root, label):
     return campaign_dir(root, label) / PYPROJECT_FILENAME
 
 
-def lock_path(root, label):
-    return campaign_dir(root, label) / LOCK_FILENAME
+def uv_lock_path(root, label):
+    return campaign_dir(root, label) / UV_LOCK_FILENAME
 
 
 def venv_path(root, label):
@@ -247,15 +247,15 @@ def require_env_match(root, label):
             f"  source {env_path(root, label)}"
         )
 
-    lock = lock_path(root, label)
+    lock = uv_lock_path(root, label)
     if not lock.is_file():
-        sys.exit(f"campaign {label!r} has no {LOCK_FILENAME} ({lock})")
+        sys.exit(f"campaign {label!r} has no {UV_LOCK_FILENAME} ({lock})")
     committed = lock_digest(lock.read_text())
     stamp = read_env_stamp(venv)
     if stamp is None or stamp.get("lock_sha256") != committed:
         sys.exit(
             f"the venv of campaign {label!r} does not match its committed "
-            f"{LOCK_FILENAME}\n"
+            f"{UV_LOCK_FILENAME}\n"
             "The lock and the environment have drifted — either the lock was "
             "bumped and the venv not rebuilt, or the venv was built from a lock "
             "that is no longer committed.\n"

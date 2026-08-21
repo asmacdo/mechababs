@@ -283,7 +283,7 @@ def build_env(campaign, label):
     run(UV, "sync", "--project", str(campaign), "--frozen")
     venv = campaign / campaign_mod.VENV_DIRNAME
     campaign_mod.write_env_stamp(
-        venv, label, (campaign / campaign_mod.LOCK_FILENAME).read_text())
+        venv, label, (campaign / campaign_mod.UV_LOCK_FILENAME).read_text())
     return venv
 
 
