@@ -16,8 +16,10 @@ The words below are used consistently throughout this document and [output_struc
 - **campaign** — one run's pinned environment and bundle of app configs, recorded in each study it touches. Not a dataset.
 - **sweep** — running a campaign across the member studies of a superstudy.
 
-A **level** is one of those nested scopes, and the hierarchy is named after a tree: the **leaves** are the derivatives, the **root** is the outermost superstudy.
-💬 So "up" means toward the root — which reads backwards for anyone picturing a superstudy sitting on top of its members, and is worth settling before more of the docs lean on it.
+A **level** is one of those nested scopes.
+Following datalad's superdataset convention, the hierarchy is a tree whose **root** is the outermost superstudy and whose **leaves** are the derivatives: the superstudy *contains* its studies, which contain their derivatives, the way a filesystem root contains everything beneath it.
+**"Up" is toward the root (the superstudy); "down" is toward the leaves (the derivatives).**
+Memory hook: *aggregation goes up* — each level's summary rolls up from the level below (derivative → study → superstudy), so the higher `super` level is always the more-aggregated one.
 
 ## Sweep many pre-made studies
 As a mechababs user, I want to operate on ~1000 pre-made BIDS studies that each contain one raw source dataset.
@@ -35,8 +37,9 @@ As a user, I can steer which studies the sweep advances and in what order, rathe
 Finishing whole studies before starting new ones only pays off if the order is mine to influence.
 
 ## Act on one study within a superstudy
-As a user, I can direct mechababs at a specific study and have it advance only that one, so I can finish a chunk deliberately instead of spreading progress across the whole set.
-💬 Scoping by working directory was the initial pitch, but the superstudy still takes writes when a study finishes — so the working directory may not be the right selector.
+As a user, I can direct mechababs at a specific study and have it advance only that one, so I can concentrate limited cluster resources on finishing a study rather than spreading progress across the whole set (see [Run a study to completion under a finite budget](#run-a-study-to-completion-under-a-finite-budget)).
+A **selector is required**; the *mechanism* is open.
+💬 Scoping by working directory was the initial pitch, but the superstudy still takes writes when a study finishes — so the working directory may not be the right selector, and an explicit study (or campaign) argument may be needed instead.
 
 ## Release a finished study
 As a user, once mechababs reports a study finished I can push it and remove it from the cluster.
@@ -56,7 +59,9 @@ This is the pattern OpenNeuroStudies, AnnexTube, MyKrok and the BIDS inheritance
 As a user or tool author, I want the files mechababs keeps its state in to be documented and conventional — BIDS study layout, and [BIDS common conventions on TSV files](https://bids-specification.readthedocs.io/en/stable/common-principles.html#tabular-files) for the tabular ones — so a dashboard, a script, or another lab's tooling can read them without knowing mechababs internals.
 
 ## Run a study to completion under a finite budget
-As a user with limited disk and inodes, I can sweep more studies than fit at once, because finishing and releasing a study frees the space the next one needs.
+As a user with limited cluster resources — disk and inodes, but also job slots, CPU, and RAM — I can sweep more studies than fit at once, because finishing and releasing a study frees what the next one needs.
+Storage is the binding one: getting a finished study *off* the cluster as soon as it is done is how space is reclaimed, so the workflow favors finishing whole studies over advancing every study's first stage.
+This is *why* order ([Choose what gets worked next](#choose-what-gets-worked-next)) and a per-study [selector](#act-on-one-study-within-a-superstudy) matter — they are how the user concentrates finite resources on completing-and-offloading.
 💬 Whether a single study's own peak footprint fits is a separate problem, not covered by this.
 
 ## Work in a single study, no superstudy
@@ -106,9 +111,13 @@ As a user who has run a campaign on more than one cluster, I want the member stu
 ## Add a dataset to a running campaign
 As a user, I can add a dataset to a campaign after it has started, and the reconciler picks it up on the next tick.
 
-## Handle a source dataset that changes mid-campaign 💬
-As a user, I can handle a source dataset changing after processing has started — new subjects or sessions, or changed data on subjects/sessions already processed.
-This is likely handled at the BABS level rather than in mechababs; needs discussion.
+## Handle a source dataset gaining subjects or sessions
+As a user, when new subjects or sessions are added to a source dataset after processing has started, the reconciler picks them up on a later tick and processes them alongside the rest.
+This is the additive case: no already-produced derivative is invalidated, so it is the same shape as adding a dataset to a running campaign, one grain finer.
+
+## Handle a source dataset's data changing after processing 💬
+As a user, I can handle data changing on subjects or sessions that have already been processed — the harder case, because derivatives already produced from that data may now be stale.
+💬 This likely belongs at the BABS level rather than in mechababs, and overlaps what Yarik is exploring in OpenNeuroStudies (representing such state changes uniformly across a submodule hierarchy); needs discussion.
 
 ## Be able to operate on a crippled filesystem
 As a user, I can still collect derivatives with correct provenance on a datalad "crippled filesystem" — one without symlink support, where git-annex runs on an adjusted branch.
