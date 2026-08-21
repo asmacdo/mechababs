@@ -188,7 +188,7 @@ def require_env_match(study, label):
     prefix = Path(sys.prefix).resolve()
     if prefix != venv:
         sys.exit(
-            f"not running in campaign {label!r}'s venv\n"
+            f"not running in the venv of campaign {label!r}\n"
             f"  expected: {venv}\n"
             f"  running:  {prefix}\n"
             f"Source the campaign's env.sh:\n"
@@ -202,7 +202,7 @@ def require_env_match(study, label):
     stamp = read_env_stamp(venv)
     if stamp is None or stamp.get("lock_sha256") != committed:
         sys.exit(
-            f"campaign {label!r}'s venv does not match its committed "
+            f"the venv of campaign {label!r} does not match its committed "
             f"{LOCK_FILENAME}\n"
             "The lock and the environment have drifted — either the lock was "
             "bumped and the venv not rebuilt, or the venv was built from a lock "
