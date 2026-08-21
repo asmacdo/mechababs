@@ -24,6 +24,7 @@ import logging
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
@@ -184,7 +185,11 @@ def _stage_env_sh_selects_and_activates(study):
                                 f'&& command -v mechababs'], study)
     label, exe = which.stdout.split()
     assert label == LABEL, f"env.sh selected {label!r}, not {LABEL!r}"
-    assert exe == str(campaign_mod.venv_path(study, LABEL) / "bin" / "mechababs"), (
+    # Resolved on both sides: env.sh derives the venv from its own location with
+    # `cd … && pwd`, which resolves symlinks — and a workdir reached through one
+    # (a scratch symlink is normal on a cluster) would otherwise fail a string compare.
+    expected = (campaign_mod.venv_path(study, LABEL) / "bin" / "mechababs").resolve()
+    assert Path(exe).resolve() == expected, (
         f"env.sh activated something other than the campaign venv: {exe}")
 
     refused = _run(
