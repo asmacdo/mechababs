@@ -97,6 +97,10 @@ The earlier derivatives should be left untouched; the new effort records its own
 As a collaborator, I want to clone a published study and add my own derivative.
 The environment needed to operate on it should rebuild automatically, so I do not reconstruct it by hand.
 
+## Reproduce the orchestration from the study alone
+As a collaborator with only a cloned study, I can rebuild the environment it records and re-run the recorded orchestration commands to reproduce how its derivatives were made.
+Everything required — the campaign's config and pinned environment — is committed inside the study itself; no superstudy or outside record is needed.
+
 ## Extend a study produced by other tools
 As a researcher, I want to clone a study whose existing derivatives were made *without* mechababs and add a mechababs-produced derivative alongside them.
 mechababs has no prior state file to inherit here, so it starts fresh and must coexist with the existing derivatives without disturbing them.
@@ -106,10 +110,14 @@ As a user with access to more than one cluster, I want to run the same pipeline 
 
 ## Consolidate results across clusters
 As a user who has run a campaign on more than one cluster, I want the member studies each cluster worked on to come back together into one superstudy, so that where a study was computed is an operational detail and not a fork in the record.
-💬 This may be no more than a plain `git merge` — worth checking before designing anything.
+What comes together is the **results** — derivative data, portable in git/annex — not running machinery; it may amount to a `git merge`, with conflicts hand-resolved.
 
 ## Add a dataset to a running campaign
 As a user, I can add a dataset to a campaign after it has started, and the reconciler picks it up on the next tick.
+This covers each shape of adding: a source dataset already in my study, another source dataset of a study the campaign already works on, and bringing a whole existing study in to point at a source dataset inside it.
+
+## Adopt a new tool release mid-sweep
+As a user running a large sweep, when a bug is found and fixed in a new release, I can bump the campaign's pinned version without discarding completed work: finished derivatives stay as they are, new work uses the new version, and I can selectively redo the cells the bug affected.
 
 ## Handle a source dataset gaining subjects or sessions
 As a user, when new subjects or sessions are added to a source dataset after processing has started, the reconciler picks them up on a later tick and processes them alongside the rest.
