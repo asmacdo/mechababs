@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 
 from mechababs import __version__
+from mechababs import campaign as campaign_mod
+from mechababs import campaign_init
 from mechababs import construct
 from mechababs import guard
 from mechababs import iterate as iterate_mod
@@ -20,6 +22,7 @@ from mechababs import retire as retire_mod
 from mechababs import select
 from mechababs import state
 from mechababs import status as status_mod
+from mechababs import study as study_mod
 from mechababs import utils
 from mechababs import validate as validate_mod
 
@@ -62,6 +65,34 @@ def _require_campaign_venv(campaign):
         sys.exit(f"must run from the campaign venv ({venv}), but sys.prefix is {prefix}\n"
                  f"invoke as: {venv}/bin/mechababs …")
     return venv
+
+
+def cmd_campaign_init(args):
+    """Create a campaign in the study you are standing in.
+
+    The one command that runs before a campaign environment exists — so it is the
+    one that may run from anywhere (typically ``uvx --from git+…``), and the one
+    that does not take the env-match guard. It creates the environment the guard
+    will check from here on.
+
+    The study is the current directory, not a flag: study-first commands operate on
+    where you are, and this one has no ledger or config to point elsewhere with.
+    """
+    study = study_mod.require_study_root(".")
+    # `--apps a.yaml,b.yaml` (as the quickstart shows) and a repeated `--apps` both
+    # work, and compose — the bundle is ordered as written either way.
+    apps = [app.strip() for group in args.apps for app in group.split(",") if app.strip()]
+    campaign = campaign_init.init(
+        study, args.label, apps, args.cluster, limit=args.limit,
+        babs_spec=args.babs, mechababs_spec=args.mechababs,
+    )
+    rel = campaign.relative_to(study)
+    print(f"\ncampaign {args.label!r} created at {rel}", file=sys.stderr)
+    print("Next, select it and activate its environment, then add data:",
+          file=sys.stderr)
+    print(f"  source {rel}/{campaign_mod.ENV_FILENAME}", file=sys.stderr)
+    print("  mechababs add-dataset --sourcedata sourcedata/<id>", file=sys.stderr)
+    return 0
 
 
 def cmd_configure(args):
@@ -242,6 +273,41 @@ def main():
     )
     p.add_argument("--version", action="version", version=f"mechababs {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    pcamp = sub.add_parser(
+        "campaign", help="create a campaign in this study, or rebuild its environment")
+    camp_sub = pcamp.add_subparsers(dest="campaign_cmd", required=True)
+    pci = camp_sub.add_parser(
+        "init",
+        help="create a campaign in the study you are standing in",
+        description=(
+            "Create a campaign — one config epoch — inside an existing study: copy "
+            "your app + cluster configs into .mechababs/campaigns/<label>/, pin "
+            "mechababs + babs into a uv.lock, build the campaign's venv from that "
+            "lock, and write the empty statefile. Which source datasets the campaign "
+            "acts on is a separate, explicit step (`add-dataset`). This is the one "
+            "command that runs before the campaign environment exists, so it can be "
+            "run ephemerally: `uvx --from git+https://github.com/con/mechababs@<ref> "
+            "mechababs campaign init …`."
+        ),
+    )
+    pci.add_argument("label", help="the campaign's identity (its directory name, and "
+                                   "what MECHABABS_CAMPAIGN selects)")
+    pci.add_argument("--apps", action="append", required=True, metavar="PATH|URL[,…]",
+                     help="BIDS-App configs, ordered: paths or URLs, copied into the "
+                          "campaign. Comma-separated, and repeatable.")
+    pci.add_argument("--cluster", required=True, metavar="PATH|URL",
+                     help="cluster config: a path or URL, copied into the campaign")
+    pci.add_argument("--limit", type=int, default=None,
+                     help="cap each source dataset's inclusion to the first N eligible "
+                          "subjects (default: all)")
+    pci.add_argument("--babs", default=campaign_init.BABS_DEFAULT, metavar="URL@REF",
+                     help=f"the babs to pin (default: {campaign_init.BABS_DEFAULT}). "
+                          f"URL is anything git clones, a local checkout included.")
+    pci.add_argument("--mechababs", default=None, metavar="URL@REF",
+                     help="the mechababs to pin (default: whichever mechababs is "
+                          "running this command, pinned by its resolved commit)")
+    pci.set_defaults(func=cmd_campaign_init)
 
     pc = sub.add_parser("configure",
                         help="bind an ordered pipeline-set to a cluster (run from the campaign venv)")

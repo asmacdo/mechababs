@@ -1,0 +1,291 @@
+"""Unit tests for `mechababs campaign init`.
+
+Fast tests stub the two slow, outside-world steps — the uv env build and the
+datalad save — and assert on the campaign's *contents*: the copied configs, the
+pins written into pyproject.toml, the header-only statefile, and the select +
+activate script. The real env build is exercised by the `uv_build` integration
+test at the foot of this file.
+"""
+
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+from mechababs import campaign as campaign_mod
+from mechababs import campaign_init
+
+
+@pytest.fixture
+def study(tmp_path):
+    """A study root, minimal: mechababs only requires it to be a dataset."""
+    root = tmp_path / "study-ds000001"
+    (root / ".datalad").mkdir(parents=True)
+    return root
+
+
+@pytest.fixture
+def configs(tmp_path):
+    """The user's own app + cluster configs, somewhere outside the study."""
+    src = tmp_path / "my-configs"
+    src.mkdir()
+    (src / "MRIQC-24.0.2.yaml").write_text("bids_app_args: {}\n")
+    (src / "fMRIPrep-25.2.5+anat.yaml").write_text("bids_app_args: {}\n")
+    (src / "fMRIPrep-25.2.5+minimal.yaml").write_text(
+        "mechababs:\n  depends_on: fMRIPrep-25.2.5+anat\n")
+    (src / "dartmouth.yaml").write_text("cluster_resources: {}\n")
+    return src
+
+
+@pytest.fixture
+def stub_env(monkeypatch):
+    """Stub the env build + datalad save; record that each was asked for.
+
+    Both reach outside the process (uv resolves over the network; datalad commits
+    in a real dataset), and neither is what these tests are about.
+    """
+    calls = {}
+
+    def fake_build_env(campaign, label):
+        venv = campaign / campaign_mod.VENV_DIRNAME
+        venv.mkdir()
+        (campaign / campaign_mod.LOCK_FILENAME).write_text("# resolved\n")
+        campaign_mod.write_env_stamp(venv, label, "# resolved\n")
+        calls["build_env"] = campaign
+        return venv
+
+    def fake_save(study, message, path):
+        calls["save"] = (study, message, path)
+
+    monkeypatch.setattr(campaign_init, "build_env", fake_build_env)
+    monkeypatch.setattr(campaign_init, "datalad_save", fake_save)
+    return calls
+
+
+def init(study, configs, *names, label="nprep", **kwargs):
+    apps = [str(configs / f"{n}.yaml") for n in names] or \
+        [str(configs / "MRIQC-24.0.2.yaml")]
+    return campaign_init.init(study, label, apps, str(configs / "dartmouth.yaml"),
+                              **kwargs)
+
+
+# --- the campaign's contents ------------------------------------------------
+
+def test_init_writes_the_campaign_layout(study, configs, stub_env):
+    campaign = init(study, configs, "MRIQC-24.0.2", "fMRIPrep-25.2.5+anat")
+
+    assert campaign == study / ".mechababs" / "campaigns" / "nprep"
+    for name in (campaign_mod.CONFIG_FILENAME, campaign_mod.STATE_FILENAME,
+                 campaign_mod.ENV_FILENAME, campaign_mod.PYPROJECT_FILENAME):
+        assert (campaign / name).is_file(), name
+    # the configs are COPIED in — the run reproduces from the study alone
+    assert (campaign / "bids-app-configs" / "MRIQC-24.0.2.yaml").is_file()
+    assert (campaign / "clusters" / "dartmouth.yaml").is_file()
+
+
+def test_the_statefile_is_header_only(study, configs, stub_env):
+    # which source datasets a campaign acts on is add-dataset's explicit selection
+    campaign = init(study, configs)
+    assert (campaign / campaign_mod.STATE_FILENAME).read_text() == \
+        campaign_mod.initial_header()
+
+
+def test_campaign_yaml_records_the_bundle_order_cluster_and_limit(study, configs, stub_env):
+    campaign = init(study, configs, "fMRIPrep-25.2.5+anat", "MRIQC-24.0.2", limit=1)
+    config = yaml.safe_load((campaign / campaign_mod.CONFIG_FILENAME).read_text())
+    assert config == {
+        "label": "nprep",
+        "apps": ["bids-app-configs/fMRIPrep-25.2.5+anat.yaml",
+                 "bids-app-configs/MRIQC-24.0.2.yaml"],
+        "cluster": "clusters/dartmouth.yaml",
+        "limit": 1,
+    }
+
+
+def test_the_venv_is_gitignored_from_inside_the_campaign(study, configs, stub_env):
+    # mechababs' footprint stays under .mechababs/; the study's own .gitignore is
+    # upstream's and is not touched
+    campaign = init(study, configs)
+    assert (campaign / ".gitignore").read_text() == ".venv/\n"
+    assert not (study / ".gitignore").exists()
+
+
+def test_env_sh_selects_the_campaign_and_activates_its_venv(study, configs, stub_env):
+    campaign = init(study, configs)
+    env_sh = (campaign / campaign_mod.ENV_FILENAME).read_text()
+    assert "export MECHABABS_CAMPAIGN='nprep'" in env_sh
+    assert ".venv/bin/activate" in env_sh
+    # no absolute path: env.sh is committed and must work from any clone
+    assert str(study) not in env_sh
+
+
+def test_the_campaign_is_saved_into_the_study(study, configs, stub_env):
+    campaign = init(study, configs)
+    saved_study, message, path = stub_env["save"]
+    assert (saved_study, path) == (study, campaign)
+    assert "campaign init nprep" in message
+
+
+# --- the pins ---------------------------------------------------------------
+
+def test_pyproject_pins_mechababs_and_babs_by_ref(study, configs, stub_env):
+    campaign = init(study, configs,
+                    babs_spec="https://github.com/PennLINC/babs.git@v0.5.0",
+                    mechababs_spec="https://github.com/con/mechababs.git@v0.2")
+    pyproject = (campaign / campaign_mod.PYPROJECT_FILENAME).read_text()
+    assert 'babs = { git = "https://github.com/PennLINC/babs.git", rev = "v0.5.0" }' \
+        in pyproject
+    assert 'mechababs = { git = "https://github.com/con/mechababs.git", rev = "v0.2" }' \
+        in pyproject
+    # a virtual project: the campaign is dependencies to resolve, not a package to build
+    assert "[build-system]" not in pyproject
+
+
+def test_a_local_checkout_pin_becomes_a_file_url(tmp_path):
+    # dev mode: run a whole campaign against a branch that exists only on disk
+    checkout = tmp_path / "babs-checkout"
+    checkout.mkdir()
+    assert campaign_init.git_source(str(checkout), "my-branch") == {
+        "git": checkout.resolve().as_uri(), "rev": "my-branch"}
+
+
+def test_a_git_plus_url_is_normalised(tmp_path):
+    assert campaign_init.git_source("git+https://x/y.git", "main")["git"] == \
+        "https://x/y.git"
+
+
+def test_a_pin_without_a_ref_is_refused():
+    with pytest.raises(SystemExit):
+        campaign_init.parse_source_spec("https://github.com/PennLINC/babs.git", "babs")
+
+
+def test_the_running_mechababs_is_pinned_by_its_resolved_commit(monkeypatch):
+    class FakeDist:
+        version = "0.2"
+
+        def read_text(self, name):
+            return ('{"url": "https://github.com/con/mechababs",'
+                    ' "vcs_info": {"vcs": "git", "requested_revision": "v0.2",'
+                    ' "commit_id": "9f3c1a2"}}')
+
+    monkeypatch.setattr(campaign_init.metadata, "distribution", lambda n: FakeDist())
+    # the commit, not the branch: the campaign records exactly what ran
+    assert campaign_init.running_mechababs_pin() == (
+        "mechababs", {"git": "https://github.com/con/mechababs", "rev": "9f3c1a2"})
+
+
+def test_an_editable_mechababs_is_pinned_by_path(monkeypatch):
+    class FakeDist:
+        version = "0.2"
+
+        def read_text(self, name):
+            return ('{"url": "file:///home/dev/mechababs",'
+                    ' "dir_info": {"editable": true}}')
+
+    monkeypatch.setattr(campaign_init.metadata, "distribution", lambda n: FakeDist())
+    assert campaign_init.running_mechababs_pin() == (
+        "mechababs", {"path": "/home/dev/mechababs", "editable": True})
+
+
+def test_a_released_mechababs_is_pinned_by_version(monkeypatch):
+    class FakeDist:
+        version = "0.2.1"
+
+        def read_text(self, name):
+            return None            # a registry install has no direct_url.json
+
+    monkeypatch.setattr(campaign_init.metadata, "distribution", lambda n: FakeDist())
+    assert campaign_init.running_mechababs_pin() == ("mechababs==0.2.1", None)
+
+
+# --- refusals ---------------------------------------------------------------
+
+def test_init_refuses_a_second_campaign_under_the_same_label(study, configs, stub_env):
+    init(study, configs)
+    with pytest.raises(SystemExit):
+        init(study, configs)
+
+
+def test_init_refuses_a_duplicate_app_name_before_copying_anything(study, configs,
+                                                                   stub_env, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "MRIQC-24.0.2.yaml").write_text("bids_app_args: {x: 1}\n")
+    with pytest.raises(SystemExit):
+        campaign_init.init(study, "nprep",
+                           [str(configs / "MRIQC-24.0.2.yaml"),
+                            str(other / "MRIQC-24.0.2.yaml")],
+                           str(configs / "dartmouth.yaml"))
+    assert not (campaign_mod.apps_dir(study, "nprep") / "MRIQC-24.0.2.yaml").exists()
+
+
+def test_init_refuses_a_depends_on_outside_the_bundle(study, configs, stub_env):
+    # fMRIPrep-minimal depends on fMRIPrep-anat, which is not in this bundle
+    with pytest.raises(SystemExit) as e:
+        init(study, configs, "MRIQC-24.0.2", "fMRIPrep-25.2.5+minimal")
+    assert "depends_on" in str(e.value)
+
+
+def test_init_accepts_a_declared_dependency_that_is_in_the_bundle(study, configs,
+                                                                  stub_env):
+    campaign = init(study, configs, "fMRIPrep-25.2.5+anat", "fMRIPrep-25.2.5+minimal")
+    assert campaign_init.declared_depends_on(
+        campaign / "bids-app-configs" / "fMRIPrep-25.2.5+minimal.yaml"
+    ) == "fMRIPrep-25.2.5+anat"
+
+
+def test_init_refuses_a_config_that_is_not_there(study, configs, stub_env):
+    # a bare name is NOT resolved against some directory mechababs knows about
+    with pytest.raises(SystemExit):
+        campaign_init.init(study, "nprep", ["MRIQC-24.0.2.yaml"],
+                           str(configs / "dartmouth.yaml"))
+
+
+def test_init_refuses_an_unusable_label(study, configs, stub_env):
+    with pytest.raises(SystemExit):
+        init(study, configs, label="../escape")
+
+
+def test_init_refuses_outside_a_study(tmp_path, configs, stub_env):
+    from mechababs import study as study_mod
+    with pytest.raises(SystemExit):
+        study_mod.require_study_root(tmp_path / "not-a-study")
+
+
+# --- the real environment build ---------------------------------------------
+
+@pytest.mark.uv_build
+def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatch):
+    """The env build for real: uv resolves the lock and syncs a venv from it.
+
+    Marked so the fast suite skips it — it runs `uv` and reaches the network. The
+    mechababs pin is this checkout, so no mechababs release is needed; babs comes
+    from its default URL.
+    """
+    if subprocess.run(["uv", "--version"], capture_output=True).returncode != 0:
+        pytest.skip("uv not available")
+    saved = {}
+    monkeypatch.setattr(campaign_init, "datalad_save",
+                        lambda s, m, p: saved.update(path=p))
+
+    checkout = Path(__file__).resolve().parent.parent
+    branch = subprocess.run(["git", "-C", str(checkout), "rev-parse",
+                             "--abbrev-ref", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    campaign = campaign_init.init(
+        study, "nprep", [str(configs / "MRIQC-24.0.2.yaml")],
+        str(configs / "dartmouth.yaml"),
+        mechababs_spec=f"{checkout}@{branch}",
+    )
+
+    lock = (campaign / campaign_mod.LOCK_FILENAME).read_text()
+    assert 'name = "babs"' in lock and 'name = "mechababs"' in lock
+    # the venv is where env.sh will look, and stamped with the lock that built it
+    venv = campaign / campaign_mod.VENV_DIRNAME
+    assert (venv / "bin" / "mechababs").exists()
+    assert campaign_mod.read_env_stamp(venv)["lock_sha256"] == \
+        campaign_mod.lock_digest(lock)
+    # ... so the env-match guard passes against it
+    monkeypatch.setattr("sys.prefix", str(venv))
+    campaign_mod.require_env_match(study, "nprep")

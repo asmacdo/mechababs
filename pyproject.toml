@@ -24,6 +24,11 @@ mechababs = "mechababs.cli:main"
 # where the packaged e2e conftest registers --cluster-config a second time and
 # collection fails outright.
 testpaths = ["tests"]
+# The unit suite must run with no cluster, no container, and no network. The one
+# test that really resolves a campaign environment needs `uv` and the network, so
+# it is marked and deselected by default; run it with `pytest -m uv_build`.
+markers = ["uv_build: really runs `uv lock` + `uv sync` (needs uv and the network)"]
+addopts = "-m 'not uv_build'"
 # Live phase markers during the long steps (venv build, babs init, later job
 # deploys) so a run isn't a silent wait. Add `-s` on top to stream the raw
 # subprocess output (the pip build, babs submit, ...) when you need to dig in.
