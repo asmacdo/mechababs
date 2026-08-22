@@ -8,8 +8,10 @@ mechababs:
   # `input_datasets` below (docs/spec.md, "`depends_on` is a mechababs-owned
   # declaration"). Declared by the producer's STEM — the natural name to write —
   # and stored resolved to its campaign-relative config path in the statefile.
-  # This is an input-kind edge: `input_datasets` is where the same producer gets
-  # wired into the run.
+  # ORDERING ONLY: it carries no kind and wires nothing. This stage names the same
+  # producer twice on purpose — here so the cell waits for it, and in
+  # `input_datasets` below so babs consumes its output. A QC gate would name it
+  # only here.
   depends_on: SimBIDS-0.0.3+anchor
   container:
     # See SimBIDS-0.0.3+anchor.yaml: a plain ReproNim/containers clone, resolved
@@ -42,11 +44,12 @@ cluster_resources:
     #SBATCH --nodes=1
     #SBATCH --ntasks=1
 
-# Chained input: SimBIDS-0.0.3+anchor's output. Key == the producing pipeline's
-# short_name, so iterate name-matches it, gates on that stage being merged, and
-# injects its output-RIA URL as origin_url (omitted here — it doesn't exist until
-# the upstream runs). babs fetches + unzips it as job input-prep even though
-# simbids ignores the content.
+# Chained input: SimBIDS-0.0.3+anchor's output. The key is the producing app
+# config's STEM, which is how scaffold recognises it as another cell in this
+# campaign and injects that cell's output-RIA URL as origin_url (omitted here — it
+# does not exist until the producer has run and merged). This declaration alone
+# drives the wiring; `mechababs.depends_on` above drives only the ordering. babs
+# fetches + unzips it as job input-prep even though simbids ignores the content.
 input_datasets:
   SimBIDS-0.0.3+anchor:
     is_zipped: true

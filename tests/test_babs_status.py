@@ -5,6 +5,8 @@ one next transition; `read_status` just runs the command and json.loads it.
 """
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -74,7 +76,13 @@ def test_read_status_parses_stdout(monkeypatch):
     stdout = json.dumps(_status())
 
     def fake_run(cmd, **kw):
-        assert cmd[:3] == ["babs", "status", "--json"]
+        # The PINNED babs, not PATH's: this query is what the reconciler routes on
+        # and what the merge verb re-checks, so it has to be the babs that ran the
+        # jobs. Asserted by shape (an absolute path under sys.prefix), not by the
+        # literal string, which is environment-dependent.
+        assert Path(cmd[0]).name == "babs" and Path(cmd[0]).is_absolute(), cmd
+        assert Path(cmd[0]).is_relative_to(sys.prefix), cmd
+        assert cmd[1:4] == ["status", "--json", "some/project"]
         return SimpleNamespace(stdout=stdout)
 
     monkeypatch.setattr(babs_status.subprocess, "run", fake_run)

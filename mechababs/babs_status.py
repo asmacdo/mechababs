@@ -11,11 +11,18 @@ can transiently overlap ``done``, so in-progress is derived as
 import json
 import subprocess
 
+from mechababs import campaign as campaign_mod
+
 
 def read_status(project):
-    """Run ``babs status --json <project>`` and ``json.loads`` its stdout (a dict)."""
+    """Run ``babs status --json <project>`` and ``json.loads`` its stdout (a dict).
+
+    The pinned babs (``campaign.babs_bin``), never PATH's: this is the query the
+    reconciler routes on and the merge verb's self-guard re-checks, so asking a
+    different babs than the one that ran the jobs would be worse than not asking.
+    """
     out = subprocess.run(
-        ["babs", "status", "--json", str(project)],
+        [campaign_mod.babs_bin(), "status", "--json", str(project)],
         check=True,
         capture_output=True,
         text=True,

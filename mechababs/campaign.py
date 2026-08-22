@@ -204,6 +204,34 @@ def cell_key(row):
     return (row["source_dataset"], row["app_config"])
 
 
+def find_cell(rows, source_dataset, app_config):
+    """The one row for this cell, or exit naming what was asked for.
+
+    Every action verb starts here, which is why it lives beside ``read_state``
+    rather than in any one of them: the shard is what they share.
+    """
+    for row in rows:
+        if cell_key(row) == (source_dataset, app_config):
+            return row
+    sys.exit(
+        f"no cell for ({source_dataset}, {app_config}) in this campaign's "
+        f"statefile — `mechababs add-dataset` writes the cells, and an action "
+        f"verb only advances one that is already there."
+    )
+
+
+def babs_bin():
+    """The pinned ``babs``: this environment's, never PATH's.
+
+    A campaign's venv *is* its babs pin, and ``require_env_match`` is what vouches
+    for ``sys.prefix`` being that venv. PATH can disagree with it — a stray
+    user-level babs has shadowed the pinned one before — and a run attributed to
+    the recorded pin but produced by another babs is the failure the whole
+    pinning apparatus exists to prevent.
+    """
+    return str(Path(sys.prefix) / "bin" / "babs")
+
+
 def lock_digest(lock_text):
     """The identity of a lock's *content* (what the env-match guard compares)."""
     return hashlib.sha256(lock_text.encode()).hexdigest()

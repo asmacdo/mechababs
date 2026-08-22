@@ -316,8 +316,7 @@ def _merge_the_producer(study):
 
 
 def test_a_merged_producer_wires_its_output_ria_into_the_dependent(study, babs_calls):
-    """Input-kind edge: the producer appears as an `input_datasets` key, so its
-    merged output store is what the dependent consumes."""
+    """`input_datasets` names the producer, so its merged output store is wired in."""
     _merge_the_producer(study)
     scaffold.scaffold(study, LABEL, SOURCEDATA, CHAIN)
 
@@ -329,11 +328,13 @@ def test_a_merged_producer_wires_its_output_ria_into_the_dependent(study, babs_c
     assert "derivatives/SimBIDS-0.0.3+anchor+ds999999" in origin
 
 
-def test_a_gate_edge_wires_nothing(study, babs_calls):
-    """A gate (mriqc gating fmriprep) orders the cells and is never an input.
+def test_a_depends_on_edge_alone_wires_nothing(study, babs_calls):
+    """`depends_on` is ordering ONLY — it carries no kind and wires nothing.
 
-    Read off the app config rather than declared: the producer is an
-    `input_datasets` key exactly when its output is consumed.
+    A QC gate (mriqc gating fmriprep) is exactly this shape: the producer must be
+    merged first, and its output is never an input. Wiring comes from
+    `input_datasets` and from nowhere else, so dropping that declaration leaves
+    the edge ordering the two cells and touching no input.
     """
     gate_config = {k: v for k, v in CHAIN_CONFIG.items() if k != "input_datasets"}
     (campaign_mod.campaign_dir(study, LABEL) / CHAIN).write_text(
@@ -343,5 +344,47 @@ def test_a_gate_edge_wires_nothing(study, babs_calls):
     scaffold.scaffold(study, LABEL, SOURCEDATA, CHAIN)
 
     assert list(babs_calls[0]["config"]["input_datasets"]) == ["BIDS"], (
-        "a gate edge wired the producer as an input"
+        "a depends_on edge wired the producer as an input"
     )
+
+
+def test_an_input_naming_no_cell_is_left_to_carry_its_own_origin(study, babs_calls):
+    """An `input_datasets` key that matches no cell is an input from OUTSIDE the
+    campaign — a precomputed derivative, say. It keeps the origin_url the config
+    gives it, and no cell is looked for."""
+    external = {
+        **ANCHOR_CONFIG,
+        "input_datasets": {
+            "priors": {"is_zipped": False, "origin_url": "https://example.org/priors"}
+        },
+    }
+    (campaign_mod.campaign_dir(study, LABEL) / ANCHOR).write_text(
+        yaml.safe_dump(external)
+    )
+    scaffold.scaffold(study, LABEL, SOURCEDATA, ANCHOR)
+
+    inputs = babs_calls[0]["config"]["input_datasets"]
+    assert inputs["priors"]["origin_url"] == "https://example.org/priors"
+
+
+def test_an_input_whose_producer_cell_is_unmerged_is_refused(study, babs_calls):
+    """The wiring's own check, reached without consulting `depends_on`.
+
+    A config that declares the input and forgets the ordering edge would otherwise
+    hand babs an input with no origin — quieter, and worse, than refusing.
+    """
+    unordered = {k: v for k, v in CHAIN_CONFIG.items()}
+    unordered["mechababs"] = {
+        k: v for k, v in CHAIN_CONFIG["mechababs"].items() if k != "depends_on"
+    }
+    (campaign_mod.campaign_dir(study, LABEL) / CHAIN).write_text(
+        yaml.safe_dump(unordered)
+    )
+    rows = campaign_mod.read_state(study, LABEL)
+    rows[1]["depends_on"] = ""  # the statefile mirrors the config's declaration
+    rows[0]["babs"] = "derivatives/SimBIDS-0.0.3+anchor+ds999999"
+    campaign_mod.write_state(study, LABEL, rows)
+
+    with pytest.raises(SystemExit, match="not merged yet"):
+        scaffold.scaffold(study, LABEL, SOURCEDATA, CHAIN)
+    assert babs_calls == []
