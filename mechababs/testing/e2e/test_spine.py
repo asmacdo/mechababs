@@ -1,40 +1,52 @@
-"""The study-first spine, end to current: `campaign init` -> `add-dataset` -> `scaffold`.
+"""The study-first spine: `campaign init` -> `add-dataset` -> `scaffold` -> `submit` -> `merge`.
 
 One test, run as ordered **stages**, against a real study on a real filesystem. It
 asserts the things only an end-to-end run can: that `uv lock` + `uv sync` actually
 resolve a campaign environment, that the committed `env.sh` really selects and
 activates it in a fresh shell, that the env-match guard really refuses the wrong
-python, and that what landed in the study's git history is what should have.
+python, that real jobs reach a real scheduler and their results land in a
+derivative, and that what landed in the study's git history is what should have.
 
 **It grows by appending stages, not by rewriting.** Each `_stage_*` takes the study
-and returns nothing but assertions; the driver below calls them in order. As the
-reconciler verbs land, `_stage_submit` and `_stage_merge` join the list and the
-earlier stages are untouched. Keeping it one test (rather than one test per stage)
-is deliberate: the stages share one study, and a later stage is meaningless if an
-earlier one failed, so a cascade of red for a single cause is noise.
+and returns nothing but assertions; the driver below calls them in order. Keeping it
+one test (rather than one test per stage) is deliberate: the stages share one study,
+and a later stage is meaningless if an earlier one failed, so a cascade of red for a
+single cause is noise.
 
-No babs *jobs* run yet — `scaffold` is `babs init`, which needs no scheduler — so
-the round trip is the campaign environment build, one babs project, and a handful
-of git commits. The fixture study and the container dataset are cached between
-runs, which is what keeps the whole thing at the couple-of-minutes mark.
+**Two rungs, split at `submit`.** Everything up to and including `scaffold` is
+`babs init` and git — no scheduler, so it runs on a developer's host in a couple of
+minutes, and that fast loop is worth protecting. From `submit` on, real jobs run, so
+those stages need `sbatch` and are skipped-with-a-reason where there is none (see
+`_skip_without_scheduler`); the rung that runs them is `run_in_podman.sh`, or a real
+cluster login node. The fixture study and the container dataset are cached between
+runs either way.
 """
 
 import csv
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 import yaml
 
+from mechababs import babs_status
 from mechababs import campaign as campaign_mod
 
 log = logging.getLogger("mechababs.e2e")
 
 LABEL = "e2e"
+
+# How long the merge stage waits for the cell's jobs. simbids jobs take seconds, so
+# this is a stuck-detector, not a budget: generous enough that a loaded scheduler
+# does not fail the suite, short enough that a hung job is not an infinite wait.
+JOB_WAIT_SECONDS = 900
+JOB_POLL_SECONDS = 10
 
 # The suite's two SimBIDS app configs, in bundle order. The second declares
 # `depends_on: <the first>`, so the bundle carries a real topology edge for
@@ -133,6 +145,63 @@ def _dispatch(study, verb, source_dataset, app_config, *, check=True):
         study,
         check=check,
     )
+
+
+def _babs_status(study, project):
+    """`babs status --json` from inside the campaign, parsed the way mechababs does.
+
+    Deliberately the same one-shot `json.loads` of the whole stdout that
+    `babs_status.read_status` does: if babs ever prints anything alongside its JSON,
+    that breaks the reconciler, and a more forgiving parser here would hide it.
+    """
+    env_sh = campaign_mod.env_path(study, LABEL)
+    proc = _run(
+        ["bash", "-c", f'. "{env_sh}" && babs status --json "$1"', "e2e", str(project)],
+        study,
+    )
+    return json.loads(proc.stdout)
+
+
+def _wait_for_jobs(study, project):
+    """Poll until the cell's jobs have all ended, and return the final counts.
+
+    Bounded: simbids jobs are seconds, so a long wait means something is stuck, and
+    hanging a suite forever is a worse failure mode than a wrong answer. Polls the
+    same decision seam the reconciler routes on — anything but "skip" means the
+    jobs have stopped moving, and the caller decides whether that is a merge.
+    """
+    deadline = time.monotonic() + JOB_WAIT_SECONDS
+    while True:
+        status = _babs_status(study, project)
+        action = babs_status.decide(status)
+        log.info("babs status: %s -> %s", status, action)
+        if action != "skip":
+            return status
+        assert time.monotonic() < deadline, (
+            f"jobs still in flight after {JOB_WAIT_SECONDS}s: {status}"
+        )
+        time.sleep(JOB_POLL_SECONDS)
+
+
+def _skip_without_scheduler(stage):
+    """True (with the reason logged) when this rung cannot run jobs.
+
+    The stages from `submit` on need a real scheduler, so they run on the podman
+    rung and on a cluster, not on a developer's host. Skipping *within* the test
+    rather than skipping the test keeps the earlier stages green on the host, which
+    is what makes them a fast loop worth having.
+
+    `sbatch` on PATH is the question being asked — not "am I in a container".
+    """
+    if shutil.which("sbatch"):
+        return False
+    log.warning(
+        "SKIPPING %s: no `sbatch` on PATH, so no jobs can run here. These stages "
+        "are the podman rung (mechababs/testing/e2e/run_in_podman.sh) or a real "
+        "cluster; the stages above are host-runnable and just passed.",
+        stage,
+    )
+    return True
 
 
 def _git(cwd, *args):
@@ -451,6 +520,146 @@ def _stage_dependent_cell_waits_for_its_producer(study):
     _assert_clean(study, "the refused dependent cell")
 
 
+def _stage_submit(study):
+    """Jobs reach the scheduler — and the study's history does not notice.
+
+    Submit is the one transition run WITHOUT a `datalad run`, because babs's job
+    bookkeeping is gitignored inside the derivative and nothing tracked moves. That
+    claim is what this stage checks against a real babs and a real scheduler: HEAD
+    where it was, tree clean, statefile byte-identical, and the counts moved.
+    """
+    if _skip_without_scheduler("_stage_submit"):
+        return
+    anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
+    chain_app = f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"
+    project = study / "derivatives" / f"{ANCHOR}+{DATASET_ID}"
+
+    head = _git(study, "rev-parse", "HEAD").strip()
+    statefile = campaign_mod.state_path(study, LABEL).read_text()
+
+    _dispatch(study, "submit", SOURCEDATA, anchor_app)
+
+    status = _babs_status(study, project)
+    assert status["total"] > 0, f"babs knows of no jobs to submit: {status}"
+    assert status["submitted"] == status["total"], (
+        f"submit left jobs undeployed: {status}"
+    )
+
+    # The determination that makes submit a plain verb, asserted end to end.
+    assert _git(study, "rev-parse", "HEAD").strip() == head, (
+        "submit committed — it is dispatched plainly on the grounds that it "
+        "changes nothing tracked"
+    )
+    _assert_clean(study, "submit")
+    assert campaign_mod.state_path(study, LABEL).read_text() == statefile, (
+        "submit wrote to the statefile; submitted-ness is babs's, queried live"
+    )
+
+    # The self-guard, from the other direction: the chain cell has no babs project,
+    # so there is nothing to submit and saying so must be loud.
+    refused = _dispatch(study, "submit", SOURCEDATA, chain_app, check=False)
+    assert refused.returncode != 0, "an unscaffolded cell was submitted"
+    assert "not scaffolded" in refused.stderr, refused.stderr
+
+
+def _stage_merge(study):
+    """The cell finishes: results consolidated into the derivative, cell recorded done.
+
+    The one stage that proves a derivative was actually *produced* — everything
+    before it builds machinery. It waits on the real jobs, merges, and then asserts
+    both halves of what merge owns: content in the derivative, and a run record in
+    the study saying which command put it there.
+    """
+    if _skip_without_scheduler("_stage_merge"):
+        return
+    anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
+    chain_app = f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"
+    derivative = f"derivatives/{ANCHOR}+{DATASET_ID}"
+    project = study / derivative
+
+    status = _wait_for_jobs(study, project)
+    assert babs_status.decide(status) == "merge", (
+        f"the jobs did not all succeed, so there is nothing to merge: {status}"
+    )
+
+    _dispatch(study, "merge", SOURCEDATA, anchor_app)
+
+    rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
+    assert rows[anchor_app]["merged"] == "true", rows[anchor_app]
+    assert rows[chain_app]["merged"] == "", "merging one cell advanced its sibling"
+
+    # `babs merge` consolidates in the output RIA; the derivative only carries the
+    # results because merge fast-forwards it onto that branch afterwards. Tracked
+    # files, so this is the derivative's own committed content, not stray output.
+    tracked = _git(project, "ls-files").split()
+    produced = [p for p in tracked if p.startswith("sub-") and p.endswith(".zip")]
+    assert produced, (
+        "the derivative carries no per-subject results — babs merged into the RIA "
+        f"and the derivative was not fast-forwarded onto it:\n{tracked}"
+    )
+
+    subject = _git(study, "log", "-1", "--format=%s").strip()
+    assert subject.startswith("[DATALAD RUNCMD] mechababs merge"), subject
+    record = _run_record(study)
+    assert record["pwd"] == ".", record
+    assert record["cmd"] == (
+        f"mechababs-inner merge --campaign {LABEL} "
+        f"--source-dataset {SOURCEDATA} --app {anchor_app}"
+    ), record["cmd"]
+    # Two, and no `.gitmodules`: merge registers and drops nothing at the study.
+    assert set(record["outputs"]) == {
+        derivative,
+        str(campaign_mod.state_path(study, LABEL).relative_to(study)),
+    }, record["outputs"]
+
+    _assert_clean(study, "merge")
+
+    # The self-guard: rerunning the recorded command against a cell that is now
+    # merged must fail loudly rather than merge a second time.
+    again = _dispatch(study, "merge", SOURCEDATA, anchor_app, check=False)
+    assert again.returncode != 0, "a merged cell was merged again"
+    assert "already merged" in again.stderr, again.stderr
+    _assert_clean(study, "the refused re-merge")
+
+
+def _stage_chained_cell_scaffolds_from_its_producer(study):
+    """The positive half of the chain: the gate opens, and the wiring is real.
+
+    This is the first run of the input-wiring path — the dependent's
+    `input_datasets` entry names the producer's app, so scaffold resolves it to that
+    cell's merged output store and hands babs the URL the YAML cannot carry.
+    """
+    if _skip_without_scheduler("_stage_chained_cell_scaffolds_from_its_producer"):
+        return
+    chain_app = f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"
+    derivative = study / "derivatives" / f"{CHAIN}+{DATASET_ID}"
+
+    _dispatch(study, "scaffold", SOURCEDATA, chain_app)
+
+    assert (derivative / ".babs").is_dir(), f"no babs project at {derivative}"
+    rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
+    assert rows[chain_app]["babs"] == f"derivatives/{CHAIN}+{DATASET_ID}", rows
+
+    # The config babs kept carries the producer's output RIA, in the alias form.
+    babs_config = yaml.safe_load(
+        (derivative / ".babs" / "babs_init_config.yaml").read_text()
+    )
+    origin = babs_config["input_datasets"][ANCHOR]["origin_url"]
+    assert origin.startswith("ria+file://") and origin.endswith("output_ria#~data"), (
+        f"the chained input is not wired to an output-RIA alias: {origin}"
+    )
+    assert f"derivatives/{ANCHOR}+{DATASET_ID}/.babs/output_ria" in origin, (
+        f"the chained input points somewhere other than the producer: {origin}"
+    )
+    # And babs resolved it: the producer's output is installed as an input
+    # subdataset, which only works if that URL really cloned.
+    assert f"sourcedata/{ANCHOR}" in (derivative / ".gitmodules").read_text(), (
+        "babs did not register the producer's output as this cell's input"
+    )
+
+    _assert_clean(study, "the chained scaffold")
+
+
 def test_spine(
     study, cluster_config, app_configs, mechababs_pin, babs_pin, simbids_sif
 ):
@@ -467,6 +676,9 @@ def test_spine(
     _stage_history(study)
     _stage_scaffold(study)
     _stage_dependent_cell_waits_for_its_producer(study)
+    _stage_submit(study)
+    _stage_merge(study)
+    _stage_chained_cell_scaffolds_from_its_producer(study)
 
 
 def test_campaign_init_refuses_outside_a_study(
