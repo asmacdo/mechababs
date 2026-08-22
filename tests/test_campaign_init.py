@@ -37,6 +37,11 @@ def configs(tmp_path):
     (src / "fMRIPrep-25.2.5+minimal.yaml").write_text(
         "mechababs:\n  depends_on: fMRIPrep-25.2.5+anat\n")
     (src / "dartmouth.yaml").write_text("cluster_resources: {}\n")
+    (src / "old-glibc.yaml").write_text(
+        "cluster_resources: {}\n"
+        "env_constraints:\n"
+        "  - pandas<=2.3.2\n"
+        "  - h5py<=3.14.0\n")
     return src
 
 
@@ -73,10 +78,10 @@ def stub_env(monkeypatch):
     return calls
 
 
-def init(study, configs, *names, label="nprep", **kwargs):
+def init(study, configs, *names, label="nprep", cluster="dartmouth", **kwargs):
     apps = [str(configs / f"{n}.yaml") for n in names] or \
         [str(configs / "MRIQC-24.0.2.yaml")]
-    return campaign_init.init(study, label, apps, str(configs / "dartmouth.yaml"),
+    return campaign_init.init(study, label, apps, str(configs / f"{cluster}.yaml"),
                               **kwargs)
 
 
@@ -318,6 +323,52 @@ def test_a_released_mechababs_is_pinned_by_version(monkeypatch):
 
     monkeypatch.setattr(campaign_init.metadata, "distribution", lambda n: FakeDist())
     assert campaign_init.running_mechababs_pin() == ("mechababs==0.2.1", None)
+
+
+# --- the cluster's env_constraints ------------------------------------------
+
+def parsed_pyproject(campaign):
+    """The generated pyproject, through a real TOML parser.
+
+    Asserting on parsed structure rather than rendered text is what proves uv can read
+    what we emit — the `[tool.uv]` block sits after `[tool.uv.sources]`, which is a
+    super-table-after-sub-table ordering worth checking rather than assuming.
+    """
+    tomllib = pytest.importorskip("tomllib")   # stdlib from 3.11; mechababs targets 3.10
+    return tomllib.loads((campaign / campaign_mod.PYPROJECT_FILENAME).read_text())
+
+
+def test_the_clusters_env_constraints_reach_the_pyproject(study, configs, stub_env):
+    # a site fact (an old glibc's wheels), declared on the cluster axis and folded in
+    # verbatim — mechababs does not interpret the specifiers
+    campaign = init(study, configs, cluster="old-glibc")
+    assert parsed_pyproject(campaign)["tool"]["uv"]["constraint-dependencies"] == [
+        "pandas<=2.3.2", "h5py<=3.14.0"]
+
+
+def test_a_cluster_without_env_constraints_declares_none(study, configs, stub_env):
+    # absent means no constraints: a modern cluster's pyproject is unchanged
+    campaign = init(study, configs)
+    pyproject = (campaign / campaign_mod.PYPROJECT_FILENAME).read_text()
+    assert "constraint-dependencies" not in pyproject
+
+
+def test_env_constraints_compose_with_the_source_pins(study, configs, stub_env):
+    # both blocks land in one pyproject, and neither eats the other
+    campaign = init(study, configs, cluster="old-glibc",
+                    babs_spec="https://github.com/PennLINC/babs.git@v0.5.0")
+    uv = parsed_pyproject(campaign)["tool"]["uv"]
+    assert uv["sources"]["babs"]["rev"] == "v0.5.0"
+    assert uv["constraint-dependencies"] == ["pandas<=2.3.2", "h5py<=3.14.0"]
+
+
+def test_a_bare_string_env_constraints_is_refused(tmp_path):
+    # a scalar would otherwise be iterated one constraint per CHARACTER
+    bad = tmp_path / "bad-cluster.yaml"
+    bad.write_text("env_constraints: pandas<=2.3.2\n")
+    with pytest.raises(SystemExit) as e:
+        campaign_init.cluster_env_constraints(bad)
+    assert "must be a LIST" in str(e.value)
 
 
 # --- refusals ---------------------------------------------------------------

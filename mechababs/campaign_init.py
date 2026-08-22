@@ -188,6 +188,29 @@ def declared_depends_on(config_path):
     return ((config.get("mechababs") or {}).get("depends_on") or "")
 
 
+def cluster_env_constraints(config_path):
+    """The cluster config's ``env_constraints``, or ``[]``.
+
+    A list of verbatim PEP 508 specifiers (``pandas<=2.3.2``). Which package versions
+    a site can actually install is a **cluster fact** — an old glibc stops loading the
+    newest manylinux wheels long before it stops running jobs — so it is declared on
+    the cluster axis and folded into the campaign's generated pyproject.
+
+    mechababs does not interpret them: they become uv ``constraint-dependencies``,
+    whose semantics (cap a package that is already in the resolution, never pull one
+    in that is not) are uv's own. The only check here is shape — a bare string would
+    otherwise be iterated one character per constraint.
+    """
+    config = yaml.safe_load(Path(config_path).read_text()) or {}
+    constraints = config.get("env_constraints")
+    if not constraints:
+        return []
+    if isinstance(constraints, str) or not all(isinstance(c, str) for c in constraints):
+        sys.exit(f"env_constraints in {config_path} must be a LIST of version "
+                 f"specifiers (e.g. `- pandas<=2.3.2`), got: {constraints!r}")
+    return list(constraints)
+
+
 def resolve_apps(dest_dir, app_args):
     """Stage the app bundle; return ordered ``[(filename, name, depends_on), …]``.
 
@@ -229,7 +252,8 @@ def _toml_inline(source):
     return "{ " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in source.items()) + " }"
 
 
-def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None):
+def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None,
+                     env_constraints=()):
     """The campaign's dependency declaration — a uv *virtual* project.
 
     No ``[build-system]``: the campaign is not a package to build, it is a set of
@@ -239,6 +263,10 @@ def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None):
     PyPI and frozen to an exact released version by the lock — the default for both
     babs and a registry-installed mechababs. A source entry overrides that with a
     git (or path) checkout.
+
+    ``env_constraints`` (the cluster config's) become uv ``constraint-dependencies``:
+    caps that apply to whatever the resolution already contains, deep in the transitive
+    closure included, without adding a dependency or pinning one the site does not use.
     """
     deps = [mechababs_req, "babs", *CAMPAIGN_EXTRAS]
     sources = {}
@@ -266,6 +294,18 @@ def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None):
     if sources:
         lines += ["", "[tool.uv.sources]"]
         lines += [f"{name} = {_toml_inline(source)}" for name, source in sources.items()]
+    if env_constraints:
+        lines += [
+            "",
+            "# `env_constraints` from this campaign's cluster config: version caps the",
+            "# SITE imposes (typically a glibc too old for the newest manylinux wheels).",
+            "# Constraints cap a package only if the resolution already contains it —",
+            "# they never add one — so this is a floor-preserving narrowing, not a pin.",
+            "[tool.uv]",
+            "constraint-dependencies = [",
+        ]
+        lines += [f"    {_toml_str(c)}," for c in env_constraints]
+        lines += ["]"]
     return "\n".join(lines) + "\n"
 
 
@@ -390,8 +430,14 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
         # for running a PR branch (or a local one) through a campaign.
         babs_source = (git_source(*parse_source_spec(babs_spec, "babs"))
                        if babs_spec else None)
+        # Read from the STAGED copy, not the argument: that is the file committed with
+        # the campaign, and it is the same read whether the config came from a path or
+        # a URL.
+        env_constraints = cluster_env_constraints(
+            campaign / campaign_mod.CLUSTERS_DIRNAME / cluster_file)
         (campaign / campaign_mod.PYPROJECT_FILENAME).write_text(
-            render_pyproject(label, mechababs_req, mechababs_source, babs_source))
+            render_pyproject(label, mechababs_req, mechababs_source, babs_source,
+                             env_constraints))
 
         write_env_sh(campaign, label)
         build_env(campaign, label)
