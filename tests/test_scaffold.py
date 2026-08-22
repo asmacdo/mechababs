@@ -6,6 +6,7 @@ belongs to the e2e, where there is a real study and a real container to init fro
 """
 
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
@@ -155,7 +156,9 @@ def _stub_babs(monkeypatch, on_call):
     real_run = subprocess.run
 
     def dispatch(cmd, **kwargs):
-        if str(cmd[0]) != "babs":
+        # Matched by basename: scaffold resolves babs beside sys.prefix, so the
+        # argv carries an absolute path (and the test venv has no babs to run).
+        if Path(str(cmd[0])).name != "babs":
             return real_run(cmd, **kwargs)
         on_call(cmd, kwargs)
         return subprocess.CompletedProcess(cmd, 0)
@@ -195,7 +198,7 @@ def test_scaffold_inits_the_derivative_and_records_the_cell(study, babs_calls):
 
     call, = babs_calls
     cmd = call["cmd"]
-    assert cmd[:3] == ["babs", "init", project], cmd
+    assert Path(cmd[0]).name == "babs" and cmd[1:3] == ["init", project], cmd
     assert call["kwargs"]["cwd"] == str(study)
     # Study-relative, because the recorded command has to re-execute elsewhere.
     assert cmd[cmd.index("--list-sub-file") + 1] == \
