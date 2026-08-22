@@ -232,6 +232,31 @@ def test_an_undeclared_path_in_an_inner_commit_is_refused(dataset):
         dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="smuggler")
 
 
+def test_merge_declares_the_two_paths_it_writes(tmp_path):
+    """No `.gitmodules`: at the study level merge registers and drops nothing. The
+    derivative was registered at scaffold; merge only moves its HEAD."""
+    outputs = dispatch.merge_outputs(tmp_path, LABEL, SOURCEDATA, ANCHOR)
+    assert outputs == [
+        "derivatives/SimBIDS-0.0.3+anchor+ds999999",
+        ".mechababs/campaigns/e2e/sourcedata+derivatives.tsv",
+    ]
+    assert dispatch.GITMODULES not in outputs
+    assert all(not os.path.isabs(o) for o in outputs), outputs
+
+
+def test_merge_declares_no_inclusion_pin(tmp_path):
+    """Scaffold writes the pin; merge must not declare it, or a stray edit to it
+    would be swept into the merge's record."""
+    pin = dispatch.scaffold_outputs(tmp_path, LABEL, SOURCEDATA, ANCHOR)[2]
+    assert pin not in dispatch.merge_outputs(tmp_path, LABEL, SOURCEDATA, ANCHOR)
+
+
+def test_the_merge_message_names_the_cell(tmp_path):
+    assert dispatch.merge_message(SOURCEDATA, ANCHOR) == (
+        "mechababs merge sourcedata/ds999999 SimBIDS-0.0.3+anchor"
+    )
+
+
 # --------------------------------------------------------------------------
 # The plain path: a verb that changes nothing, and the check that says so
 # --------------------------------------------------------------------------

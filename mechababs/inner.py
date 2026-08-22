@@ -26,6 +26,7 @@ import sys
 
 from mechababs import __version__
 from mechababs import campaign as campaign_mod
+from mechababs import merge as merge_mod
 from mechababs import scaffold as scaffold_mod
 from mechababs import study as study_mod
 from mechababs import submit as submit_mod
@@ -58,6 +59,18 @@ def cmd_submit(args):
     print(
         f"submitted {args.source_dataset} / "
         f"{scaffold_mod.app_stem(args.app)} ({project})",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def cmd_merge(args):
+    """Consolidate one finished cell's results and record it done (see merge.py)."""
+    study = _require_context(args)
+    project = merge_mod.merge(study, args.campaign, args.source_dataset, args.app)
+    print(
+        f"merged {args.source_dataset} / "
+        f"{scaffold_mod.app_stem(args.app)} -> {project}",
         file=sys.stderr,
     )
     return 0
@@ -128,6 +141,20 @@ def main():
             "not yet have results and leaving finished ones alone. Writes no "
             "column: submitted-ness is volatile, babs owns it, and the reconciler "
             "reads it live. Refuses a cell that is not scaffolded, or is merged."
+        ),
+    )
+    _cell_verb(
+        sub,
+        "merge",
+        cmd_merge,
+        summary="consolidate one finished cell's results and record it done",
+        description=(
+            "`babs merge` the cell's per-job result branches in its output RIA, "
+            "fast-forward the derivative onto the consolidated branch, and set the "
+            "cell's `merged` column. Refuses a cell that is not scaffolded, is "
+            "already merged, or whose live `babs status` counts do not say merge — "
+            "merging a partial set would quietly produce a derivative that looks "
+            "complete."
         ),
     )
 

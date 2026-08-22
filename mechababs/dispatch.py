@@ -116,6 +116,26 @@ def scaffold_message(source_dataset, app_config):
     )
 
 
+def merge_outputs(study, label, source_dataset, app_config):
+    """What a merge writes, study-relative — its `--output` declaration.
+
+    Two things, and deliberately not `.gitmodules`: at the study level merge
+    registers and drops nothing. The derivative was registered as a subdataset at
+    scaffold; merge only moves its HEAD, so the study's diff is that gitlink plus
+    the statefile row. (The merged branch may well change the DERIVATIVE's own
+    `.gitmodules` — that is inside the derivative, and declaring the derivative
+    covers it.)
+    """
+    return [
+        scaffold_mod.derivative_path(source_dataset, app_config),
+        str(campaign_mod.state_path(study, label).relative_to(study)),
+    ]
+
+
+def merge_message(source_dataset, app_config):
+    return f"mechababs merge {source_dataset} {scaffold_mod.app_stem(app_config)}"
+
+
 def submit_message(source_dataset, app_config):
     """What a submit prints. There is no `submit_outputs`, and that is the statement:
     submit declares nothing because it writes nothing the study tracks."""
@@ -242,5 +262,16 @@ def submit(study, label, source_dataset, app_config, *, dry_run=False):
             "submit", label, source_dataset, app_config, executable=inner_bin()
         ),
         message=submit_message(source_dataset, app_config),
+        dry_run=dry_run,
+    )
+
+
+def merge(study, label, source_dataset, app_config, *, dry_run=False):
+    """Dispatch the merge transition for one cell."""
+    dispatch(
+        study,
+        inner_command("merge", label, source_dataset, app_config),
+        outputs=merge_outputs(study, label, source_dataset, app_config),
+        message=merge_message(source_dataset, app_config),
         dry_run=dry_run,
     )
