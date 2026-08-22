@@ -48,11 +48,14 @@ def test_selected_label_exits_when_unset(monkeypatch):
         campaign_mod.selected_label()
 
 
-def test_env_match_passes_for_a_venv_built_from_the_committed_lock(tmp_path, monkeypatch):
+def test_env_match_passes_for_a_venv_built_from_the_committed_lock(
+    tmp_path, monkeypatch
+):
     make_campaign(tmp_path)
     pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
-    assert campaign_mod.require_env_match(tmp_path, "nprep") == \
-        campaign_mod.campaign_dir(tmp_path, "nprep")
+    assert campaign_mod.require_env_match(
+        tmp_path, "nprep"
+    ) == campaign_mod.campaign_dir(tmp_path, "nprep")
 
 
 def test_env_match_refuses_an_unknown_campaign(tmp_path):
@@ -86,18 +89,23 @@ def test_env_match_refuses_a_venv_mechababs_did_not_build(tmp_path, monkeypatch)
         campaign_mod.require_env_match(tmp_path, "nprep")
 
 
-def test_require_selected_campaign_bundles_the_three_preconditions(tmp_path, monkeypatch):
+def test_require_selected_campaign_bundles_the_three_preconditions(
+    tmp_path, monkeypatch
+):
     (tmp_path / ".datalad").mkdir()
     make_campaign(tmp_path)
     monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
     pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
     root, label, campaign = campaign_mod.require_selected_campaign(tmp_path)
     assert (root, label, campaign) == (
-        tmp_path.resolve(), "nprep", campaign_mod.campaign_dir(tmp_path, "nprep"))
+        tmp_path.resolve(),
+        "nprep",
+        campaign_mod.campaign_dir(tmp_path, "nprep"),
+    )
 
 
 def test_require_selected_campaign_refuses_outside_a_study(tmp_path, monkeypatch):
-    make_campaign(tmp_path)                      # a campaign dir, but no dataset root
+    make_campaign(tmp_path)  # a campaign dir, but no dataset root
     monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
     with pytest.raises(SystemExit):
         campaign_mod.require_selected_campaign(tmp_path)
@@ -105,10 +113,10 @@ def test_require_selected_campaign_refuses_outside_a_study(tmp_path, monkeypatch
 
 def test_require_statefile_returns_the_shard_when_there_is_one(tmp_path):
     make_campaign(tmp_path)
-    campaign_mod.state_path(tmp_path, "nprep").write_text(
-        campaign_mod.initial_header())
-    assert campaign_mod.require_statefile(tmp_path, "nprep") == \
-        campaign_mod.state_path(tmp_path, "nprep")
+    campaign_mod.state_path(tmp_path, "nprep").write_text(campaign_mod.initial_header())
+    assert campaign_mod.require_statefile(tmp_path, "nprep") == campaign_mod.state_path(
+        tmp_path, "nprep"
+    )
 
 
 def test_require_statefile_names_the_study_superstudy_asymmetry(tmp_path):

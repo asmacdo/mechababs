@@ -57,13 +57,16 @@ def clone_ref(clone):
     """
     ref = subprocess.run(
         ["git", "-C", str(clone), "rev-parse", "--abbrev-ref", "HEAD"],
-        check=True, text=True, capture_output=True,
+        check=True,
+        text=True,
+        capture_output=True,
     ).stdout.strip()
     if ref != "HEAD":
         return ref
     tag = subprocess.run(
         ["git", "-C", str(clone), "describe", "--tags", "--exact-match"],
-        text=True, capture_output=True,
+        text=True,
+        capture_output=True,
     )
     if tag.returncode == 0 and tag.stdout.strip():
         return tag.stdout.strip()
@@ -116,15 +119,21 @@ def pytest_command(cluster, campaign, extra_args=()):
     step waits on real scheduler jobs.
     """
     return [
-        sys.executable, "-m", "pytest", "-s",
+        sys.executable,
+        "-m",
+        "pytest",
+        "-s",
         # The suite resolves inside the campaign's own code pin, and pytest would drop
         # a .pytest_cache/ there. That is untracked content inside a pinned subdataset,
         # which `guard.require_clean_pins` reads as a dirty pin — so validating a
         # cluster would leave every later command refusing to run. Keep both caches out.
-        "-p", "no:cacheprovider",
+        "-p",
+        "no:cacheprovider",
         str(testing.suite_path()),
-        "--cluster-config", str(cluster),
-        "--campaign", str(campaign),
+        "--cluster-config",
+        str(cluster),
+        "--campaign",
+        str(campaign),
         *extra_args,
     ]
 
@@ -148,14 +157,19 @@ def require_shim(workdir):
 def run_test_cluster(campaign, cluster_arg, extra_args=(), workdir=None):
     """Validate a cluster config from the campaign; return an exit code."""
     cluster = resolve_cluster(campaign, cluster_arg)
-    workdir = Path(workdir).expanduser().resolve() if workdir else default_workdir(campaign)
+    workdir = (
+        Path(workdir).expanduser().resolve() if workdir else default_workdir(campaign)
+    )
     workdir.mkdir(parents=True, exist_ok=True)
     require_shim(workdir)
 
-    env = {**os.environ, WORKDIR_ENV: str(workdir),
-           # pytest writes bytecode next to the suite, which sits in the campaign's
-           # code pin; same dirty-pin problem as the cache above.
-           "PYTHONPYCACHEPREFIX": str(workdir / ".pycache")}
+    env = {
+        **os.environ,
+        WORKDIR_ENV: str(workdir),
+        # pytest writes bytecode next to the suite, which sits in the campaign's
+        # code pin; same dirty-pin problem as the cache above.
+        "PYTHONPYCACHEPREFIX": str(workdir / ".pycache"),
+    }
     cmd = pytest_command(cluster, campaign, extra_args)
     print(f"validating {cluster.name} on this cluster", file=sys.stderr)
     print(f"  scenario workdir: {workdir}", file=sys.stderr)
@@ -164,8 +178,12 @@ def run_test_cluster(campaign, cluster_arg, extra_args=(), workdir=None):
     verdict = "PASSED" if code == 0 else "FAILED"
     print(f"\ncluster validation {verdict}: {cluster.name}", file=sys.stderr)
     if code == 0:
-        print(f"Next: mechababs configure --cluster {cluster} --pipelines <…>",
-              file=sys.stderr)
-        print("(validating does not adopt the config; configure copies it in)",
-              file=sys.stderr)
+        print(
+            f"Next: mechababs configure --cluster {cluster} --pipelines <…>",
+            file=sys.stderr,
+        )
+        print(
+            "(validating does not adopt the config; configure copies it in)",
+            file=sys.stderr,
+        )
     return code

@@ -49,7 +49,9 @@ def test_the_scenario_is_declared_as_package_data():
     setuptools = _setuptools_config()
     assert "mechababs.testing" in setuptools["packages"]
     patterns = setuptools["package-data"]["mechababs.testing"]
-    assert any(p.startswith(f"{testing.E2E_DIRNAME}/") and p.endswith(".py") for p in patterns)
+    assert any(
+        p.startswith(f"{testing.E2E_DIRNAME}/") and p.endswith(".py") for p in patterns
+    )
 
 
 def test_the_dev_wrapper_scripts_are_excluded_from_the_distribution():
@@ -73,7 +75,8 @@ def _scenario_conftest():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "_scenario_conftest", testing.suite_path() / "conftest.py")
+        "_scenario_conftest", testing.suite_path() / "conftest.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

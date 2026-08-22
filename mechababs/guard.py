@@ -31,7 +31,9 @@ def require_clean_pins(campaign):
     """
     result = subprocess.run(
         ["git", "-C", str(campaign), "status", "--porcelain", "--", *PINS],
-        check=True, text=True, capture_output=True,
+        check=True,
+        text=True,
+        capture_output=True,
     )
     dirty = result.stdout.strip()
     if dirty:

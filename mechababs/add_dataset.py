@@ -46,16 +46,22 @@ def resolve_sourcedata(study, sourcedata):
     path = Path(sourcedata)
     src = (path if path.is_absolute() else study / path).resolve()
     if not src.is_relative_to(study):
-        sys.exit(f"{src} is not inside this study ({study}).\n"
-                 f"add-dataset runs from the study root and selects data inside it.")
+        sys.exit(
+            f"{src} is not inside this study ({study}).\n"
+            f"add-dataset runs from the study root and selects data inside it."
+        )
     if not src.exists():
-        sys.exit(f"no such sourcedata: {src}\n"
-                 f"add-dataset selects a source dataset that is already in the study "
-                 f"— it does not install one.")
+        sys.exit(
+            f"no such sourcedata: {src}\n"
+            f"add-dataset selects a source dataset that is already in the study "
+            f"— it does not install one."
+        )
     if not src.is_dir():
-        sys.exit(f"not a directory: {src}\n"
-                 f"--sourcedata names a source dataset's directory (e.g. "
-                 f"sourcedata/ds000001), not a file inside it.")
+        sys.exit(
+            f"not a directory: {src}\n"
+            f"--sourcedata names a source dataset's directory (e.g. "
+            f"sourcedata/ds000001), not a file inside it."
+        )
     return src.relative_to(study).as_posix()
 
 
@@ -76,13 +82,16 @@ def campaign_apps(study, label):
     config = yaml.safe_load(campaign_mod.config_path(study, label).read_text()) or {}
     apps = config.get("apps") or []
     if not apps:
-        sys.exit(f"campaign {label!r} has no apps in "
-                 f"{campaign_mod.CONFIG_FILENAME} — nothing to add a dataset to")
+        sys.exit(
+            f"campaign {label!r} has no apps in "
+            f"{campaign_mod.CONFIG_FILENAME} — nothing to add a dataset to"
+        )
     by_stem = {Path(rel).stem: rel for rel in apps}
     pairs = []
     for rel in apps:
         declared = campaign_init.declared_depends_on(
-            campaign_mod.campaign_dir(study, label) / rel)
+            campaign_mod.campaign_dir(study, label) / rel
+        )
         pairs.append((rel, by_stem.get(declared, declared) if declared else ""))
     return pairs
 
@@ -107,7 +116,8 @@ def check_dependencies(source_dataset, apps):
                 f"app {name!r} depends on {upstream!r}, which has no cell for "
                 f"{source_dataset} in this campaign.\n"
                 f"Add the producer first — a dependency is resolved within one "
-                f"study's statefile, so the upstream cell has to be there.")
+                f"study's statefile, so the upstream cell has to be there."
+            )
 
 
 def add(sourcedata):
@@ -131,24 +141,35 @@ def add(sourcedata):
     # Flock first (the campaign's single-writer guarantee), clean-in second (the
     # statefile must be untouched before this write, so the commit is attributable),
     # then the read-modify-write — committed as one node when the scope exits.
-    with utils.flocked(campaign_mod.flock_path(study, label)), \
-         utils.campaign_save_scope(study, campaign_mod.state_path(study, label)) as save:
+    with (
+        utils.flocked(campaign_mod.flock_path(study, label)),
+        utils.campaign_save_scope(study, campaign_mod.state_path(study, label)) as save,
+    ):
         rows = campaign_mod.read_state(study, label)
         # The bundle is fixed at init, so a dataset is selected whole or not at all —
         # re-adding refuses. To run more apps on this data, start a new campaign
         # (a new config epoch): bundle growth is deliberately unsupported (#116).
         if any(r["source_dataset"] == source_dataset for r in rows):
-            sys.exit(f"{source_dataset} is already selected into campaign {label!r}.\n"
-                     f"The app bundle is fixed at campaign init — to run more apps "
-                     f"on this data, create a new campaign.")
+            sys.exit(
+                f"{source_dataset} is already selected into campaign {label!r}.\n"
+                f"The app bundle is fixed at campaign init — to run more apps "
+                f"on this data, create a new campaign."
+            )
         check_dependencies(source_dataset, apps)
 
-        added = [{"source_dataset": source_dataset, "app_config": name,
-                  "depends_on": upstream, **identity}
-                 for name, upstream in apps]
+        added = [
+            {
+                "source_dataset": source_dataset,
+                "app_config": name,
+                "depends_on": upstream,
+                **identity,
+            }
+            for name, upstream in apps
+        ]
         campaign_mod.write_state(study, label, rows + added)
         save.message = (
             f"mechababs add-dataset {source_dataset} "
             f"({identity['processing_level']}-level; "
-            f"{', '.join(row['app_config'] for row in added)})")
+            f"{', '.join(row['app_config'] for row in added)})"
+        )
     return added

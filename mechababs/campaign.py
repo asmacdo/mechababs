@@ -76,8 +76,13 @@ CAMPAIGN_ENV_VAR = "MECHABABS_CAMPAIGN"
 #   derived   — reconciled each tick; state is READ OFF these, there is no status
 #               enum (`babs` empty -> scaffold; set + `merged` empty -> active;
 #               `merged` set -> done). Volatile job status stays in babs.
-IDENTITY_COLUMNS = ["source_dataset", "app_config", "processing_level",
-                    "n_subjects", "n_sessions"]
+IDENTITY_COLUMNS = [
+    "source_dataset",
+    "app_config",
+    "processing_level",
+    "n_subjects",
+    "n_sessions",
+]
 TOPOLOGY_COLUMNS = ["depends_on"]
 DERIVED_COLUMNS = ["babs", "merged"]
 STATE_COLUMNS = IDENTITY_COLUMNS + TOPOLOGY_COLUMNS + DERIVED_COLUMNS
@@ -120,7 +125,8 @@ def require_statefile(study, label):
                 f"campaign {label!r} here has no {STATE_FILENAME} ({path}).\n"
                 "Per-cell state lives in a study; a superstudy's campaign dir "
                 "carries membership instead. Run this in the member study whose "
-                "cell you mean to advance.")
+                "cell you mean to advance."
+            )
         sys.exit(f"no campaign {label!r} here (looked for {config_path(study, label)})")
     return path
 
@@ -185,8 +191,9 @@ def write_state(study, label, rows):
     a tall statefile's columns do not vary with the campaign's app bundle.
     """
     with open(state_path(study, label), "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=STATE_COLUMNS, delimiter="\t",
-                           lineterminator="\n")
+        w = csv.DictWriter(
+            f, fieldnames=STATE_COLUMNS, delimiter="\t", lineterminator="\n"
+        )
         w.writeheader()
         for row in rows:
             w.writerow({c: row.get(c, "") for c in STATE_COLUMNS})
@@ -210,8 +217,10 @@ def write_env_stamp(venv, label, lock_text):
     describes. ``campaign update-env`` rewrites it when it rebuilds.
     """
     stamp = Path(venv) / STAMP_FILENAME
-    stamp.write_text(json.dumps(
-        {"label": label, "lock_sha256": lock_digest(lock_text)}, indent=2) + "\n")
+    stamp.write_text(
+        json.dumps({"label": label, "lock_sha256": lock_digest(lock_text)}, indent=2)
+        + "\n"
+    )
     return stamp
 
 
@@ -253,8 +262,7 @@ def require_env_match(root, label):
     """
     campaign = campaign_dir(root, label)
     if not config_path(root, label).is_file():
-        sys.exit(f"no campaign {label!r} here (looked for "
-                 f"{config_path(root, label)})")
+        sys.exit(f"no campaign {label!r} here (looked for {config_path(root, label)})")
 
     venv = venv_path(root, label).resolve()
     prefix = Path(sys.prefix).resolve()

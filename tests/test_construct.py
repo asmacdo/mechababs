@@ -17,7 +17,8 @@ def test_stage_config_copies_a_path_into_the_campaign(tmp_path):
     src.parent.mkdir()
     src.write_text("x: 1\n")
     assert construct.stage_config(campaign, "clusters", str(src)) == (
-        "clusters/sherlock.yaml", True
+        "clusters/sherlock.yaml",
+        True,
     )
     assert (campaign / "clusters" / "sherlock.yaml").read_text() == "x: 1\n"
 
@@ -27,7 +28,8 @@ def test_stage_config_resolves_a_name_already_in_the_campaign(tmp_path):
     (tmp_path / "clusters" / "sherlock.yaml").write_text("x: 1\n")
     # a bare name is resolved in place, nothing copied
     assert construct.stage_config(tmp_path, "clusters", "sherlock.yaml") == (
-        "clusters/sherlock.yaml", False
+        "clusters/sherlock.yaml",
+        False,
     )
 
 
@@ -37,7 +39,8 @@ def test_stage_config_does_not_recopy_a_config_already_in_place(tmp_path):
     present.write_text("x: 1\n")
     # the path of a file already under clusters/ resolves in place, not a self-copy
     assert construct.stage_config(tmp_path, "clusters", str(present)) == (
-        "clusters/sherlock.yaml", False
+        "clusters/sherlock.yaml",
+        False,
     )
 
 
@@ -51,7 +54,8 @@ def test_resolve_pipelines_returns_campaign_paths(tmp_path):
     (tmp_path / "pipelines" / "MRIQC-24.0.2.yaml").write_text("x: 1\n")
     # campaign-relative, not code/mechababs/pipelines/...; nothing copied
     assert construct.resolve_pipelines(tmp_path, ["MRIQC-24.0.2.yaml"]) == (
-        ["pipelines/MRIQC-24.0.2.yaml"], []
+        ["pipelines/MRIQC-24.0.2.yaml"],
+        [],
     )
 
 

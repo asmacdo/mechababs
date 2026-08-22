@@ -6,8 +6,10 @@ import yaml
 from mechababs import compose
 
 APP = {
-    "mechababs": {"selection": {}, "container": {"source": "../containers",
-                                                 "name": "bids-simbids"}},
+    "mechababs": {
+        "selection": {},
+        "container": {"source": "../containers", "name": "bids-simbids"},
+    },
     "bids_app_args": {"--anat-only": ""},
     "zip_foldernames": {"SimBIDS-0.0.3+anchor": "0-0-3"},
 }
@@ -42,17 +44,22 @@ def test_the_bids_input_is_first_and_carries_the_source_url():
     merged = compose.merge_babs_config(app, CLUSTER, "https://example.org/ds.git")
     keys = list(merged["input_datasets"])
     assert keys[0] == "BIDS", keys
-    assert merged["input_datasets"]["BIDS"]["origin_url"] == "https://example.org/ds.git"
+    assert (
+        merged["input_datasets"]["BIDS"]["origin_url"] == "https://example.org/ds.git"
+    )
     assert merged["input_datasets"]["BIDS"]["path_in_babs"] == "sourcedata/raw"
     assert merged["input_datasets"]["upstream"] == {"is_zipped": True}
 
 
 def test_the_venv_placeholder_resolves_to_the_campaign_venv():
     """The committed cluster config stays portable; the run gets the real path."""
-    merged = compose.merge_babs_config(APP, CLUSTER, "url",
-                                       campaign_venv="/s/.mechababs/campaigns/e2e/.venv")
-    assert merged["script_preamble"] == \
-        "source /s/.mechababs/campaigns/e2e/.venv/bin/activate\n"
+    merged = compose.merge_babs_config(
+        APP, CLUSTER, "url", campaign_venv="/s/.mechababs/campaigns/e2e/.venv"
+    )
+    assert (
+        merged["script_preamble"]
+        == "source /s/.mechababs/campaigns/e2e/.venv/bin/activate\n"
+    )
 
 
 def test_a_chained_inputs_origin_url_is_injected_at_compose_time():
@@ -61,7 +68,8 @@ def test_a_chained_inputs_origin_url_is_injected_at_compose_time():
     resolves it and passes it here."""
     app = {**APP, "input_datasets": {"anchor": {"is_zipped": True}}}
     merged = compose.merge_babs_config(
-        app, CLUSTER, "url", input_origins={"anchor": "ria+file:///x#~data"})
+        app, CLUSTER, "url", input_origins={"anchor": "ria+file:///x#~data"}
+    )
     assert merged["input_datasets"]["anchor"]["origin_url"] == "ria+file:///x#~data"
 
 
@@ -69,8 +77,9 @@ def test_wiring_an_input_the_app_never_declared_is_refused():
     """A `depends_on` edge whose producer has no `input_datasets` entry would
     otherwise compose a config babs silently ignores."""
     with pytest.raises(SystemExit) as e:
-        compose.merge_babs_config(APP, CLUSTER, "url",
-                                  input_origins={"ghost": "ria+file:///x#~data"})
+        compose.merge_babs_config(
+            APP, CLUSTER, "url", input_origins={"ghost": "ria+file:///x#~data"}
+        )
     assert "ghost" in str(e.value)
 
 

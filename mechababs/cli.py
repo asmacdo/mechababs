@@ -56,8 +56,10 @@ def _require_campaign_venv(campaign):
     venv = (campaign / ".venv").resolve()
     prefix = Path(sys.prefix).resolve()
     if prefix != venv:
-        sys.exit(f"must run from the campaign venv ({venv}), but sys.prefix is {prefix}\n"
-                 f"invoke as: {venv}/bin/mechababs …")
+        sys.exit(
+            f"must run from the campaign venv ({venv}), but sys.prefix is {prefix}\n"
+            f"invoke as: {venv}/bin/mechababs …"
+        )
     return venv
 
 
@@ -75,15 +77,23 @@ def cmd_campaign_init(args):
     study = study_mod.require_study_root(".")
     # `--apps a.yaml,b.yaml` (as the quickstart shows) and a repeated `--apps` both
     # work, and compose — the bundle is ordered as written either way.
-    apps = [app.strip() for group in args.apps for app in group.split(",") if app.strip()]
+    apps = [
+        app.strip() for group in args.apps for app in group.split(",") if app.strip()
+    ]
     campaign = campaign_init.init(
-        study, args.label, apps, args.cluster, limit=args.limit,
-        babs_spec=args.babs, mechababs_spec=args.mechababs,
+        study,
+        args.label,
+        apps,
+        args.cluster,
+        limit=args.limit,
+        babs_spec=args.babs,
+        mechababs_spec=args.mechababs,
     )
     rel = campaign.relative_to(study)
     print(f"\ncampaign {args.label!r} created at {rel}", file=sys.stderr)
-    print("Next, select it and activate its environment, then add data:",
-          file=sys.stderr)
+    print(
+        "Next, select it and activate its environment, then add data:", file=sys.stderr
+    )
     print(f"  source {rel}/{campaign_mod.ENV_FILENAME}", file=sys.stderr)
     print("  mechababs add-dataset --sourcedata sourcedata/<id>", file=sys.stderr)
     return 0
@@ -112,15 +122,22 @@ def cmd_configure(args):
 
     # State guard: never clobber add-dataset rows. Reset = delete the ledger first.
     if state.state_path(campaign).is_file():
-        sys.exit(f"{state.STATE_FILENAME} already exists — refusing to overwrite.\n"
-                 f"To reset, delete it first, then re-run: mechababs configure …")
+        sys.exit(
+            f"{state.STATE_FILENAME} already exists — refusing to overwrite.\n"
+            f"To reset, delete it first, then re-run: mechababs configure …"
+        )
 
     pipeline_files = [p.strip() for p in args.pipelines.split(",") if p.strip()]
     if not pipeline_files:
         sys.exit("--pipelines must list at least one pipeline config file")
 
-    pipelines = construct.build(campaign, pipeline_files, args.cluster,
-                                str(venv.relative_to(campaign)), limit=args.limit)
+    pipelines = construct.build(
+        campaign,
+        pipeline_files,
+        args.cluster,
+        str(venv.relative_to(campaign)),
+        limit=args.limit,
+    )
     print(f"campaign constructed: pipelines {', '.join(pipelines)}", file=sys.stderr)
     print("Next: mechababs add-dataset <url>; mechababs iterate", file=sys.stderr)
     return 0
@@ -138,13 +155,16 @@ def cmd_add_dataset(args):
     ``--sourcedata`` is a path inside it.
     """
     added = add_dataset_mod.add(args.sourcedata)
-    cell = added[0]                        # identity is the same across a dataset's cells
+    cell = added[0]  # identity is the same across a dataset's cells
     size = f"{cell['n_subjects']} subjects"
     if cell["n_sessions"]:
         size += f", {cell['n_sessions']} sessions"
-    print(f"selected {cell['source_dataset']} ({cell['processing_level']}-level, "
-          f"{size}) — {len(added)} cell(s): "
-          f"{', '.join(Path(row['app_config']).stem for row in added)}", file=sys.stderr)
+    print(
+        f"selected {cell['source_dataset']} ({cell['processing_level']}-level, "
+        f"{size}) — {len(added)} cell(s): "
+        f"{', '.join(Path(row['app_config']).stem for row in added)}",
+        file=sys.stderr,
+    )
     print("Next: mechababs iterate", file=sys.stderr)
     return 0
 
@@ -183,7 +203,10 @@ def cmd_test_cluster(args):
     # argparse.REMAINDER keeps the `--` separator in the list; pytest does not need it.
     extra = args.pytest_args[1:] if args.pytest_args[:1] == ["--"] else args.pytest_args
     return validate_mod.run_test_cluster(
-        campaign, args.cluster, extra_args=extra, workdir=args.workdir,
+        campaign,
+        args.cluster,
+        extra_args=extra,
+        workdir=args.workdir,
     )
 
 
@@ -209,7 +232,8 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pcamp = sub.add_parser(
-        "campaign", help="create a campaign in this study, or rebuild its environment")
+        "campaign", help="create a campaign in this study, or rebuild its environment"
+    )
     camp_sub = pcamp.add_subparsers(dest="campaign_cmd", required=True)
     pci = camp_sub.add_parser(
         "init",
@@ -225,39 +249,79 @@ def main():
             "mechababs campaign init …`."
         ),
     )
-    pci.add_argument("label", help="the campaign's identity (its directory name, and "
-                                   "what MECHABABS_CAMPAIGN selects)")
-    pci.add_argument("--apps", action="append", required=True, metavar="PATH|URL[,…]",
-                     help="BIDS-App configs, ordered: paths or URLs, copied into the "
-                          "campaign. Comma-separated, and repeatable.")
-    pci.add_argument("--cluster", required=True, metavar="PATH|URL",
-                     help="cluster config: a path or URL, copied into the campaign")
-    pci.add_argument("--limit", type=int, default=None,
-                     help="cap each source dataset's inclusion to the first N eligible "
-                          "subjects (default: all)")
-    pci.add_argument("--babs", default=None, metavar="URL@REF",
-                     help="pin babs to a git checkout instead of the default, which is "
-                          "the latest babs release from PyPI, frozen to an exact version "
-                          "by the lock. URL is anything git clones, a local checkout "
-                          "included — which is how a PR branch gets run through a campaign.")
-    pci.add_argument("--mechababs", default=None, metavar="URL@REF",
-                     help="the mechababs to pin (default: whichever mechababs is "
-                          "running this command, pinned by its resolved commit)")
+    pci.add_argument(
+        "label",
+        help="the campaign's identity (its directory name, and "
+        "what MECHABABS_CAMPAIGN selects)",
+    )
+    pci.add_argument(
+        "--apps",
+        action="append",
+        required=True,
+        metavar="PATH|URL[,…]",
+        help="BIDS-App configs, ordered: paths or URLs, copied into the "
+        "campaign. Comma-separated, and repeatable.",
+    )
+    pci.add_argument(
+        "--cluster",
+        required=True,
+        metavar="PATH|URL",
+        help="cluster config: a path or URL, copied into the campaign",
+    )
+    pci.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="cap each source dataset's inclusion to the first N eligible "
+        "subjects (default: all)",
+    )
+    pci.add_argument(
+        "--babs",
+        default=None,
+        metavar="URL@REF",
+        help="pin babs to a git checkout instead of the default, which is "
+        "the latest babs release from PyPI, frozen to an exact version "
+        "by the lock. URL is anything git clones, a local checkout "
+        "included — which is how a PR branch gets run through a campaign.",
+    )
+    pci.add_argument(
+        "--mechababs",
+        default=None,
+        metavar="URL@REF",
+        help="the mechababs to pin (default: whichever mechababs is "
+        "running this command, pinned by its resolved commit)",
+    )
     pci.set_defaults(func=cmd_campaign_init)
 
-    pc = sub.add_parser("configure",
-                        help="bind an ordered pipeline-set to a cluster (run from the campaign venv)")
-    pc.add_argument("--campaign-path", type=Path, default=Path("."),
-                    help="the campaign dataset (default: current directory)")
-    pc.add_argument("--pipelines", required=True,
-                    help="comma-separated pipeline configs (ordered): a path to copy into the "
-                         "campaign's pipelines/, or the name of one already there")
-    pc.add_argument("--cluster", required=True,
-                    help="cluster config: a path to copy into the campaign's clusters/, or the "
-                         "name of one already there")
-    pc.add_argument("--limit", type=int, default=None,
-                    help="cap each dataset's inclusion to the first N eligible subjects "
-                         "(default: all)")
+    pc = sub.add_parser(
+        "configure",
+        help="bind an ordered pipeline-set to a cluster (run from the campaign venv)",
+    )
+    pc.add_argument(
+        "--campaign-path",
+        type=Path,
+        default=Path("."),
+        help="the campaign dataset (default: current directory)",
+    )
+    pc.add_argument(
+        "--pipelines",
+        required=True,
+        help="comma-separated pipeline configs (ordered): a path to copy into the "
+        "campaign's pipelines/, or the name of one already there",
+    )
+    pc.add_argument(
+        "--cluster",
+        required=True,
+        help="cluster config: a path to copy into the campaign's clusters/, or the "
+        "name of one already there",
+    )
+    pc.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="cap each dataset's inclusion to the first N eligible subjects "
+        "(default: all)",
+    )
     pc.set_defaults(func=cmd_configure)
 
     pa = sub.add_parser(
@@ -272,18 +336,34 @@ def main():
             "at scaffold, where the app's eligibility rule applies)."
         ),
     )
-    pa.add_argument("--sourcedata", metavar="PATH", required=True,
-                    help="a source dataset already in this study "
-                         "(e.g. sourcedata/ds000001)")
+    pa.add_argument(
+        "--sourcedata",
+        metavar="PATH",
+        required=True,
+        help="a source dataset already in this study (e.g. sourcedata/ds000001)",
+    )
     pa.set_defaults(func=cmd_add_dataset)
 
-    pi = sub.add_parser("iterate", help="advance pending pipelines one scaffold transition")
-    pi.add_argument("--campaign-path", type=Path, default=Path("."),
-                    help="the campaign dataset (default: current directory)")
-    pi.add_argument("--batch", type=int, default=None,
-                    help="cap to N (dataset, pipeline) pairs this tick (default: all)")
-    pi.add_argument("--dry-run", action="store_true",
-                    help="print the planned commands and change nothing")
+    pi = sub.add_parser(
+        "iterate", help="advance pending pipelines one scaffold transition"
+    )
+    pi.add_argument(
+        "--campaign-path",
+        type=Path,
+        default=Path("."),
+        help="the campaign dataset (default: current directory)",
+    )
+    pi.add_argument(
+        "--batch",
+        type=int,
+        default=None,
+        help="cap to N (dataset, pipeline) pairs this tick (default: all)",
+    )
+    pi.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the planned commands and change nothing",
+    )
     pi.set_defaults(func=cmd_iterate)
 
     pr = sub.add_parser(
@@ -300,12 +380,23 @@ def main():
             "it. Retire a cell you intend to redo from scratch, not one to continue."
         ),
     )
-    pr.add_argument("paths", nargs="+", metavar="PATH",
-                    help="derivative path(s): studies/study-<id>/derivatives/<name>")
-    pr.add_argument("--campaign-path", type=Path, default=Path("."),
-                    help="the campaign dataset (default: current directory)")
-    pr.add_argument("--dry-run", action="store_true",
-                    help="print the planned retirements and change nothing")
+    pr.add_argument(
+        "paths",
+        nargs="+",
+        metavar="PATH",
+        help="derivative path(s): studies/study-<id>/derivatives/<name>",
+    )
+    pr.add_argument(
+        "--campaign-path",
+        type=Path,
+        default=Path("."),
+        help="the campaign dataset (default: current directory)",
+    )
+    pr.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the planned retirements and change nothing",
+    )
     pr.set_defaults(func=cmd_retire_derivative)
 
     pt = sub.add_parser(
@@ -322,33 +413,62 @@ def main():
             "environment, not the workspace."
         ),
     )
-    pt.add_argument("--cluster", required=True,
-                    help="cluster config to validate: a path, or the name of one in the "
-                         "campaign's clusters/")
-    pt.add_argument("--campaign-path", type=Path, default=Path("."),
-                    help="the campaign dataset (default: current directory)")
-    pt.add_argument("--workdir", type=Path, default=None,
-                    help="where to build the scenario's campaign (default: beside this "
-                         "campaign, so the container shim resolves as its sibling)")
+    pt.add_argument(
+        "--cluster",
+        required=True,
+        help="cluster config to validate: a path, or the name of one in the "
+        "campaign's clusters/",
+    )
+    pt.add_argument(
+        "--campaign-path",
+        type=Path,
+        default=Path("."),
+        help="the campaign dataset (default: current directory)",
+    )
+    pt.add_argument(
+        "--workdir",
+        type=Path,
+        default=None,
+        help="where to build the scenario's campaign (default: beside this "
+        "campaign, so the container shim resolves as its sibling)",
+    )
     # Flag-looking pytest args have to be fenced off from this parser, so they go
     # after a literal `--` (the usual convention: `uv run --`, `npm run x --`).
-    pt.add_argument("pytest_args", nargs=argparse.REMAINDER, metavar="-- PYTEST_ARGS",
-                    help="args after a literal `--` pass through to pytest "
-                         "(e.g. `-- -k test_full_run`)")
+    pt.add_argument(
+        "pytest_args",
+        nargs=argparse.REMAINDER,
+        metavar="-- PYTEST_ARGS",
+        help="args after a literal `--` pass through to pytest "
+        "(e.g. `-- -k test_full_run`)",
+    )
     pt.set_defaults(func=cmd_test_cluster)
 
     ps = sub.add_parser("status", help="campaign-wide job table (read-only)")
-    ps.add_argument("--campaign-path", type=Path, default=Path("."),
-                    help="the campaign dataset (default: current directory)")
-    ps.add_argument("-o", "--output", choices=["columns", "tsv", "vd"], default="columns",
-                    help="aligned table (default), raw TSV to pipe anywhere, or open VisiData")
-    ps.add_argument("--study", default=None,
-                    help="only this study (ds004044 or study-ds004044)")
-    ps.add_argument("--derivative", default=None,
-                    help="only this derivative (e.g. MRIQC-24.0.2)")
+    ps.add_argument(
+        "--campaign-path",
+        type=Path,
+        default=Path("."),
+        help="the campaign dataset (default: current directory)",
+    )
+    ps.add_argument(
+        "-o",
+        "--output",
+        choices=["columns", "tsv", "vd"],
+        default="columns",
+        help="aligned table (default), raw TSV to pipe anywhere, or open VisiData",
+    )
+    ps.add_argument(
+        "--study", default=None, help="only this study (ds004044 or study-ds004044)"
+    )
+    ps.add_argument(
+        "--derivative", default=None, help="only this derivative (e.g. MRIQC-24.0.2)"
+    )
     ps.add_argument("--failed", action="store_true", help="only jobs that failed")
-    ps.add_argument("--no-refresh", action="store_true",
-                    help="skip the per-cell `babs status` refresh; read the (possibly stale) cache")
+    ps.add_argument(
+        "--no-refresh",
+        action="store_true",
+        help="skip the per-cell `babs status` refresh; read the (possibly stale) cache",
+    )
     ps.set_defaults(func=cmd_status)
 
     args = p.parse_args()

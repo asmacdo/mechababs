@@ -33,10 +33,12 @@ def cmd_scaffold(args):
     study = study_mod.require_study_root(".")
     campaign_mod.require_statefile(study, args.campaign)
     campaign_mod.require_env_match(study, args.campaign)
-    project = scaffold_mod.scaffold(study, args.campaign, args.source_dataset,
-                                    args.app)
-    print(f"scaffolded {args.source_dataset} / "
-          f"{scaffold_mod.app_stem(args.app)} -> {project}", file=sys.stderr)
+    project = scaffold_mod.scaffold(study, args.campaign, args.source_dataset, args.app)
+    print(
+        f"scaffolded {args.source_dataset} / "
+        f"{scaffold_mod.app_stem(args.app)} -> {project}",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -45,7 +47,7 @@ def main():
         prog="mechababs-inner",
         description=__doc__.split("\n\n")[0],
         epilog="Dispatched by `mechababs iterate` under `datalad run`; not a "
-               "command to run by hand.",
+        "command to run by hand.",
     )
     p.add_argument("--version", action="version", version=f"mechababs {__version__}")
     sub = p.add_subparsers(dest="verb", required=True)
@@ -62,15 +64,26 @@ def main():
             "or is waiting on an unmerged producer."
         ),
     )
-    ps.add_argument("--campaign", required=True, metavar="LABEL",
-                    help="the campaign whose statefile holds the cell. A flag, not "
-                         "the env var: a recorded command names what it ran on.")
-    ps.add_argument("--source-dataset", required=True, metavar="PATH",
-                    help="the cell's source dataset, study-relative "
-                         "(e.g. sourcedata/ds000001)")
-    ps.add_argument("--app", required=True, metavar="PATH",
-                    help="the cell's app config, campaign-relative "
-                         "(e.g. bids-app-configs/MRIQC-24.0.2.yaml)")
+    ps.add_argument(
+        "--campaign",
+        required=True,
+        metavar="LABEL",
+        help="the campaign whose statefile holds the cell. A flag, not "
+        "the env var: a recorded command names what it ran on.",
+    )
+    ps.add_argument(
+        "--source-dataset",
+        required=True,
+        metavar="PATH",
+        help="the cell's source dataset, study-relative (e.g. sourcedata/ds000001)",
+    )
+    ps.add_argument(
+        "--app",
+        required=True,
+        metavar="PATH",
+        help="the cell's app config, campaign-relative "
+        "(e.g. bids-app-configs/MRIQC-24.0.2.yaml)",
+    )
     ps.set_defaults(func=cmd_scaffold)
 
     args = p.parse_args()

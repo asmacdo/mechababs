@@ -40,8 +40,9 @@ def run(*cmd):
 
 def capture(*cmd):
     """Run a command and return its stripped stdout (aborts on non-zero exit)."""
-    return subprocess.run([str(c) for c in cmd], check=True,
-                          capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        [str(c) for c in cmd], check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def container_dir(source):
@@ -113,7 +114,9 @@ def resolve_containers(campaign, pipeline_rels):
     """
     containers = {}
     for pipeline_rel in pipeline_rels:
-        mechababs_cfg = (yaml.safe_load((campaign / pipeline_rel).read_text()) or {}).get("mechababs") or {}
+        mechababs_cfg = (
+            yaml.safe_load((campaign / pipeline_rel).read_text()) or {}
+        ).get("mechababs") or {}
         container = mechababs_cfg.get("container") or {}
         if not container:
             continue
@@ -140,8 +143,15 @@ def vendor_container(campaign, dir_, source, ref):
     if "://" in source or source.startswith("git@"):
         run("git", "clone", "--branch", ref, source, dest)
         head = capture("git", "-C", dest, "rev-parse", "--short", "HEAD")
-        run(DATALAD, "save", "--dataset", campaign, "--message",
-            f"Vendor container {dir_} ({head})", dest)
+        run(
+            DATALAD,
+            "save",
+            "--dataset",
+            campaign,
+            "--message",
+            f"Vendor container {dir_} ({head})",
+            dest,
+        )
     else:
         src = Path(source)
         if not src.is_absolute():
@@ -166,9 +176,15 @@ def build(campaign, pipeline_files, cluster, venv_rel, limit=None):
     # Commit any config copied in by path, so the campaign owns the exact config
     # that produced the run (and reproduces from it alone).
     if copied:
-        run(DATALAD, "save", "--dataset", campaign, "--message",
+        run(
+            DATALAD,
+            "save",
+            "--dataset",
+            campaign,
+            "--message",
             f"Copy in campaign configs ({', '.join(Path(c).name for c in copied)})",
-            *[campaign / c for c in copied])
+            *[campaign / c for c in copied],
+        )
 
     for dir_, (source, ref) in resolve_containers(campaign, pipelines).items():
         vendor_container(campaign, dir_, source, ref)
@@ -178,12 +194,18 @@ def build(campaign, pipeline_files, cluster, venv_rel, limit=None):
     # commit-bearing so the exact orchestrator is recoverable. (Matches the
     # OpenNeuroStudies study convention — BIDSVersion 1.9.0, DatasetType study.)
     desc = campaign / "dataset_description.json"
-    desc.write_text(json.dumps({
-        "Name": campaign.name,
-        "BIDSVersion": "1.9.0",
-        "DatasetType": "study",
-        "GeneratedBy": [{"Name": "mechababs", "Version": __version__}],
-    }, indent=2) + "\n")
+    desc.write_text(
+        json.dumps(
+            {
+                "Name": campaign.name,
+                "BIDSVersion": "1.9.0",
+                "DatasetType": "study",
+                "GeneratedBy": [{"Name": "mechababs", "Version": __version__}],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     # BIDS nests by KIND (sourcedata/, derivatives/), so it can express neither a
     # study holding studies nor a set of retired derivative attempts. Both are real
     # campaign-level directories, so hide them from the validator. The study-of-
@@ -191,17 +213,39 @@ def build(campaign, pipeline_files, cluster, venv_rel, limit=None):
     # should have to answer — see docs/output_structure.md.
     bidsignore = campaign / ".bidsignore"
     bidsignore.write_text("studies/\nderivative-attempts/\n")
-    run(DATALAD, "save", "--dataset", campaign, "--message",
+    run(
+        DATALAD,
+        "save",
+        "--dataset",
+        campaign,
+        "--message",
         "Write campaign dataset_description.json (DatasetType study) + .bidsignore",
-        desc, bidsignore)
+        desc,
+        bidsignore,
+    )
 
     config = state.config_path(campaign)
     config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(yaml.safe_dump(
-        {"cluster": cluster_rel, "pipelines": pipelines, "venv": venv_rel, "limit": limit},
-        sort_keys=False))
-    run(DATALAD, "save", "--dataset", campaign, "--message",
-        f"Write {state.CONFIG_FILENAME} (cluster + pipelines + venv)", config)
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "cluster": cluster_rel,
+                "pipelines": pipelines,
+                "venv": venv_rel,
+                "limit": limit,
+            },
+            sort_keys=False,
+        )
+    )
+    run(
+        DATALAD,
+        "save",
+        "--dataset",
+        campaign,
+        "--message",
+        f"Write {state.CONFIG_FILENAME} (cluster + pipelines + venv)",
+        config,
+    )
 
     # Gitignore the ledger lock here (not in bootstrap.sh): its filename derives
     # from a mechababs constant, so the entry belongs where that constant lives.
@@ -211,12 +255,26 @@ def build(campaign, pipeline_files, cluster, venv_rel, limit=None):
     if state.LOCK_FILENAME not in lines:
         with gitignore.open("a") as f:
             f.write(f"{state.LOCK_FILENAME}\n")
-        run(DATALAD, "save", "--dataset", campaign, "--message",
-            f"Ignore the ledger lock ({state.LOCK_FILENAME})", gitignore)
+        run(
+            DATALAD,
+            "save",
+            "--dataset",
+            campaign,
+            "--message",
+            f"Ignore the ledger lock ({state.LOCK_FILENAME})",
+            gitignore,
+        )
 
     ledger = campaign / state.STATE_FILENAME
     ledger.write_text(state.initial_header(shorts))
-    run(DATALAD, "save", "--dataset", campaign, "--message",
-        f"Initialize {state.STATE_FILENAME} for pipelines {', '.join(shorts)}", ledger)
+    run(
+        DATALAD,
+        "save",
+        "--dataset",
+        campaign,
+        "--message",
+        f"Initialize {state.STATE_FILENAME} for pipelines {', '.join(shorts)}",
+        ledger,
+    )
 
     return shorts

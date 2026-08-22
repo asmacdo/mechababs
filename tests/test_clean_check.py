@@ -13,8 +13,9 @@ from mechababs import utils
 
 
 def _git(cwd, *args):
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                          capture_output=True, text=True).stdout
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+    ).stdout
 
 
 def _repo(path):
@@ -33,8 +34,16 @@ def super_and_sub(tmp_path):
     """A repo with a submodule, both committed and clean."""
     sub = _repo(tmp_path / "sub")
     root = _repo(tmp_path / "root")
-    _git(root, "-c", "protocol.file.allow=always", "submodule", "add", "-q",
-         str(sub), "sourcedata/raw")
+    _git(
+        root,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(sub),
+        "sourcedata/raw",
+    )
     _git(root, "commit", "-qm", "register sub")
     return root, root / "sourcedata" / "raw"
 

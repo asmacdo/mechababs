@@ -30,12 +30,21 @@ SOURCEDATA = "sourcedata/ds999999"
 # The declaration: what a verb's command and outputs are
 # --------------------------------------------------------------------------
 
+
 def test_the_recorded_command_names_the_campaign_and_is_relative():
     """No absolute paths and no reliance on MECHABABS_CAMPAIGN — a run record has
     to re-execute somewhere else, under someone else's environment."""
     cmd = dispatch.inner_command("scaffold", LABEL, SOURCEDATA, ANCHOR)
-    assert cmd == ["mechababs-inner", "scaffold", "--campaign", LABEL,
-                   "--source-dataset", SOURCEDATA, "--app", ANCHOR]
+    assert cmd == [
+        "mechababs-inner",
+        "scaffold",
+        "--campaign",
+        LABEL,
+        "--source-dataset",
+        SOURCEDATA,
+        "--app",
+        ANCHOR,
+    ]
     assert not any(str(part).startswith("/") for part in cmd), cmd
 
 
@@ -47,8 +56,10 @@ def test_scaffold_declares_the_four_paths_it_writes(tmp_path):
     assert outputs == [
         "derivatives/SimBIDS-0.0.3+anchor+ds999999",
         ".mechababs/campaigns/e2e/sourcedata+derivatives.tsv",
-        (".mechababs/campaigns/e2e/inclusions/"
-         "sourcedata-ds999999_SimBIDS-0.0.3+anchor.csv"),
+        (
+            ".mechababs/campaigns/e2e/inclusions/"
+            "sourcedata-ds999999_SimBIDS-0.0.3+anchor.csv"
+        ),
         ".gitmodules",
     ]
     assert all(not os.path.isabs(o) for o in outputs), outputs
@@ -57,12 +68,14 @@ def test_scaffold_declares_the_four_paths_it_writes(tmp_path):
 def test_the_message_says_which_cell_advanced_and_where(tmp_path):
     assert dispatch.scaffold_message(SOURCEDATA, ANCHOR) == (
         "mechababs scaffold sourcedata/ds999999 SimBIDS-0.0.3+anchor -> "
-        "derivatives/SimBIDS-0.0.3+anchor+ds999999")
+        "derivatives/SimBIDS-0.0.3+anchor+ds999999"
+    )
 
 
 # --------------------------------------------------------------------------
 # The mechanics: a real `datalad run` against a real dataset
 # --------------------------------------------------------------------------
+
 
 @pytest.fixture
 def dataset(tmp_path):
@@ -74,14 +87,21 @@ def dataset(tmp_path):
 
 def _run_record(study):
     """The JSON datalad embeds in the run commit's message body."""
-    body = subprocess.run(["git", "-C", str(study), "log", "-1", "--format=%b"],
-                          check=True, capture_output=True, text=True).stdout
+    body = subprocess.run(
+        ["git", "-C", str(study), "log", "-1", "--format=%b"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
     start = body.index("{")
-    return json.loads(body[start:body.rindex("}") + 1])
+    return json.loads(body[start : body.rindex("}") + 1])
 
 
-WRITE = ["python", "-c",
-         "import pathlib; pathlib.Path('landed.txt').write_text('x\\n')"]
+WRITE = [
+    "python",
+    "-c",
+    "import pathlib; pathlib.Path('landed.txt').write_text('x\\n')",
+]
 
 
 def test_a_dispatch_lands_as_a_run_record_with_the_command_verbatim(dataset):
@@ -93,13 +113,17 @@ def test_a_dispatch_lands_as_a_run_record_with_the_command_verbatim(dataset):
     # datalad stores the argv shell-quoted, so the record reads as a command line.
     assert shlex.split(record["cmd"]) == WRITE, record["cmd"]
     assert record["outputs"] == ["landed.txt"]
-    assert not subprocess.run(["git", "-C", str(dataset), "status", "--porcelain"],
-                              check=True, capture_output=True,
-                              text=True).stdout.strip(), "the dispatch left the study dirty"
+    assert not subprocess.run(
+        ["git", "-C", str(dataset), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip(), "the dispatch left the study dirty"
 
 
 def test_the_run_is_recorded_study_relative_even_when_dispatched_from_elsewhere(
-        dataset, tmp_path, monkeypatch):
+    dataset, tmp_path, monkeypatch
+):
     """The both-levels lens: at a superstudy the reconciler stands at the super and
     dispatches into a member, so `study` is a parameter and never the cwd. The
     recorded `pwd` still has to be the study's own, or the record re-executes
@@ -120,14 +144,23 @@ def test_the_run_is_recorded_study_relative_even_when_dispatched_from_elsewhere(
 def test_an_undeclared_output_is_not_captured_by_the_run(dataset):
     """Explicit mode's cost, asserted so it is a known one: what is not declared is
     not recorded. This is exactly why the clean check runs first."""
-    cmd = ["python", "-c", ("import pathlib;"
-                            "pathlib.Path('landed.txt').write_text('x\\n');"
-                            "pathlib.Path('undeclared.txt').write_text('y\\n')")]
+    cmd = [
+        "python",
+        "-c",
+        (
+            "import pathlib;"
+            "pathlib.Path('landed.txt').write_text('x\\n');"
+            "pathlib.Path('undeclared.txt').write_text('y\\n')"
+        ),
+    ]
     dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="partial")
 
     tracked = subprocess.run(
         ["git", "-C", str(dataset), "ls-files"],
-        check=True, capture_output=True, text=True).stdout.split()
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
     assert "landed.txt" in tracked
     assert "undeclared.txt" not in tracked
 
@@ -140,8 +173,9 @@ def test_a_dirty_study_refuses_the_dispatch_before_anything_runs(dataset):
 
 
 def test_dry_run_prints_the_dispatch_and_changes_nothing(dataset, capsys):
-    dispatch.dispatch(dataset, WRITE, outputs=["landed.txt"], message="planned",
-                      dry_run=True)
+    dispatch.dispatch(
+        dataset, WRITE, outputs=["landed.txt"], message="planned", dry_run=True
+    )
     assert "DRY-RUN" in capsys.readouterr().err
     assert not (dataset / "landed.txt").exists()
 
@@ -150,8 +184,10 @@ def test_the_runcmd_backstop_fires_when_no_record_landed(dataset):
     """A command that makes its own commits can leave a run with nothing of its own
     to save, and older datalad dropped the record entirely — a silent failure, so
     it is checked rather than assumed."""
-    subprocess.run(["git", "-C", str(dataset), "commit", "--allow-empty", "-qm",
-                    "a plain commit"], check=True)
+    subprocess.run(
+        ["git", "-C", str(dataset), "commit", "--allow-empty", "-qm", "a plain commit"],
+        check=True,
+    )
     with pytest.raises(RuntimeError, match="not a run record"):
         dispatch.require_runcmd_head(dataset, "something")
 
@@ -160,11 +196,16 @@ def test_a_command_that_commits_for_itself_still_lands_a_run_record(dataset):
     """The scaffold shape in miniature: `babs init` commits inside the study before
     datalad's own save gets a turn. datalad >= 1.6 keeps the record; the pyproject
     floor says so and this says it is in force."""
-    cmd = ["python", "-c",
-           ("import pathlib, subprocess;"
+    cmd = [
+        "python",
+        "-c",
+        (
+            "import pathlib, subprocess;"
             "pathlib.Path('landed.txt').write_text('x\\n');"
             "subprocess.run(['git','add','landed.txt'], check=True);"
-            "subprocess.run(['git','commit','-qm','inner commit'], check=True)")]
+            "subprocess.run(['git','commit','-qm','inner commit'], check=True)"
+        ),
+    ]
     dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="inner-commits")
     assert dispatch.head_subject(dataset) == "[DATALAD RUNCMD] inner-commits"
 
@@ -176,12 +217,17 @@ def test_an_undeclared_path_in_an_inner_commit_is_refused(dataset):
     Scaffold answers it by declaring `.gitmodules` — the path datalad itself
     commits when it registers the new derivative — rather than muting the guard.
     """
-    cmd = ["python", "-c",
-           ("import pathlib, subprocess;"
+    cmd = [
+        "python",
+        "-c",
+        (
+            "import pathlib, subprocess;"
             "pathlib.Path('landed.txt').write_text('x\\n');"
             "pathlib.Path('smuggled.txt').write_text('y\\n');"
             "subprocess.run(['git','add','.'], check=True);"
-            "subprocess.run(['git','commit','-qm','inner commit'], check=True)")]
+            "subprocess.run(['git','commit','-qm','inner commit'], check=True)"
+        ),
+    ]
     with pytest.raises(subprocess.CalledProcessError):
         dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="smuggler")
 

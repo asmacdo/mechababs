@@ -71,7 +71,9 @@ def parse_derivative_path(campaign, path):
 def next_attempt_dest(campaign, dataset_id, derivative):
     """The first free ``derivative-attempts/<ds>-<deriv>-attempt-<N>`` (never clobbers)."""
     n = 1
-    while (Path(campaign) / ATTEMPTS_DIR / f"{dataset_id}-{derivative}-attempt-{n}").exists():
+    while (
+        Path(campaign) / ATTEMPTS_DIR / f"{dataset_id}-{derivative}-attempt-{n}"
+    ).exists():
         n += 1
     return f"{ATTEMPTS_DIR}/{dataset_id}-{derivative}-attempt-{n}"
 
@@ -123,10 +125,14 @@ def run_retire(campaign, paths, *, dry_run=False):
                 dry_run=dry_run,
             ):
                 if dry_run:
-                    print(f"DRY-RUN  move {study_rel}/derivatives/{derivative} -> {dest_rel}",
-                          file=sys.stderr)
-                    print(f"DRY-RUN  clear ledger {dataset_id}: {derivative}_babs*",
-                          file=sys.stderr)
+                    print(
+                        f"DRY-RUN  move {study_rel}/derivatives/{derivative} -> {dest_rel}",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"DRY-RUN  clear ledger {dataset_id}: {derivative}_babs*",
+                        file=sys.stderr,
+                    )
                     continue
                 _retire(campaign, study_rel, derivative, dest_rel)
                 _reset_cell(campaign, cols, rows, dataset_id, derivative)
@@ -137,9 +143,14 @@ def _reset_cell(campaign, cols, rows, dataset_id, derivative):
     """Blank the retired cell's ledger columns so iterate re-scaffolds it."""
     row = next((r for r in rows if r.get("dataset_id") == dataset_id), None)
     if row is None:
-        print(f"warning: no ledger row for {dataset_id}; nothing to reset", file=sys.stderr)
+        print(
+            f"warning: no ledger row for {dataset_id}; nothing to reset",
+            file=sys.stderr,
+        )
         return
-    touched = [c for c in (f"{derivative}_babs", f"{derivative}_babs-merged") if c in cols]
+    touched = [
+        c for c in (f"{derivative}_babs", f"{derivative}_babs-merged") if c in cols
+    ]
     if not touched:
         print(f"warning: no ledger columns for pipeline {derivative}", file=sys.stderr)
         return

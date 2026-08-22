@@ -42,8 +42,9 @@ BIDS_PATH_IN_BABS = "sourcedata/raw"
 VENV_PLACEHOLDER = "{{MECHABABS_VENV}}"
 
 
-def merge_babs_config(app_config, cluster_config, source_url, *,
-                      input_origins=None, campaign_venv=None):
+def merge_babs_config(
+    app_config, cluster_config, source_url, *, input_origins=None, campaign_venv=None
+):
     """The babs config for one cell: app x cluster x source URL, as a dict.
 
     ``input_origins`` maps an ``input_datasets`` key to the URL scaffold resolved
@@ -55,7 +56,8 @@ def merge_babs_config(app_config, cluster_config, source_url, *,
 
     if campaign_venv and "script_preamble" in merged:
         merged["script_preamble"] = merged["script_preamble"].replace(
-            VENV_PLACEHOLDER, str(campaign_venv))
+            VENV_PLACEHOLDER, str(campaign_venv)
+        )
 
     declared = merged.get("input_datasets") or {}
     input_datasets = {
@@ -71,21 +73,34 @@ def merge_babs_config(app_config, cluster_config, source_url, *,
 
     for key, url in (input_origins or {}).items():
         if key not in input_datasets:
-            sys.exit(f"cannot wire input {key!r}: the app config declares no "
-                     f"input_datasets entry by that name (it declares: "
-                     f"{', '.join(sorted(declared)) or 'none'})")
+            sys.exit(
+                f"cannot wire input {key!r}: the app config declares no "
+                f"input_datasets entry by that name (it declares: "
+                f"{', '.join(sorted(declared)) or 'none'})"
+            )
         input_datasets[key]["origin_url"] = url
 
     merged["input_datasets"] = input_datasets
     return merged
 
 
-def write_babs_config(path, app_config, cluster_config, source_url, *,
-                      input_origins=None, campaign_venv=None):
+def write_babs_config(
+    path,
+    app_config,
+    cluster_config,
+    source_url,
+    *,
+    input_origins=None,
+    campaign_venv=None,
+):
     """Compose and write the babs config to ``path``. Returns ``path``."""
-    merged = merge_babs_config(app_config, cluster_config, source_url,
-                               input_origins=input_origins,
-                               campaign_venv=campaign_venv)
+    merged = merge_babs_config(
+        app_config,
+        cluster_config,
+        source_url,
+        input_origins=input_origins,
+        campaign_venv=campaign_venv,
+    )
     with open(path, "w") as f:
         yaml.safe_dump(merged, f, default_flow_style=False, sort_keys=False)
     return path

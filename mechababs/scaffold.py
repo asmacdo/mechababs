@@ -91,14 +91,25 @@ def source_dataset_url(study, source_dataset):
     gitmodules = Path(study) / ".gitmodules"
     for name in (source_dataset, source_id(source_dataset)):
         out = subprocess.run(
-            ["git", "config", "--file", str(gitmodules), "--get",
-             f"submodule.{name}.url"],
-            capture_output=True, text=True, check=False)
+            [
+                "git",
+                "config",
+                "--file",
+                str(gitmodules),
+                "--get",
+                f"submodule.{name}.url",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
-    sys.exit(f"no submodule url for {source_dataset} in {gitmodules}\n"
-             "The source dataset has to be a registered subdataset of the study — "
-             "that registration is what says where the raw data came from.")
+    sys.exit(
+        f"no submodule url for {source_dataset} in {gitmodules}\n"
+        "The source dataset has to be a registered subdataset of the study — "
+        "that registration is what says where the raw data came from."
+    )
 
 
 def resolve_container_ds(study, container):
@@ -137,9 +148,11 @@ def find_cell(rows, source_dataset, app_config):
     for row in rows:
         if campaign_mod.cell_key(row) == (source_dataset, app_config):
             return row
-    sys.exit(f"no cell for ({source_dataset}, {app_config}) in this campaign's "
-             f"statefile — `mechababs add-dataset` writes the cells, and scaffold "
-             f"only advances one that is already there.")
+    sys.exit(
+        f"no cell for ({source_dataset}, {app_config}) in this campaign's "
+        f"statefile — `mechababs add-dataset` writes the cells, and scaffold "
+        f"only advances one that is already there."
+    )
 
 
 def resolve_upstream(study, label, rows, row, app_config_data):
@@ -162,14 +175,16 @@ def resolve_upstream(study, label, rows, row, app_config_data):
             f"{row['source_dataset']} / {app_stem(row['app_config'])} depends on "
             f"{app_stem(upstream)}, which is not merged yet.\n"
             "A dependent cell is scaffolded only after its producer's results are "
-            "merged — the reconciler waits for that; this verb refuses.")
+            "merged — the reconciler waits for that; this verb refuses."
+        )
 
     key = app_stem(upstream)
     if key not in (app_config_data.get("input_datasets") or {}):
-        return {}                      # a gate edge: ordering only, nothing wired
+        return {}  # a gate edge: ordering only, nothing wired
     producer_root = Path(study) / producer["babs"]
     producer_config = yaml.safe_load(
-        (campaign_mod.campaign_dir(study, label) / upstream).read_text())
+        (campaign_mod.campaign_dir(study, label) / upstream).read_text()
+    )
     return {key: output_ria_url(producer_root, producer_config)}
 
 
@@ -198,13 +213,18 @@ def resolve_inclusion(study, label, row, app_config_data, limit):
         sys.exit(
             f"app {app_stem(row['app_config'])} declares no `mechababs.selection` "
             f"and has no pinned inclusion at {pin} — one of the two has to define "
-            f"the job universe (`selection: {{}}` is the pass-through rule).")
+            f"the job universe (`selection: {{}}` is the pass-through rule)."
+        )
 
     pin.parent.mkdir(parents=True, exist_ok=True)
     tsv_text, _ = select.read_study_metadata(study)
-    select.generate_inclusion(tsv_text, mechababs_cfg["selection"] or {}, pin,
-                              processing_level=row["processing_level"],
-                              limit=limit)
+    select.generate_inclusion(
+        tsv_text,
+        mechababs_cfg["selection"] or {},
+        pin,
+        processing_level=row["processing_level"],
+        limit=limit,
+    )
     return pin
 
 
@@ -217,21 +237,31 @@ def babs_init_command(study, row, app_config_data, inclusion, babs_config):
     source is a URL or an outside-the-study checkout, and the composed config is a
     tempfile, so neither has a study-relative form.)
     """
-    container = (app_config_data.get(compose.MECHABABS_NAMESPACE) or {}).get("container")
+    container = (app_config_data.get(compose.MECHABABS_NAMESPACE) or {}).get(
+        "container"
+    )
     if not container:
-        sys.exit(f"app {app_stem(row['app_config'])} declares no "
-                 f"`mechababs.container` — scaffold has no image to give babs.")
+        sys.exit(
+            f"app {app_stem(row['app_config'])} declares no "
+            f"`mechababs.container` — scaffold has no image to give babs."
+        )
     cmd = [
         # This environment's babs, not PATH's: the env-match guard vouches for
         # sys.prefix, and PATH can disagree with it (a stray user-level babs has
         # shadowed the pinned one before).
         str(Path(sys.prefix) / "bin" / "babs"),
-        "init", derivative_path(row["source_dataset"], row["app_config"]),
-        "--container-ds", resolve_container_ds(study, container),
-        "--container-name", container["name"],
-        "--container-config", str(babs_config),
-        "--processing-level", row["processing_level"],
-        "--queue", "slurm",
+        "init",
+        derivative_path(row["source_dataset"], row["app_config"]),
+        "--container-ds",
+        resolve_container_ds(study, container),
+        "--container-name",
+        container["name"],
+        "--container-config",
+        str(babs_config),
+        "--processing-level",
+        row["processing_level"],
+        "--queue",
+        "slurm",
     ]
     if inclusion is not None:
         cmd += ["--list-sub-file", str(inclusion.relative_to(study))]
@@ -254,26 +284,33 @@ def scaffold(study, label, source_dataset, app_config):
             f"{source_dataset} / {app_stem(app_config)} is already scaffolded at "
             f"{row['babs']}.\n"
             "Scaffold is the not-started transition; to redo this cell, retire the "
-            "derivative first — that resets the cell in the same act.")
+            "derivative first — that resets the cell in the same act."
+        )
     if not row.get("processing_level"):
-        sys.exit(f"{source_dataset} has no processing_level in the statefile — "
-                 "add-dataset derives it from the study's metadata, so a blank one "
-                 "means that sniff never happened.")
+        sys.exit(
+            f"{source_dataset} has no processing_level in the statefile — "
+            "add-dataset derives it from the study's metadata, so a blank one "
+            "means that sniff never happened."
+        )
 
     app_config_data = yaml.safe_load((campaign / app_config).read_text()) or {}
-    cluster_config_data = yaml.safe_load(
-        (campaign / config["cluster"]).read_text()) or {}
+    cluster_config_data = (
+        yaml.safe_load((campaign / config["cluster"]).read_text()) or {}
+    )
 
     # The gate first: nothing is written before we know the cell may proceed.
     input_origins = resolve_upstream(study, label, rows, row, app_config_data)
 
     project = derivative_path(source_dataset, app_config)
-    print(f"\n=== scaffold {source_dataset} / {app_stem(app_config)} -> {project} ===",
-          file=sys.stderr)
+    print(
+        f"\n=== scaffold {source_dataset} / {app_stem(app_config)} -> {project} ===",
+        file=sys.stderr,
+    )
     (study / project).parent.mkdir(parents=True, exist_ok=True)
 
-    inclusion = resolve_inclusion(study, label, row, app_config_data,
-                                  config.get("limit"))
+    inclusion = resolve_inclusion(
+        study, label, row, app_config_data, config.get("limit")
+    )
 
     # The composed config is derived, not source: a pure function of the app and
     # cluster configs (both committed in the study), the source URL, and the venv
@@ -282,10 +319,13 @@ def scaffold(study, label, source_dataset, app_config):
     # transition actually owns.
     with tempfile.TemporaryDirectory() as tmp:
         babs_config = compose.write_babs_config(
-            Path(tmp) / "babs-config.yaml", app_config_data, cluster_config_data,
+            Path(tmp) / "babs-config.yaml",
+            app_config_data,
+            cluster_config_data,
             source_dataset_url(study, source_dataset),
             input_origins=input_origins,
-            campaign_venv=campaign_mod.venv_path(study, label))
+            campaign_venv=campaign_mod.venv_path(study, label),
+        )
         cmd = babs_init_command(study, row, app_config_data, inclusion, babs_config)
         print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr)
         subprocess.run([str(c) for c in cmd], cwd=str(study), check=True)

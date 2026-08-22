@@ -67,7 +67,9 @@ def test_pytest_command_runs_this_interpreter_over_the_packaged_suite(campaign):
 
 def test_pytest_command_passes_extra_args_through(campaign):
     cmd = validate.pytest_command(
-        campaign / "clusters" / "sherlock.yaml", campaign, ["-k", "test_full_run"],
+        campaign / "clusters" / "sherlock.yaml",
+        campaign,
+        ["-k", "test_full_run"],
     )
     assert cmd[-2:] == ["-k", "test_full_run"]
 
@@ -88,8 +90,11 @@ def _parse_cli(argv):
         return 0
 
     original_run = validate.run_test_cluster
-    original_checks = (cli._ensure_campaign_skeleton, cli.guard.require_clean_pins,
-                       cli._require_campaign_venv)
+    original_checks = (
+        cli._ensure_campaign_skeleton,
+        cli.guard.require_clean_pins,
+        cli._require_campaign_venv,
+    )
     validate.run_test_cluster = spy
     cli._ensure_campaign_skeleton = lambda args: args.campaign_path
     cli.guard.require_clean_pins = lambda campaign: None
@@ -105,8 +110,11 @@ def _parse_cli(argv):
             _sys.argv = argv_backup
     finally:
         validate.run_test_cluster = original_run
-        (cli._ensure_campaign_skeleton, cli.guard.require_clean_pins,
-         cli._require_campaign_venv) = original_checks
+        (
+            cli._ensure_campaign_skeleton,
+            cli.guard.require_clean_pins,
+            cli._require_campaign_venv,
+        ) = original_checks
     return seen
 
 
@@ -114,7 +122,9 @@ def test_cli_forwards_pytest_flags_after_a_double_dash():
     """The documented passthrough must actually parse. `argparse.REMAINDER` only
     reaches flag-looking tokens once `--` fences them off, and it keeps the `--`, so
     both halves of that (parsing, and stripping) are asserted here."""
-    seen = _parse_cli(["test-cluster", "--cluster", "x.yaml", "--", "-k", "test_full_run"])
+    seen = _parse_cli(
+        ["test-cluster", "--cluster", "x.yaml", "--", "-k", "test_full_run"]
+    )
     assert seen["extra"] == ["-k", "test_full_run"], "the `--` must not reach pytest"
 
 
@@ -150,11 +160,18 @@ def test_test_cluster_runs_on_an_unconfigured_campaign(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.guard, "require_clean_pins", lambda c: None)
     monkeypatch.setattr(cli, "_require_campaign_venv", lambda c: None)
     monkeypatch.setattr(validate, "run_test_cluster", spy)
-    monkeypatch.setattr(sys, "argv", [
-        "mechababs", "test-cluster",
-        "--campaign-path", str(campaign),
-        "--cluster", "site.yaml",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mechababs",
+            "test-cluster",
+            "--campaign-path",
+            str(campaign),
+            "--cluster",
+            "site.yaml",
+        ],
+    )
 
     assert cli.main() == 0
     assert seen["campaign"] == campaign.resolve()
@@ -164,6 +181,7 @@ def test_test_cluster_runs_on_an_unconfigured_campaign(tmp_path, monkeypatch):
 # Extracted so those two commands share one notion of "campaign enough to run", which
 # only holds if the checks themselves stay. Tested directly, because the CLI tests
 # above stub the function out.
+
 
 def _args(campaign):
     from types import SimpleNamespace
@@ -213,15 +231,26 @@ def test_campaign_skeleton_accepts_what_bootstrap_leaves(tmp_path):
 # unclonable fails deep inside bootstrap.sh), and it is shared by both provisioning
 # routes, so it gets real git repos rather than mocks.
 
+
 def _repo(path, tag=None):
     import subprocess
 
     path.mkdir(parents=True)
-    run = lambda *a: subprocess.run(["git", "-C", str(path), *a], check=True,
-                                    capture_output=True)
+    run = lambda *a: subprocess.run(
+        ["git", "-C", str(path), *a], check=True, capture_output=True
+    )
     run("init", "-q", "-b", "main")
-    run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty",
-        "-m", "c")
+    run(
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "c",
+    )
     if tag:
         run("tag", tag)
     return path
@@ -238,8 +267,11 @@ def test_clone_ref_falls_back_to_the_tag_when_detached(tmp_path):
 
     src = _repo(tmp_path / "src", tag="v1.2.3")
     clone = tmp_path / "clone"
-    subprocess.run(["git", "clone", "-q", "--branch", "v1.2.3", str(src), str(clone)],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "clone", "-q", "--branch", "v1.2.3", str(src), str(clone)],
+        check=True,
+        capture_output=True,
+    )
     assert validate.clone_ref(clone) == "v1.2.3", "must recover something re-clonable"
 
 
@@ -247,10 +279,15 @@ def test_clone_ref_refuses_a_detached_commit_with_no_tag(tmp_path):
     import subprocess
 
     repo = _repo(tmp_path / "d")
-    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True,
-                         text=True, capture_output=True).stdout.strip()
-    subprocess.run(["git", "-C", str(repo), "checkout", "-q", sha], check=True,
-                   capture_output=True)
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", sha], check=True, capture_output=True
+    )
     with pytest.raises(validate.RefError, match="detached HEAD"):
         validate.clone_ref(repo)
 
