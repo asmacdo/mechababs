@@ -14,3 +14,18 @@ script_preamble: |
   trap 'rm -rf "${JOB_TMP}"' EXIT
 
 job_compute_space: "/tmp"
+
+# The image is CentOS 7 (glibc 2.17), so the campaign environment needs the same
+# version caps a real old-glibc cluster needs — the newest wheels of these eight
+# target a newer glibc, and without the caps uv falls back to source builds gcc 4.8
+# cannot compile. Live here rather than commented, so the container rung exercises
+# the same code path a real site does (docs/overview.md: dev exercises prod).
+env_constraints:
+  - greenlet<=3.2.5
+  - h5py<=3.14.0
+  - pandas<=2.3.2
+  - scipy<=1.15.3
+  - scikit-learn<=1.7.2
+  - scikit-image<=0.25.2
+  - pillow<=12.2.0
+  - contourpy<=1.3.2

@@ -35,3 +35,21 @@ script_preamble: |
   trap 'rm -rf "${JOB_TMP}"' EXIT
 
 job_compute_space: "/scratch/users/${USER}"
+
+# Sherlock is CentOS 7 (glibc 2.17), and Stanford Research Computing has confirmed no
+# upgrade. The newest wheels of these eight target a newer glibc, so without the caps
+# uv falls back to source builds the site's gcc 4.8 cannot compile and `campaign init`
+# dies in compiler output. Caps only — every floor the campaign's own dependencies
+# declare is preserved.
+#
+# Maintaining this list: when a package here gains a glibc-2.17 wheel again, or a new
+# one loses its, the failure names the package and points back at this block.
+env_constraints:
+  - greenlet<=3.2.5
+  - h5py<=3.14.0
+  - pandas<=2.3.2
+  - scipy<=1.15.3
+  - scikit-learn<=1.7.2
+  - scikit-image<=0.25.2
+  - pillow<=12.2.0
+  - contourpy<=1.3.2
