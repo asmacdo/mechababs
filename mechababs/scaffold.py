@@ -222,7 +222,11 @@ def babs_init_command(study, row, app_config_data, inclusion, babs_config):
         sys.exit(f"app {app_stem(row['app_config'])} declares no "
                  f"`mechababs.container` — scaffold has no image to give babs.")
     cmd = [
-        "babs", "init", derivative_path(row["source_dataset"], row["app_config"]),
+        # This environment's babs, not PATH's: the env-match guard vouches for
+        # sys.prefix, and PATH can disagree with it (a stray user-level babs has
+        # shadowed the pinned one before).
+        str(Path(sys.prefix) / "bin" / "babs"),
+        "init", derivative_path(row["source_dataset"], row["app_config"]),
         "--container-ds", resolve_container_ds(study, container),
         "--container-name", container["name"],
         "--container-config", str(babs_config),
