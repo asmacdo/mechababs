@@ -68,3 +68,24 @@ packages = ["mechababs", "mechababs.testing"]
 
 [tool.setuptools_scm]
 version_file = "mechababs/_version.py"
+
+# Both halves of ruff's behavior are pinned, for the same reason: whatever CI
+# enforces has to be reproducible on a laptop.
+#
+# `required-version` pins the tool. Ruff's formatter output shifts between
+# releases, so a contributor on a different version reformats lines nobody
+# touched; this makes that fail loudly instead. Bump it here and in
+# .github/workflows/ruff.yml together, in a commit that carries the reformat the
+# bump implies.
+#
+# `select` pins what "lint" MEANS. Ruff's default rule set is not stable across
+# releases -- 0.16 widened it from 59 rules to 413 -- so leaving the selection
+# implicit hands a future release the power to change what CI demands. This is
+# ruff's classic default set (pyflakes plus the pycodestyle errors that catch
+# real bugs). Widening it is a deliberate act: expect a batch of findings, and
+# disposition them in their own commit.
+[tool.ruff]
+required-version = "==0.16.4"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

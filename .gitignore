@@ -5,6 +5,7 @@ design/*.png
 mechababs/_version.py
 __pycache__/
 .pytest_cache/
+.ruff_cache/
 processing/
 local-notes/
 repronim-containers/
