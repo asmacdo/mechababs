@@ -23,6 +23,10 @@ test = ["pytest"]
 
 [project.scripts]
 mechababs = "mechababs.cli:main"
+# The action verbs `iterate` dispatches under `datalad run`. A console script, not
+# a `python -m` invocation, because it is what a study's history records: the
+# command has to name a tool, not an interpreter and a module path.
+mechababs-inner = "mechababs.inner:main"
 
 [tool.pytest.ini_options]
 # A bare `pytest` means the unit suite. Without this it also walks mechababs/,

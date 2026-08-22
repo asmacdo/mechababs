@@ -105,6 +105,26 @@ def state_path(study, label):
     return campaign_dir(study, label) / STATE_FILENAME
 
 
+def require_statefile(study, label):
+    """``study``'s statefile for ``label``, or exit saying why there is none.
+
+    The one place the study/superstudy asymmetry is enforced rather than assumed.
+    A superstudy's campaign dir carries membership and no cell state, so a verb
+    that needs a shard — every reconciler transition — is being pointed at the
+    wrong level, and that is a different mistake from a missing campaign.
+    """
+    path = state_path(study, label)
+    if not path.is_file():
+        if config_path(study, label).is_file():
+            sys.exit(
+                f"campaign {label!r} here has no {STATE_FILENAME} ({path}).\n"
+                "Per-cell state lives in a study; a superstudy's campaign dir "
+                "carries membership instead. Run this in the member study whose "
+                "cell you mean to advance.")
+        sys.exit(f"no campaign {label!r} here (looked for {config_path(study, label)})")
+    return path
+
+
 def flock_path(root, label):
     return campaign_dir(root, label) / FLOCK_FILENAME
 
