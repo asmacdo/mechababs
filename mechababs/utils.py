@@ -120,6 +120,45 @@ def campaign_save_scope(root, path):
                            f"({describe_result(r)})" for r in failed))
 
 
+def shallow_status(root):
+    """Porcelain status of ``root`` WITHOUT descending into submodule worktrees.
+
+    ``--ignore-submodules=dirty`` is the whole point: git still compares each
+    submodule's recorded commit against its HEAD (a gitlink compare — one ref read
+    per submodule) but does not walk its working tree. That walk is what makes a
+    status over a study with real source data expensive, and it is never what this
+    check is looking for.
+    """
+    out = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain",
+         "--ignore-submodules=dirty"],
+        check=True, capture_output=True, text=True).stdout
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def require_clean_shallow(root, *, what="this operation"):
+    """Refuse unless ``root`` is clean at its own level. Cheap enough for a tick.
+
+    The backstop for `datalad run --explicit`. Explicit mode captures ONLY the
+    declared outputs, which is what keeps a run from deep-walking `sourcedata/raw`
+    — but it also means a stray side-write next to them is silently left behind
+    rather than swept into the commit. So the tree is checked once, loudly, before
+    dispatching: anything already uncommitted here did not come from mechababs, and
+    a run that starts on top of it produces a record that does not describe the
+    tree it ran in.
+
+    Deliberately shallow (see ``shallow_status``): a dirty submodule *worktree* is
+    not this check's business, a moved submodule *pointer* is.
+    """
+    dirty = shallow_status(root)
+    if dirty:
+        raise RuntimeError(
+            f"{root} is not clean — refusing {what}.\n"
+            "Uncommitted work here is not mechababs', and a run recorded on top "
+            "of it would not describe the tree it ran in. Commit or discard it "
+            "first:\n" + "\n".join(f"  {line}" for line in dirty))
+
+
 @contextmanager
 def flocked(lock):
     """Hold an exclusive flock on ``lock`` (created if absent) for the block."""

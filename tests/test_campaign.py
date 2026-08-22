@@ -101,3 +101,26 @@ def test_require_selected_campaign_refuses_outside_a_study(tmp_path, monkeypatch
     monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
     with pytest.raises(SystemExit):
         campaign_mod.require_selected_campaign(tmp_path)
+
+
+def test_require_statefile_returns_the_shard_when_there_is_one(tmp_path):
+    make_campaign(tmp_path)
+    campaign_mod.state_path(tmp_path, "nprep").write_text(
+        campaign_mod.initial_header())
+    assert campaign_mod.require_statefile(tmp_path, "nprep") == \
+        campaign_mod.state_path(tmp_path, "nprep")
+
+
+def test_require_statefile_names_the_study_superstudy_asymmetry(tmp_path):
+    """A campaign dir with config but no shard is a SUPERSTUDY's — it carries
+    membership instead. A verb that needs cells is at the wrong level, and that is
+    a different mistake from pointing at a campaign that does not exist.
+    """
+    make_campaign(tmp_path)
+    with pytest.raises(SystemExit, match="member study"):
+        campaign_mod.require_statefile(tmp_path, "nprep")
+
+
+def test_require_statefile_says_no_campaign_when_there_is_none(tmp_path):
+    with pytest.raises(SystemExit, match="no campaign"):
+        campaign_mod.require_statefile(tmp_path, "nprep")

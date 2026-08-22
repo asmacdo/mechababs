@@ -5,10 +5,10 @@ run_in_podman.sh); on a real cluster it will run on the login node. Either way t
 scenario drives the real CLI against a real study, so the fixtures build the world
 that CLI expects to already exist:
 
-- `simbids_sif` — the simbids container, from the shim built once as host-prep
-  (`tmp-repronim-container-shim.sh bids-simbids`). This is a temporary seam: when
-  babs#383 lands + simbids is upstreamed to ReproNim/containers, only this fixture
-  changes (shim path -> ReproNim `datalad get`).
+- `simbids_sif` — the simbids container, inside a plain ReproNim/containers clone
+  seeded once in the workdir as host-prep. Not a shim: upstream carries the simbids
+  image, and babs main resolves it from the datalad-containers registration, so the
+  suite names the same kind of container dataset a production config does.
 - `rawdata` — fake BIDS input, generated once into the workdir cache. Prod uses real
   OpenNeuro data, so fake input is a test-only concern that lives in the test, not in
   any prod tool.
@@ -46,6 +46,18 @@ SIMBIDS_CONFIG = "ds005237_configs.yaml"
 # The fixture's dataset id: an obviously-fake sentinel, chosen to NOT collide with
 # any real OpenNeuro accession (unlike the phantom's own ds005237).
 DATASET_ID = "ds999999"
+
+# The container dataset the suite's app configs name, as a workdir-local clone. The
+# configs reach it as `../containers` relative to a study, so it has to sit beside
+# the studies this suite builds.
+CONTAINERS_DIRNAME = "containers"
+CONTAINERS_URL = "https://github.com/ReproNim/containers.git"
+SIMBIDS_IMAGE = "images/bids/bids-simbids--0.0.3.sif"
+
+# babs main, not a release: the suite's app configs point at a native
+# ReproNim/containers layout, which only `PennLINC/babs#399` resolves (merged to
+# main, in no release yet). Drop this default back to None once a release carries it.
+DEFAULT_BABS = "https://github.com/PennLINC/babs.git@main"
 
 
 def pytest_addoption(parser):
@@ -117,13 +129,19 @@ def mechababs_pin(request):
 
 @pytest.fixture(scope="session")
 def babs_pin(request):
-    """The `URL@REF` for babs, or None to let the lock take the latest release.
+    """The `URL@REF` the scenario's campaigns pin for babs.
 
-    Unlike `--mechababs` this is genuinely optional: babs is a dependency mechababs
-    shells out to, not the code under test, so the default (a released version, frozen
-    by the lock) is also the default a user gets.
+    Defaults to babs **main** rather than the latest release, because the suite's
+    app configs name a plain ReproNim/containers dataset: resolving an image out of
+    its datalad-containers registration (instead of babs's own default layout) is
+    `PennLINC/babs#399`, which is on main and in no release yet. A campaign built
+    against a release would fail `babs init` on the container, so the suite states
+    the babs it needs rather than discovering it.
+
+    `--babs` overrides — that is how an unmerged babs fix gets run through the
+    scenario, and a local checkout works because `git clone` takes a path.
     """
-    return request.config.getoption("--babs")
+    return request.config.getoption("--babs") or DEFAULT_BABS
 
 
 @pytest.fixture(scope="session")
@@ -142,30 +160,34 @@ def app_configs():
 
 @pytest.fixture(scope="session")
 def workdir():
-    """Base dir where the campaign and the shim live as siblings.
+    """Base dir where the studies and the container dataset live as siblings.
 
-    Defaults to /scratch (the container's writable layer, where run_in_podman.sh
-    mounts the shim). On a real cluster, point it at scratch space via
-    MECHABABS_E2E_WORKDIR — the pipeline resolves the shim as
-    `../repronim-containers-shim`, so campaign and shim must share a parent.
+    Defaults to /scratch (the container's writable layer). On a real cluster, point
+    it at scratch space via MECHABABS_E2E_WORKDIR — the app configs resolve the
+    container dataset as `../containers` relative to a study, so the studies this
+    suite builds and that clone must share a parent.
     """
     return Path(os.environ.get("MECHABABS_E2E_WORKDIR", "/scratch"))
 
 
 @pytest.fixture(scope="session")
 def simbids_sif(workdir):
-    """Path to the simbids SIF — the temporary shim seam.
+    """Path to the simbids SIF, inside the workdir's ReproNim/containers clone.
 
-    Today it lives in the shim built as host-prep by `tmp-repronim-container-shim.sh
-    bids-simbids`. When babs#383 lands + simbids is upstreamed to ReproNim, this
-    becomes a `datalad get` from ReproNim and nothing else changes.
+    No shim: upstream ReproNim/containers carries `bids-simbids--0.0.3.sif` itself,
+    and babs main resolves it from the datalad-containers registration. So the app
+    configs name the same kind of dataset a production config does, and the only
+    host prep is a clone plus one `datalad get`.
+
+    Local rather than the GitHub URL because babs installs `container.source` into
+    every derivative it inits — clone once here, not once per cell.
     """
-    sif = workdir / "repronim-containers-shim" / "images" / "bids" / "bids-simbids--0.0.3.sif"
+    sif = workdir / CONTAINERS_DIRNAME / SIMBIDS_IMAGE
     if not sif.exists():
         pytest.skip(
-            f"simbids SIF missing at {sif} — build the shim first:\n"
-            f"    REPRONIM={workdir}/repronim-containers-shim "
-            f"tmp-repronim-container-shim.sh bids-simbids"
+            f"simbids SIF missing at {sif} — seed the container dataset first:\n"
+            f"    datalad clone {CONTAINERS_URL} {workdir / CONTAINERS_DIRNAME}\n"
+            f"    datalad -C {workdir / CONTAINERS_DIRNAME} get {SIMBIDS_IMAGE}"
         )
     return sif
 

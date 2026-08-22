@@ -68,14 +68,18 @@
 # keeps the *container* for post-mortem. The uv cache lives there too, so a second run
 # resolves the campaign environment from disk instead of the network.
 #
-# Host-prep ONCE first — build the shim (the prod container-shim command; dies at
-# babs#383):
-#   REPRONIM=$MECHABABS_E2E_WORKDIR/repronim-containers-shim \
-#       tmp-repronim-container-shim.sh bids-simbids
+# Host-prep ONCE first — seed the container dataset the app configs name:
+#   datalad clone https://github.com/ReproNim/containers.git \
+#       $MECHABABS_E2E_WORKDIR/containers
+#   datalad -C $MECHABABS_E2E_WORKDIR/containers get images/bids/bids-simbids--0.0.3.sif
+# A plain ReproNim/containers clone, no shim: upstream carries the simbids image, and
+# babs main resolves it from the datalad-containers registration (PennLINC/babs#399).
 # It sits under $MECHABABS_E2E_WORKDIR (default /tmp/mechababs-e2e), visible through
-# the same-path workdir mount. The fake BIDS input is NOT host-prep — the rawdata
-# fixture generates it into the workdir cache, which persists across runs through the
-# same mount.
+# the same-path workdir mount, so the app configs' `../containers` resolves beside
+# each fixture study. Local rather than the GitHub URL because babs installs
+# `container.source` into every derivative it inits. The fake BIDS input is NOT
+# host-prep — the rawdata fixture generates it into the workdir cache, which persists
+# across runs through the same mount.
 #
 # Usage (extra args pass straight through to pytest):
 #   mechababs/testing/e2e/run_in_podman.sh
@@ -132,9 +136,10 @@ EXTRA_MOUNT=()
 MECHABABS_E2E_WORKDIR="${MECHABABS_E2E_WORKDIR:-/tmp/mechababs-e2e}"
 mkdir -p "$MECHABABS_E2E_WORKDIR"
 WORKDIR_MOUNT=(-v "$MECHABABS_E2E_WORKDIR:$MECHABABS_E2E_WORKDIR")
-if [ ! -d "$MECHABABS_E2E_WORKDIR/repronim-containers-shim/.datalad" ]; then
-    echo "note: no shim at $MECHABABS_E2E_WORKDIR/repronim-containers-shim — build it first:" >&2
-    echo "    REPRONIM=$MECHABABS_E2E_WORKDIR/repronim-containers-shim tmp-repronim-container-shim.sh bids-simbids" >&2
+if [ ! -e "$MECHABABS_E2E_WORKDIR/containers/images/bids/bids-simbids--0.0.3.sif" ]; then
+    echo "note: no container dataset at $MECHABABS_E2E_WORKDIR/containers — seed it first:" >&2
+    echo "    datalad clone https://github.com/ReproNim/containers.git $MECHABABS_E2E_WORKDIR/containers" >&2
+    echo "    datalad -C $MECHABABS_E2E_WORKDIR/containers get images/bids/bids-simbids--0.0.3.sif" >&2
 fi
 
 # One id per run, used for the container name so it is obvious which container produced
@@ -150,11 +155,13 @@ echo "    with rm -rf $MECHABABS_E2E_WORKDIR/e2e-study-*)" >&2
 UV_CACHE="$MECHABABS_E2E_WORKDIR/.uv-cache"
 mkdir -p "$UV_CACHE"
 
-# Forward BABS_SPEC (the babs ref under test) into the container if set, so the
-# scenario's campaign PINS that babs instead of the latest PyPI release. An https URL
-# must be public (the container clones anonymously); a local path works too, as long as
-# it is under $MECHABABS_E2E_WORKDIR, which is bind-mounted at the same path inside the
-# container. That is how an unpushed branch gets tested.
+# Forward BABS_SPEC (the babs ref under test) into the container if set. Unset, the
+# suite pins babs main itself (see the `babs_pin` fixture: the app configs name a
+# native ReproNim/containers layout, which only PennLINC/babs#399 resolves, and no
+# release carries it) — so this is the OVERRIDE, not the only way to get a sane pin.
+# An https URL must be public (the container clones anonymously); a local path works
+# too, as long as it is under $MECHABABS_E2E_WORKDIR, which is bind-mounted at the
+# same path inside the container. That is how an unpushed branch gets tested.
 BABS_SPEC_ENV=()
 [ -n "${BABS_SPEC:-}" ] && BABS_SPEC_ENV=(-e "BABS_SPEC=$BABS_SPEC")
 
