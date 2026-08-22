@@ -53,6 +53,7 @@ SOURCEDATA = f"sourcedata/{DATASET_ID}"
 # Driving the CLI
 # --------------------------------------------------------------------------
 
+
 def _run(cmd, cwd, *, env=None, check=True):
     """Run a command, log it, and return the completed process.
 
@@ -60,15 +61,15 @@ def _run(cmd, cwd, *, env=None, check=True):
     guard printed; it is logged either way, so `-s` still shows the run.
     """
     log.info("$ %s   (in %s)", " ".join(str(c) for c in cmd), cwd)
-    proc = subprocess.run(cmd, cwd=str(cwd), env=env, text=True,
-                          capture_output=True)
+    proc = subprocess.run(cmd, cwd=str(cwd), env=env, text=True, capture_output=True)
     if proc.stdout:
         log.info("stdout:\n%s", proc.stdout)
     if proc.stderr:
         log.info("stderr:\n%s", proc.stderr)
     if check:
         assert proc.returncode == 0, (
-            f"{cmd[0]} failed ({proc.returncode}):\n{proc.stderr}")
+            f"{cmd[0]} failed ({proc.returncode}):\n{proc.stderr}"
+        )
     return proc
 
 
@@ -84,7 +85,8 @@ def _driver_mechababs():
     exe = Path(sys.executable).parent / "mechababs"
     assert exe.is_file(), (
         f"no `mechababs` beside {sys.executable} — the code under test is not "
-        "installed in the environment running this suite")
+        "installed in the environment running this suite"
+    )
     return str(exe)
 
 
@@ -110,24 +112,40 @@ def _dispatch(study, verb, source_dataset, app_config, *, check=True):
     `mechababs-inner`) is the real one either way.
     """
     env_sh = campaign_mod.env_path(study, LABEL)
-    script = (f'. "{env_sh}" && python -c '
-              f"'import sys; from mechababs import dispatch; "
-              f"getattr(dispatch, sys.argv[1])(*sys.argv[2:])' "
-              f'"$1" "$2" "$3" "$4" "$5"')
-    return _run(["bash", "-c", script, "e2e-dispatch",
-                 verb, str(study), LABEL, source_dataset, app_config],
-                study, check=check)
+    script = (
+        f'. "{env_sh}" && python -c '
+        f"'import sys; from mechababs import dispatch; "
+        f"getattr(dispatch, sys.argv[1])(*sys.argv[2:])' "
+        f'"$1" "$2" "$3" "$4" "$5"'
+    )
+    return _run(
+        [
+            "bash",
+            "-c",
+            script,
+            "e2e-dispatch",
+            verb,
+            str(study),
+            LABEL,
+            source_dataset,
+            app_config,
+        ],
+        study,
+        check=check,
+    )
 
 
 def _git(cwd, *args):
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                          text=True, capture_output=True).stdout
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, text=True, capture_output=True
+    ).stdout
 
 
 def _assert_clean(study, phase):
     assert not _git(study, "status", "--porcelain").strip(), (
         f"study dirty after {phase} — mechababs left work uncommitted:\n"
-        + _git(study, "status", "--porcelain"))
+        + _git(study, "status", "--porcelain")
+    )
 
 
 def _state_rows(study, label):
@@ -143,12 +161,13 @@ def _run_record(study):
     record says *which command*, from *where*, declaring *what*.
     """
     body = _git(study, "log", "-1", "--format=%b")
-    return json.loads(body[body.index("{"):body.rindex("}") + 1])
+    return json.loads(body[body.index("{") : body.rindex("}") + 1])
 
 
 # --------------------------------------------------------------------------
 # Stages
 # --------------------------------------------------------------------------
+
 
 def _stage_campaign_init(study, cluster_config, app_configs, mechababs_pin, babs_pin):
     """`campaign init` builds the campaign footprint and its environment.
@@ -158,14 +177,24 @@ def _stage_campaign_init(study, cluster_config, app_configs, mechababs_pin, babs
     dev run and a future `test-cluster` both supply, differing only in what it points
     at.
     """
-    _run([
-        _driver_mechababs(), "campaign", "init", LABEL,
-        "--apps", f"{app_configs / f'{ANCHOR}.yaml'},{app_configs / f'{CHAIN}.yaml'}",
-        "--cluster", str(cluster_config),
-        "--mechababs", mechababs_pin,
-        *(["--babs", babs_pin] if babs_pin else []),
-        "--limit", "1",
-    ], cwd=study)
+    _run(
+        [
+            _driver_mechababs(),
+            "campaign",
+            "init",
+            LABEL,
+            "--apps",
+            f"{app_configs / f'{ANCHOR}.yaml'},{app_configs / f'{CHAIN}.yaml'}",
+            "--cluster",
+            str(cluster_config),
+            "--mechababs",
+            mechababs_pin,
+            *(["--babs", babs_pin] if babs_pin else []),
+            "--limit",
+            "1",
+        ],
+        cwd=study,
+    )
 
     campaign = campaign_mod.campaign_dir(study, LABEL)
     assert campaign.is_dir(), f"campaign not created at {campaign}"
@@ -175,15 +204,18 @@ def _stage_campaign_init(study, cluster_config, app_configs, mechababs_pin, babs
     # study alone.
     for name in (ANCHOR, CHAIN):
         assert (campaign_mod.apps_dir(study, LABEL) / f"{name}.yaml").is_file(), (
-            f"{name} was not copied into the campaign")
+            f"{name} was not copied into the campaign"
+        )
     assert (campaign_mod.clusters_dir(study, LABEL) / cluster_config.name).is_file(), (
-        "the cluster config was not copied into the campaign")
+        "the cluster config was not copied into the campaign"
+    )
 
     config = yaml.safe_load(campaign_mod.config_path(study, LABEL).read_text())
     assert config["label"] == LABEL
-    assert config["apps"] == [f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml",
-                              f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"], (
-        "campaign.yaml lost the bundle or its order")
+    assert config["apps"] == [
+        f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml",
+        f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml",
+    ], "campaign.yaml lost the bundle or its order"
     assert config["limit"] == 1, "--limit did not reach campaign.yaml"
 
     # The lock is the provenance record: it must exist, be committed, and name the
@@ -195,14 +227,18 @@ def _stage_campaign_init(study, cluster_config, app_configs, mechababs_pin, babs
     # An environment that was really built, not just declared.
     venv = campaign_mod.venv_path(study, LABEL)
     assert (venv / "bin" / "mechababs").is_file(), (
-        "the campaign venv has no mechababs — uv sync did not install the pin")
+        "the campaign venv has no mechababs — uv sync did not install the pin"
+    )
 
     # Header only. Which source datasets a campaign acts on is add-dataset's
     # explicit, separate step — never implied by init.
     assert _state_rows(study, LABEL) == [], (
-        "campaign init wrote cells; selection belongs to add-dataset")
-    assert campaign_mod.state_path(study, LABEL).read_text() == \
-        campaign_mod.initial_header()
+        "campaign init wrote cells; selection belongs to add-dataset"
+    )
+    assert (
+        campaign_mod.state_path(study, LABEL).read_text()
+        == campaign_mod.initial_header()
+    )
 
     _assert_clean(study, "campaign init")
 
@@ -219,8 +255,14 @@ def _stage_env_sh_selects_and_activates(study):
     assert sourced.stdout.startswith("mechababs"), sourced.stdout
 
     env_sh = campaign_mod.env_path(study, LABEL)
-    which = _run(["bash", "-c", f'. "{env_sh}" && echo "$MECHABABS_CAMPAIGN" '
-                                f'&& command -v mechababs'], study)
+    which = _run(
+        [
+            "bash",
+            "-c",
+            f'. "{env_sh}" && echo "$MECHABABS_CAMPAIGN" && command -v mechababs',
+        ],
+        study,
+    )
     label, exe = which.stdout.split()
     assert label == LABEL, f"env.sh selected {label!r}, not {LABEL!r}"
     # Resolved on both sides: env.sh derives the venv from its own location with
@@ -228,7 +270,8 @@ def _stage_env_sh_selects_and_activates(study):
     # (a scratch symlink is normal on a cluster) would otherwise fail a string compare.
     expected = (campaign_mod.venv_path(study, LABEL) / "bin" / "mechababs").resolve()
     assert Path(exe).resolve() == expected, (
-        f"env.sh activated something other than the campaign venv: {exe}")
+        f"env.sh activated something other than the campaign venv: {exe}"
+    )
 
     refused = _run(
         [_driver_mechababs(), "add-dataset", "--sourcedata", SOURCEDATA],
@@ -237,7 +280,8 @@ def _stage_env_sh_selects_and_activates(study):
         check=False,
     )
     assert refused.returncode != 0, (
-        "an un-sourced mechababs was allowed to operate on the campaign")
+        "an un-sourced mechababs was allowed to operate on the campaign"
+    )
     assert "not running in the venv" in refused.stderr, refused.stderr
 
 
@@ -259,18 +303,21 @@ def _stage_add_dataset(study):
         # single-session, so it is subject-level and n_sessions is BLANK — not 0,
         # which would read as "sessions, none of them".
         assert row["source_dataset"] == SOURCEDATA, (
-            "source_dataset is not the study-relative path the user named")
+            "source_dataset is not the study-relative path the user named"
+        )
         assert row["processing_level"] == "subject", row
         assert int(row["n_subjects"]) > 0, "the sniff found no subjects"
         assert row["n_sessions"] == "", (
-            "a subject-level dataset reported a session count")
+            "a subject-level dataset reported a session count"
+        )
         # Derived columns empty is what makes the next tick scaffold the cell.
         assert row["babs"] == "" and row["merged"] == "", row
 
     assert anchor["depends_on"] == "", "the anchor app declares no dependency"
     assert chain["depends_on"] == f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml", (
         "depends_on was not resolved from the declared stem to the producer's "
-        f"config path: {chain['depends_on']!r}")
+        f"config path: {chain['depends_on']!r}"
+    )
 
     # The commit is path-scoped to the campaign dir: mechababs' change to a study is
     # additive, so nothing upstream authored is touched by an add.
@@ -278,14 +325,16 @@ def _stage_add_dataset(study):
     campaign_rel = campaign_mod.campaign_dir(study, LABEL).relative_to(study).as_posix()
     assert touched, "add-dataset committed nothing"
     assert all(p.startswith(campaign_rel) for p in touched), (
-        f"add-dataset's commit reaches outside the campaign dir: {touched}")
+        f"add-dataset's commit reaches outside the campaign dir: {touched}"
+    )
 
     _assert_clean(study, "add-dataset")
 
     # A dataset is selected whole or not at all — the app bundle is fixed at init, so
     # re-adding refuses rather than rewriting or duplicating cells.
-    again = _in_campaign(study, LABEL, "add-dataset", "--sourcedata", SOURCEDATA,
-                         check=False)
+    again = _in_campaign(
+        study, LABEL, "add-dataset", "--sourcedata", SOURCEDATA, check=False
+    )
     assert again.returncode != 0, "re-adding a selected dataset was allowed"
     assert "already selected" in again.stderr, again.stderr
     assert len(_state_rows(study, LABEL)) == 2, "the refused re-add still wrote rows"
@@ -322,29 +371,35 @@ def _stage_scaffold(study):
     assert derivative.is_dir(), f"no derivative at {derivative}"
     assert (derivative / ".babs").is_dir(), "not a babs project — babs init did not run"
     assert (derivative / "code" / "processing_inclusion.csv").is_file(), (
-        "babs recorded no inclusion; --list-sub-file never reached it")
+        "babs recorded no inclusion; --list-sub-file never reached it"
+    )
 
     # Registered as a real subdataset of the study, not a stray directory: that
     # registration is the study's record that this derivative is part of it.
     gitlink = _git(study, "ls-tree", "HEAD", str(derivative.relative_to(study))).split()
     assert gitlink[:2] == ["160000", "commit"], (
-        f"the derivative is not registered as a subdataset: {gitlink}")
+        f"the derivative is not registered as a subdataset: {gitlink}"
+    )
 
     # The pin records what was REQUESTED; babs's own processing_inclusion.csv records
     # what it could run. Their diff is what catches a selected subject the data lacks.
-    pin = campaign_mod.inclusions_dir(study, LABEL) / \
-        f"{SOURCEDATA.replace('/', '-')}_{ANCHOR}.csv"
+    pin = (
+        campaign_mod.inclusions_dir(study, LABEL)
+        / f"{SOURCEDATA.replace('/', '-')}_{ANCHOR}.csv"
+    )
     assert pin.is_file(), f"no inclusion pinned at {pin}"
     requested = pin.read_text().split()
     assert requested[0] == "sub_id" and len(requested) == 2, (
-        f"--limit 1 should pin exactly one subject, got {requested}")
+        f"--limit 1 should pin exactly one subject, got {requested}"
+    )
 
     # The cell's durable fact, and only that cell's.
     rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
     assert rows[anchor_app]["babs"] == f"derivatives/{ANCHOR}+{DATASET_ID}", rows
     assert rows[anchor_app]["merged"] == "", "scaffold claimed a merge"
     assert rows[f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"]["babs"] == "", (
-        "scaffolding one cell advanced its sibling")
+        "scaffolding one cell advanced its sibling"
+    )
 
     # The point of the whole chunk: the transition landed as a re-executable
     # command, not as a save with an adjective on it.
@@ -354,9 +409,11 @@ def _stage_scaffold(study):
     assert record["pwd"] == ".", record
     assert record["cmd"] == (
         f"mechababs-inner scaffold --campaign {LABEL} "
-        f"--source-dataset {SOURCEDATA} --app {anchor_app}"), record["cmd"]
+        f"--source-dataset {SOURCEDATA} --app {anchor_app}"
+    ), record["cmd"]
     assert str(study) not in record["cmd"], (
-        "the recorded command carries this machine's path, so it re-executes nowhere")
+        "the recorded command carries this machine's path, so it re-executes nowhere"
+    )
 
     # Declared outputs, so this also says nothing undeclared was swept in.
     assert set(record["outputs"]) == {
@@ -394,9 +451,9 @@ def _stage_dependent_cell_waits_for_its_producer(study):
     _assert_clean(study, "the refused dependent cell")
 
 
-
-def test_spine(study, cluster_config, app_configs, mechababs_pin, babs_pin,
-               simbids_sif):
+def test_spine(
+    study, cluster_config, app_configs, mechababs_pin, babs_pin, simbids_sif
+):
     """The whole spine, in order. Add later chunks' stages to the bottom.
 
     `simbids_sif` is requested because `scaffold` really inits against that container
@@ -412,19 +469,30 @@ def test_spine(study, cluster_config, app_configs, mechababs_pin, babs_pin,
     _stage_dependent_cell_waits_for_its_producer(study)
 
 
-def test_campaign_init_refuses_outside_a_study(tmp_path, cluster_config, app_configs,
-                                               mechababs_pin):
+def test_campaign_init_refuses_outside_a_study(
+    tmp_path, cluster_config, app_configs, mechababs_pin
+):
     """mechababs operates on a study that already exists, and never authors one.
 
     The cheapest possible end-to-end proof of that boundary: point `campaign init` at
     a plain directory and it must refuse, rather than helpfully making it a dataset.
     """
-    proc = _run([
-        _driver_mechababs(), "campaign", "init", LABEL,
-        "--apps", str(app_configs / f"{ANCHOR}.yaml"),
-        "--cluster", str(cluster_config),
-        "--mechababs", mechababs_pin,
-    ], cwd=tmp_path, check=False)
+    proc = _run(
+        [
+            _driver_mechababs(),
+            "campaign",
+            "init",
+            LABEL,
+            "--apps",
+            str(app_configs / f"{ANCHOR}.yaml"),
+            "--cluster",
+            str(cluster_config),
+            "--mechababs",
+            mechababs_pin,
+        ],
+        cwd=tmp_path,
+        check=False,
+    )
     assert proc.returncode != 0, "campaign init created a campaign outside a study"
     assert "not a study" in proc.stderr, proc.stderr
     assert not (tmp_path / campaign_mod.MECHABABS_DIR).exists()

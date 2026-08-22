@@ -16,7 +16,9 @@ def read_status(project):
     """Run ``babs status --json <project>`` and ``json.loads`` its stdout (a dict)."""
     out = subprocess.run(
         ["babs", "status", "--json", str(project)],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
     return json.loads(out)
 

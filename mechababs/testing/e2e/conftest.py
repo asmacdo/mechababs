@@ -238,8 +238,14 @@ def _generate_fake_bids(dest, sif):
     shutil.rmtree(gen)
     subprocess.run(["datalad", "create", "--force", str(dest)], check=True)
     subprocess.run(
-        ["datalad", "save", "-d", str(dest), "-m",
-         f"simbids phantom BIDS ({DATASET_ID})"],
+        [
+            "datalad",
+            "save",
+            "-d",
+            str(dest),
+            "-m",
+            f"simbids phantom BIDS ({DATASET_ID})",
+        ],
         check=True,
     )
 
@@ -300,8 +306,14 @@ def _build_study(dest, rawdata):
     _write_subjects_tsv(dest / "sourcedata" / "sourcedata+subjects.tsv", src)
     _write_study_description(dest / "dataset_description.json")
     subprocess.run(
-        ["datalad", "save", "-d", str(dest), "-m",
-         f"fake study-{DATASET_ID} wrapping the simbids phantom"],
+        [
+            "datalad",
+            "save",
+            "-d",
+            str(dest),
+            "-m",
+            f"fake study-{DATASET_ID} wrapping the simbids phantom",
+        ],
         check=True,
     )
 
@@ -319,12 +331,14 @@ def _write_subjects_tsv(path, raw):
         w.writeheader()
         for sub in subs:
             datatypes = sorted(d.name for d in sub.iterdir() if d.is_dir())
-            w.writerow({
-                "subject_id": sub.name,
-                "datatypes": ",".join(datatypes),
-                "t1w_num": len(list(sub.glob("anat/*_T1w.nii*"))),
-                "bold_num": len(list(sub.glob("func/*_bold.nii*"))),
-            })
+            w.writerow(
+                {
+                    "subject_id": sub.name,
+                    "datatypes": ",".join(datatypes),
+                    "t1w_num": len(list(sub.glob("anat/*_T1w.nii*"))),
+                    "bold_num": len(list(sub.glob("func/*_bold.nii*"))),
+                }
+            )
 
 
 def _write_study_description(path):
@@ -332,9 +346,15 @@ def _write_study_description(path):
     shape, which mechababs never authors or modifies in prod (it clones it). Here
     we synthesize the same shape so the fixture is faithful.
     """
-    path.write_text(json.dumps({
-        "Name": f"study-{DATASET_ID}",
-        "BIDSVersion": "1.9.0",
-        "DatasetType": "study",
-        "GeneratedBy": [{"Name": "openneuro-studies"}],
-    }, indent=2) + "\n")
+    path.write_text(
+        json.dumps(
+            {
+                "Name": f"study-{DATASET_ID}",
+                "BIDSVersion": "1.9.0",
+                "DatasetType": "study",
+                "GeneratedBy": [{"Name": "openneuro-studies"}],
+            },
+            indent=2,
+        )
+        + "\n"
+    )

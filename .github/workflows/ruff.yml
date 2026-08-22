@@ -1,0 +1,38 @@
+name: Ruff
+
+# Two steps, because they check different things: `check` is the linter, `format
+# --check` is the formatter, and a repo can pass either while failing the other.
+#
+# Ruff is installed at an EXACT version. An unpinned `pip install ruff` makes CI
+# run whatever released that morning, and ruff's default rule set moves between
+# releases -- so an unpinned job reds pull requests over findings that have
+# nothing to do with the diff under review. The same version is required in
+# pyproject.toml, so a local run and this job agree by construction.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Keep this version in step with `[tool.ruff] required-version` in
+      # pyproject.toml; they are deliberately the same number in two places, and
+      # `required-version` is what makes a mismatch fail loudly instead of
+      # quietly reformatting differently.
+      - name: Install ruff (pinned)
+        run: pip install ruff==0.16.4
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .

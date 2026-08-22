@@ -11,14 +11,17 @@ import pytest
 from mechababs import select
 
 MRIQC = {"require_datatypes": ["anat"], "require_positive": ["t1w_num"]}
-FMRIPREP = {"require_datatypes": ["anat", "func"], "require_positive": ["t1w_num", "bold_num"]}
+FMRIPREP = {
+    "require_datatypes": ["anat", "func"],
+    "require_positive": ["t1w_num", "bold_num"],
+}
 
 # subject-level metadata: one row per subject
 SUBJECTS_TSV = (
     "subject_id\tdatatypes\tt1w_num\tbold_num\n"
-    "sub-01\tanat,func\t1\t3\n"   # eligible for both
-    "sub-02\tanat\t1\t0\n"        # mriqc yes; fmriprep no (no func/bold)
-    "sub-03\tfunc\t0\t2\n"        # neither (no anat/t1w)
+    "sub-01\tanat,func\t1\t3\n"  # eligible for both
+    "sub-02\tanat\t1\t0\n"  # mriqc yes; fmriprep no (no func/bold)
+    "sub-03\tfunc\t0\t2\n"  # neither (no anat/t1w)
 )
 
 
@@ -52,7 +55,7 @@ def test_aggregation_merges_modality_split_rows(tmp_path):
         "subject_id\tsession_id\tdatatypes\tt1w_num\tbold_num\n"
         "sub-01\tses-01\tanat\t1\t0\n"
         "sub-01\tses-01\tfmap,func\t0\t2\n"
-        "sub-02\tses-01\tanat\t1\t0\n"        # anat only -> fmriprep no
+        "sub-02\tses-01\tanat\t1\t0\n"  # anat only -> fmriprep no
     )
     out = tmp_path / "inc.csv"
     select.generate_inclusion(tsv, FMRIPREP, out, processing_level="session")
@@ -73,20 +76,25 @@ def test_subject_level_aggregates_across_sessions(tmp_path):
 
 def test_limit_is_reproducible_first_n(tmp_path):
     out = tmp_path / "inc.csv"
-    select.generate_inclusion(SUBJECTS_TSV, MRIQC, out, processing_level="subject", limit=1)
-    assert _subs(out) == ["sub-01"]   # sorted, so "first 1" is deterministic
+    select.generate_inclusion(
+        SUBJECTS_TSV, MRIQC, out, processing_level="subject", limit=1
+    )
+    assert _subs(out) == ["sub-01"]  # sorted, so "first 1" is deterministic
 
 
 def test_no_eligible_raises(tmp_path):
     tsv = "subject_id\tdatatypes\tt1w_num\tbold_num\nsub-01\tfunc\t0\t2\n"
     with pytest.raises(RuntimeError):
-        select.generate_inclusion(tsv, MRIQC, tmp_path / "inc.csv", processing_level="subject")
+        select.generate_inclusion(
+            tsv, MRIQC, tmp_path / "inc.csv", processing_level="subject"
+        )
 
 
 def test_session_level_on_subjects_only_raises(tmp_path):
     with pytest.raises(RuntimeError):
-        select.generate_inclusion(SUBJECTS_TSV, MRIQC, tmp_path / "inc.csv",
-                                  processing_level="session")
+        select.generate_inclusion(
+            SUBJECTS_TSV, MRIQC, tmp_path / "inc.csv", processing_level="session"
+        )
 
 
 # --- the add-dataset sniff --------------------------------------------------
@@ -109,20 +117,29 @@ MULTI_SOURCE_TSV = (
 def test_sniff_counts_subjects_of_a_subject_level_dataset():
     rows = select.rows_for_source_dataset(MULTI_SOURCE_TSV, "ds000001")
     assert select.summarize(rows) == {
-        "processing_level": "subject", "n_subjects": "2", "n_sessions": ""}
+        "processing_level": "subject",
+        "n_subjects": "2",
+        "n_sessions": "",
+    }
 
 
 def test_sniff_counts_sessions_across_subjects():
     rows = select.rows_for_source_dataset(MULTI_SOURCE_TSV, "ds000002")
     assert select.summarize(rows) == {
-        "processing_level": "session", "n_subjects": "2", "n_sessions": "3"}
+        "processing_level": "session",
+        "n_subjects": "2",
+        "n_sessions": "3",
+    }
 
 
 def test_a_lone_source_dataset_needs_no_name_match():
     # a generic slot (sourcedata/raw) is not the dataset's id, so it must not be
     # matched against one — the study describes a single source dataset either way
     tsv = "source_id\tsubject_id\tdatatypes\tt1w_num\nds000001\tsub-01\tanat\t1\n"
-    assert select.summarize(select.rows_for_source_dataset(tsv, "raw"))["n_subjects"] == "1"
+    assert (
+        select.summarize(select.rows_for_source_dataset(tsv, "raw"))["n_subjects"]
+        == "1"
+    )
 
 
 def test_a_tsv_without_a_source_id_column_is_the_lone_dataset_too():
@@ -142,5 +159,7 @@ def test_an_unknown_source_dataset_is_refused_with_the_known_ids():
 def test_sniff_reads_the_study_on_disk(tmp_path):
     (tmp_path / "sourcedata").mkdir()
     (tmp_path / select.SUBJECTS_TSV).write_text(MULTI_SOURCE_TSV)
-    assert select.sniff_source_dataset(tmp_path, "ds000002")["processing_level"] == \
-        "session"
+    assert (
+        select.sniff_source_dataset(tmp_path, "ds000002")["processing_level"]
+        == "session"
+    )

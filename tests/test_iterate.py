@@ -29,8 +29,10 @@ def _study(tmp_path, gitmodules):
 
 def test_id_named_section_prod(tmp_path):
     study = _study(tmp_path, ID_NAMED)
-    assert (iterate.study_sourcedata_url(study, "ds005896")
-            == "https://github.com/OpenNeuroDatasets/ds005896.git")
+    assert (
+        iterate.study_sourcedata_url(study, "ds005896")
+        == "https://github.com/OpenNeuroDatasets/ds005896.git"
+    )
 
 
 def test_path_named_section_fixture(tmp_path):

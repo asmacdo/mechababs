@@ -46,9 +46,9 @@ from mechababs.utils import campaign_save_scope
 # than a requirements file in the repo, because this command may run from an ephemeral
 # uvx install, which has the mechababs *package* but no repo file to read.
 CAMPAIGN_EXTRAS = [
-    "con-duct",     # usage/resource logs alongside every run
-    "visidata",     # interactive TSV viewer for the statefile
-    "pytest",       # runs the packaged e2e scenario behind `mechababs test-cluster`
+    "con-duct",  # usage/resource logs alongside every run
+    "visidata",  # interactive TSV viewer for the statefile
+    "pytest",  # runs the packaged e2e scenario behind `mechababs test-cluster`
 ]
 
 # A label names a directory and is exported as an env var, so keep it boring.
@@ -70,6 +70,7 @@ UV = "uv"
 # Pinning the tools
 # --------------------------------------------------------------------------
 
+
 def parse_source_spec(spec, what):
     """Split a ``URL@REF`` pin. ``URL`` is anything git clones, a local path included.
 
@@ -78,8 +79,10 @@ def parse_source_spec(spec, what):
     """
     url, sep, ref = spec.rpartition("@")
     if not sep or not url or not ref:
-        sys.exit(f"--{what} expects URL@REF (e.g. "
-                 f"https://github.com/PennLINC/babs.git@main), got: {spec}")
+        sys.exit(
+            f"--{what} expects URL@REF (e.g. "
+            f"https://github.com/PennLINC/babs.git@main), got: {spec}"
+        )
     return url, ref
 
 
@@ -116,8 +119,10 @@ def running_mechababs_pin():
         # install metadata to read, and an unsourced "mechababs" requirement
         # would send uv to PyPI, where mechababs does not exist — a confusing
         # resolver error far from the cause. Fail here, naming the fix.
-        sys.exit("cannot detect the running mechababs install (no distribution "
-                 "metadata) — pass --mechababs URL@REF to pin it explicitly")
+        sys.exit(
+            "cannot detect the running mechababs install (no distribution "
+            "metadata) — pass --mechababs URL@REF to pin it explicitly"
+        )
     raw = dist.read_text("direct_url.json")
     if not raw:
         return f"mechababs=={dist.version}", None
@@ -125,20 +130,23 @@ def running_mechababs_pin():
     url = direct.get("url", "")
     if "vcs_info" in direct:
         vcs = direct["vcs_info"]
-        return "mechababs", {"git": url, "rev": vcs.get("commit_id")
-                             or vcs.get("requested_revision")}
+        return "mechababs", {
+            "git": url,
+            "rev": vcs.get("commit_id") or vcs.get("requested_revision"),
+        }
     if "dir_info" in direct:
         path = Path(urllib.parse.unquote(urllib.parse.urlparse(url).path))
         source = {"path": str(path)}
         if direct["dir_info"].get("editable"):
             source["editable"] = True
         return "mechababs", source
-    return "mechababs", {"url": url}          # a wheel/sdist by URL
+    return "mechababs", {"url": url}  # a wheel/sdist by URL
 
 
 # --------------------------------------------------------------------------
 # Staging the user's configs
 # --------------------------------------------------------------------------
+
 
 def stage_config(dest_dir, arg, what):
     """Copy one config into the campaign; return its filename.
@@ -156,14 +164,16 @@ def stage_config(dest_dir, arg, what):
             sys.exit(f"{what} config URL has no filename: {arg}")
         dest = dest_dir / name
         print(f"+ fetch {arg} -> {dest}", file=sys.stderr)
-        with urllib.request.urlopen(arg) as response:      # http/https only, checked above
+        with urllib.request.urlopen(arg) as response:  # http/https only, checked above
             dest.write_bytes(response.read())
         return name
     source = Path(arg)
     if not source.is_file():
-        sys.exit(f"{what} config not found: {arg}\n"
-                 f"App and cluster configs are given by path or URL — mechababs "
-                 f"ships examples/ as starters to copy, not a library to name.")
+        sys.exit(
+            f"{what} config not found: {arg}\n"
+            f"App and cluster configs are given by path or URL — mechababs "
+            f"ships examples/ as starters to copy, not a library to name."
+        )
     dest = dest_dir / source.name
     shutil.copy(source, dest)
     return source.name
@@ -186,7 +196,7 @@ def declared_depends_on(config_path):
     dependency (mriqc gating fmriprep) is never an input at all.
     """
     config = yaml.safe_load(Path(config_path).read_text()) or {}
-    return ((config.get("mechababs") or {}).get("depends_on") or "")
+    return (config.get("mechababs") or {}).get("depends_on") or ""
 
 
 def cluster_env_constraints(config_path):
@@ -208,10 +218,13 @@ def cluster_env_constraints(config_path):
     constraints = config.get("env_constraints")
     if not constraints:
         return []
-    if not isinstance(constraints, list) or \
-            not all(isinstance(c, str) for c in constraints):
-        sys.exit(f"env_constraints in {config_path} must be a LIST of version "
-                 f"specifiers (e.g. `- pandas<=2.3.2`), got: {constraints!r}")
+    if not isinstance(constraints, list) or not all(
+        isinstance(c, str) for c in constraints
+    ):
+        sys.exit(
+            f"env_constraints in {config_path} must be a LIST of version "
+            f"specifiers (e.g. `- pandas<=2.3.2`), got: {constraints!r}"
+        )
     return list(constraints)
 
 
@@ -226,8 +239,10 @@ def resolve_apps(dest_dir, app_args):
     names = [app_name(Path(urllib.parse.urlparse(a).path or a).name) for a in app_args]
     duplicates = {n for n in names if names.count(n) > 1}
     if duplicates:
-        sys.exit(f"duplicate app config(s): {', '.join(sorted(duplicates))} — "
-                 f"each app in a campaign needs a distinct name (the filename stem)")
+        sys.exit(
+            f"duplicate app config(s): {', '.join(sorted(duplicates))} — "
+            f"each app in a campaign needs a distinct name (the filename stem)"
+        )
 
     apps = []
     for arg in app_args:
@@ -238,8 +253,10 @@ def resolve_apps(dest_dir, app_args):
     known = {name for _, name, _ in apps}
     for _, name, upstream in apps:
         if upstream and upstream not in known:
-            sys.exit(f"app {name!r} declares depends_on: {upstream!r}, which is not "
-                     f"in this campaign ({', '.join(sorted(known))})")
+            sys.exit(
+                f"app {name!r} declares depends_on: {upstream!r}, which is not "
+                f"in this campaign ({', '.join(sorted(known))})"
+            )
     return apps
 
 
@@ -247,8 +264,9 @@ def resolve_apps(dest_dir, app_args):
 # The campaign environment
 # --------------------------------------------------------------------------
 
+
 def _toml_str(value):
-    return json.dumps(str(value))       # TOML basic strings are JSON-compatible here
+    return json.dumps(str(value))  # TOML basic strings are JSON-compatible here
 
 
 def _toml_inline(source):
@@ -256,8 +274,9 @@ def _toml_inline(source):
     return "{ " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in source.items()) + " }"
 
 
-def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None,
-                     env_constraints=()):
+def render_pyproject(
+    label, mechababs_req, mechababs_source, babs_source=None, env_constraints=()
+):
     """The campaign's dependency declaration — a uv *virtual* project.
 
     No ``[build-system]``: the campaign is not a package to build, it is a set of
@@ -297,7 +316,9 @@ def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None,
     lines += ["]"]
     if sources:
         lines += ["", "[tool.uv.sources]"]
-        lines += [f"{name} = {_toml_inline(source)}" for name, source in sources.items()]
+        lines += [
+            f"{name} = {_toml_inline(source)}" for name, source in sources.items()
+        ]
     if env_constraints:
         lines += [
             "",
@@ -353,8 +374,9 @@ def run_uv(*args, campaign, cluster_file):
     """
     cmd = [UV, *[str(a) for a in args]]
     print("+ " + " ".join(cmd), file=sys.stderr)
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
     captured = []
     for line in proc.stdout:
         sys.stderr.write(line)
@@ -385,7 +407,8 @@ def build_env(campaign, label, cluster_file):
     run_uv("sync", "--project", str(campaign), "--frozen", **uv)
     venv = campaign / campaign_mod.VENV_DIRNAME
     campaign_mod.write_env_stamp(
-        venv, label, (campaign / campaign_mod.UV_LOCK_FILENAME).read_text())
+        venv, label, (campaign / campaign_mod.UV_LOCK_FILENAME).read_text()
+    )
     return venv
 
 
@@ -418,33 +441,48 @@ unset _mechababs_self _mechababs_campaign
 def write_env_sh(campaign, label):
     """The one-step select-and-activate script (committed; see the template)."""
     path = campaign / campaign_mod.ENV_FILENAME
-    path.write_text(ENV_SH_TEMPLATE.format(
-        label=label,
-        label_sh=f"'{label}'",
-        rel=f"{campaign_mod.MECHABABS_DIR}/{campaign_mod.CAMPAIGNS_DIRNAME}/"
+    path.write_text(
+        ENV_SH_TEMPLATE.format(
+            label=label,
+            label_sh=f"'{label}'",
+            rel=f"{campaign_mod.MECHABABS_DIR}/{campaign_mod.CAMPAIGNS_DIRNAME}/"
             f"{label}/{campaign_mod.ENV_FILENAME}",
-        venv=campaign_mod.VENV_DIRNAME,
-    ))
+            venv=campaign_mod.VENV_DIRNAME,
+        )
+    )
     return path
 
 
 # --------------------------------------------------------------------------
 
-def init(study, label, app_args, cluster_arg, *, limit=None,
-         babs_spec=None, mechababs_spec=None):
+
+def init(
+    study,
+    label,
+    app_args,
+    cluster_arg,
+    *,
+    limit=None,
+    babs_spec=None,
+    mechababs_spec=None,
+):
     """Create campaign ``label`` in ``study``. Returns the campaign directory.
 
     Writes only under ``.mechababs/campaigns/<label>/`` — mechababs' change to a
     study is additive, and never touches what upstream authored.
     """
     if not LABEL_RE.match(label):
-        sys.exit(f"invalid campaign label {label!r} — it names a directory and is "
-                 f"exported as an env var; use letters, digits, '.', '_', '-'")
+        sys.exit(
+            f"invalid campaign label {label!r} — it names a directory and is "
+            f"exported as an env var; use letters, digits, '.', '_', '-'"
+        )
     campaign = campaign_mod.campaign_dir(study, label)
     if campaign.exists():
-        sys.exit(f"campaign {label!r} already exists: {campaign}\n"
-                 f"A campaign is a config epoch — start another one under a new "
-                 f"label rather than editing this one's identity.")
+        sys.exit(
+            f"campaign {label!r} already exists: {campaign}\n"
+            f"A campaign is a config epoch — start another one under a new "
+            f"label rather than editing this one's identity."
+        )
     if not app_args:
         sys.exit("--apps must name at least one BIDS-App config")
 
@@ -464,44 +502,58 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
         # alone. Untracked-but-not-ignored files here would dirty the study, which
         # the clean-in guards read as unattributable work.
         (campaign / ".gitignore").write_text(
-            f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.FLOCK_FILENAME}\n")
+            f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.FLOCK_FILENAME}\n"
+        )
 
         apps = resolve_apps(campaign / campaign_mod.APPS_DIRNAME, app_args)
         cluster_file = stage_config(
-            campaign / campaign_mod.CLUSTERS_DIRNAME, cluster_arg, "cluster")
+            campaign / campaign_mod.CLUSTERS_DIRNAME, cluster_arg, "cluster"
+        )
 
         config = {
             "label": label,
-            "apps": [f"{campaign_mod.APPS_DIRNAME}/{filename}"
-                     for filename, _, _ in apps],
+            "apps": [
+                f"{campaign_mod.APPS_DIRNAME}/{filename}" for filename, _, _ in apps
+            ],
             "cluster": f"{campaign_mod.CLUSTERS_DIRNAME}/{cluster_file}",
             "limit": limit,
         }
         (campaign / campaign_mod.CONFIG_FILENAME).write_text(
-            yaml.safe_dump(config, sort_keys=False))
+            yaml.safe_dump(config, sort_keys=False)
+        )
 
         # Header only: which source datasets a campaign acts on is an explicit
         # selection, made by `add-dataset`, not implied by init.
         (campaign / campaign_mod.STATE_FILENAME).write_text(
-            campaign_mod.initial_header())
+            campaign_mod.initial_header()
+        )
 
         if mechababs_spec:
-            mechababs_req, mechababs_source = "mechababs", git_source(
-                *parse_source_spec(mechababs_spec, "mechababs"))
+            mechababs_req, mechababs_source = (
+                "mechababs",
+                git_source(*parse_source_spec(mechababs_spec, "mechababs")),
+            )
         else:
             mechababs_req, mechababs_source = running_mechababs_pin()
         # No --babs: babs stays a plain dependency, so uv resolves the latest release
         # from PyPI and freezes that version in the lock. A git ref is the override,
         # for running a PR branch (or a local one) through a campaign.
-        babs_source = (git_source(*parse_source_spec(babs_spec, "babs"))
-                       if babs_spec else None)
+        babs_source = (
+            git_source(*parse_source_spec(babs_spec, "babs")) if babs_spec else None
+        )
         # The STAGED copy, not the argument: that is the file committed with the
         # campaign, so it is what a failure should tell the user to edit — and the same
         # read whether the config arrived as a path or a URL.
         staged_cluster = campaign_mod.clusters_dir(study, label) / cluster_file
         (campaign / campaign_mod.PYPROJECT_FILENAME).write_text(
-            render_pyproject(label, mechababs_req, mechababs_source, babs_source,
-                             cluster_env_constraints(staged_cluster)))
+            render_pyproject(
+                label,
+                mechababs_req,
+                mechababs_source,
+                babs_source,
+                cluster_env_constraints(staged_cluster),
+            )
+        )
 
         write_env_sh(campaign, label)
         build_env(campaign, label, staged_cluster)
@@ -509,5 +561,6 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
         save.message = (
             f"mechababs campaign init {label} "
             f"(apps: {', '.join(name for _, name, _ in apps)}; "
-            f"cluster: {cluster_file})")
+            f"cluster: {cluster_file})"
+        )
     return campaign

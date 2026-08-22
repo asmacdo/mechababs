@@ -245,11 +245,17 @@ def test_full_run(campaign, cluster_config, pipelines, rawdata, study):
     # half-retired (gone from disk but still routed as in-progress). It runs last
     # because it deliberately leaves this campaign derivative-less.
     deriv_id = _git(
-        study_ds, "config", "-f", ".gitmodules",
-        "--get", f"submodule.derivatives/{STAGE1}.datalad-id",
+        study_ds,
+        "config",
+        "-f",
+        ".gitmodules",
+        "--get",
+        f"submodule.derivatives/{STAGE1}.datalad-id",
     ).strip()
     _venv_run(
-        campaign, "mechababs", "retire-derivative",
+        campaign,
+        "mechababs",
+        "retire-derivative",
         f"studies/study-ds999999/derivatives/{STAGE1}",
     )
 
@@ -264,8 +270,15 @@ def test_full_run(campaign, cluster_config, pipelines, rawdata, study):
     # It is the SAME dataset relocated, not a copy: the datalad-id survives, so any
     # provenance pointing at it still resolves.
     assert (
-        _git(campaign, "config", "-f", ".gitmodules",
-             "--get", f"submodule.{parked_rel}.datalad-id").strip() == deriv_id
+        _git(
+            campaign,
+            "config",
+            "-f",
+            ".gitmodules",
+            "--get",
+            f"submodule.{parked_rel}.datalad-id",
+        ).strip()
+        == deriv_id
     ), "retired derivative lost its datalad-id in the move"
 
     # the ledger cell is reset by the same transition -> iterate would re-scaffold it

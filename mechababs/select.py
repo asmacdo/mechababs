@@ -58,12 +58,14 @@ def read_study_metadata(study):
     study = Path(study)
     for rel, level in ((SUBJECTS_SESSIONS_TSV, "session"), (SUBJECTS_TSV, "subject")):
         path = study / rel
-        if path.is_symlink() and not path.exists():   # annexed, content not present
+        if path.is_symlink() and not path.exists():  # annexed, content not present
             subprocess.run(["datalad", "get", "-d", str(study), str(path)], check=True)
         if path.is_file():
             return path.read_text(), level
-    raise RuntimeError(f"no sourcedata metadata TSV in {study} "
-                       f"({SUBJECTS_SESSIONS_TSV} or {SUBJECTS_TSV})")
+    raise RuntimeError(
+        f"no sourcedata metadata TSV in {study} "
+        f"({SUBJECTS_SESSIONS_TSV} or {SUBJECTS_TSV})"
+    )
 
 
 def has_session(row):
@@ -90,12 +92,12 @@ def rows_for_source_dataset(tsv_text, source_id):
     ids = {(r.get(SOURCE_ID_COLUMN) or "").strip() for r in rows}
     ids.discard("")
     if len(ids) > 1:
-        rows = [r for r in rows
-                if (r.get(SOURCE_ID_COLUMN) or "").strip() == source_id]
+        rows = [r for r in rows if (r.get(SOURCE_ID_COLUMN) or "").strip() == source_id]
         if not rows:
             raise RuntimeError(
                 f"the study metadata describes no source dataset {source_id!r} "
-                f"(it describes: {', '.join(sorted(ids))})")
+                f"(it describes: {', '.join(sorted(ids))})"
+            )
     elif not rows:
         raise RuntimeError("the study metadata TSV has no rows")
     return rows
@@ -140,8 +142,10 @@ def build_eligibility(rule):
     req_positive = rule.get("require_positive", [])
 
     def eligible(agg):
-        return (all(dt in agg["datatypes"] for dt in req_datatypes)
-                and all(agg["counts"].get(c, 0) > 0 for c in req_positive))
+        return all(dt in agg["datatypes"] for dt in req_datatypes) and all(
+            agg["counts"].get(c, 0) > 0 for c in req_positive
+        )
+
     return eligible
 
 
@@ -153,11 +157,13 @@ def aggregate(rows, level):
     ``anat``, another ``fmap,func``); a row-by-row filter never sees both at once.
     Aggregating first lets the rule see the whole (sub[,ses]).
     """
-    groups = {}   # key -> {sub, ses, datatypes: set, counts: {col: int}}
+    groups = {}  # key -> {sub, ses, datatypes: set, counts: {col: int}}
     for r in rows:
         sub, ses = r["subject_id"], r.get("session_id", "")
         key = (sub, ses) if level == "session" else (sub,)
-        g = groups.setdefault(key, {"sub": sub, "ses": ses, "datatypes": set(), "counts": {}})
+        g = groups.setdefault(
+            key, {"sub": sub, "ses": ses, "datatypes": set(), "counts": {}}
+        )
         g["datatypes"].update(t.strip() for t in r["datatypes"].split(",") if t.strip())
         for col, val in r.items():
             if col.endswith("_num"):
@@ -176,11 +182,15 @@ def generate_inclusion(tsv_text, rule, output, *, processing_level, limit=None):
     reader = csv.DictReader(io.StringIO(tsv_text), delimiter="\t")
     rows = list(reader)
     if processing_level == "session" and "session_id" not in (reader.fieldnames or []):
-        raise RuntimeError("session-level requested but the study metadata is subjects-only")
+        raise RuntimeError(
+            "session-level requested but the study metadata is subjects-only"
+        )
 
     is_eligible = build_eligibility(rule)
-    eligible = sorted((a for a in aggregate(rows, processing_level) if is_eligible(a)),
-                      key=lambda a: (a["sub"], a["ses"]))
+    eligible = sorted(
+        (a for a in aggregate(rows, processing_level) if is_eligible(a)),
+        key=lambda a: (a["sub"], a["ses"]),
+    )
     if limit is not None:
         eligible = eligible[:limit]
     if not eligible:

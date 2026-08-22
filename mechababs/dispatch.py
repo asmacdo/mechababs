@@ -59,8 +59,16 @@ def inner_command(verb, label, source_dataset, app_config):
     a flag rather than the `MECHABABS_CAMPAIGN` env var: a `datalad rerun` must not
     depend on the ambient environment of whoever reruns it.
     """
-    return [INNER, verb, "--campaign", label,
-            "--source-dataset", source_dataset, "--app", app_config]
+    return [
+        INNER,
+        verb,
+        "--campaign",
+        label,
+        "--source-dataset",
+        source_dataset,
+        "--app",
+        app_config,
+    ]
 
 
 def scaffold_outputs(study, label, source_dataset, app_config):
@@ -80,14 +88,20 @@ def scaffold_outputs(study, label, source_dataset, app_config):
 
 
 def scaffold_message(source_dataset, app_config):
-    return (f"mechababs scaffold {source_dataset} "
-            f"{scaffold_mod.app_stem(app_config)} -> "
-            f"{scaffold_mod.derivative_path(source_dataset, app_config)}")
+    return (
+        f"mechababs scaffold {source_dataset} "
+        f"{scaffold_mod.app_stem(app_config)} -> "
+        f"{scaffold_mod.derivative_path(source_dataset, app_config)}"
+    )
 
 
 def head_subject(study):
-    return subprocess.run(["git", "-C", str(study), "log", "-1", "--format=%s"],
-                          check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(study), "log", "-1", "--format=%s"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def require_runcmd_head(study, message):
@@ -106,7 +120,8 @@ def require_runcmd_head(study, message):
             f"{study} HEAD is not a run record after dispatching {message!r}.\n"
             f"  HEAD: {subject}\n"
             "The transition was meant to land as a re-executable command; without "
-            "the run record the study's history says what changed but not how.")
+            "the run record the study's history says what changed but not how."
+        )
 
 
 def dispatch(study, cmd, *, outputs, message, dry_run=False):

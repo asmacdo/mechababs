@@ -21,8 +21,9 @@ import sys
 import yaml
 
 
-def merge_babs_config(pipeline_config, cluster_config, dataset_url, input_origins=None,
-                      campaign_venv=None):
+def merge_babs_config(
+    pipeline_config, cluster_config, dataset_url, input_origins=None, campaign_venv=None
+):
     """Merge pipeline and cluster configs with dataset URL into a babs config dict."""
     # Pipeline config (bids_app_args, singularity_args, zip_foldernames, etc.)
     # Strip 'mechababs' — the mechababs-only namespace (container = babs-init CLI
@@ -37,7 +38,8 @@ def merge_babs_config(pipeline_config, cluster_config, dataset_url, input_origin
     # (the mechababs config keeps it relative; the caller resolves against the campaign root).
     if campaign_venv and "script_preamble" in merged:
         merged["script_preamble"] = merged["script_preamble"].replace(
-            "{{MECHABABS_VENV}}", campaign_venv)
+            "{{MECHABABS_VENV}}", campaign_venv
+        )
 
     # Preserve any input_datasets already declared in the pipeline YAML
     # (e.g. chained-pipeline anat-input for fmriprep-full). Always add
@@ -65,8 +67,10 @@ def merge_babs_config(pipeline_config, cluster_config, dataset_url, input_origin
     # --input-origin <key>=<url>; nothing pipeline-specific is hardcoded here.
     for key, url in (input_origins or {}).items():
         if key not in input_datasets:
-            sys.exit(f"merge_config: --input-origin {key!r} given but pipeline declares "
-                     f"no {key!r} input_dataset")
+            sys.exit(
+                f"merge_config: --input-origin {key!r} given but pipeline declares "
+                f"no {key!r} input_dataset"
+            )
         input_datasets[key]["origin_url"] = url
 
     merged["input_datasets"] = input_datasets
@@ -75,17 +79,31 @@ def merge_babs_config(pipeline_config, cluster_config, dataset_url, input_origin
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Merge babs config from pipeline + cluster + dataset")
-    parser.add_argument("--pipeline", required=True, help="Path to pipeline YAML config")
+    parser = argparse.ArgumentParser(
+        description="Merge babs config from pipeline + cluster + dataset"
+    )
+    parser.add_argument(
+        "--pipeline", required=True, help="Path to pipeline YAML config"
+    )
     parser.add_argument("--cluster", required=True, help="Path to cluster YAML config")
-    parser.add_argument("--dataset-url", required=True, help="URL or path to input BIDS dataset")
-    parser.add_argument("--input-origin", action="append", default=[], metavar="KEY=URL",
-                        help="Set origin_url for the named input_datasets entry (repeatable). "
-                             "Used for chained inputs, whose upstream RIA URL is only known at "
-                             "run time; KEY is the input_datasets key (== the producing "
-                             "pipeline's short_name).")
-    parser.add_argument("--campaign-venv", default=None,
-                        help="abspath of the campaign venv; substitutes {{MECHABABS_VENV}} in the preamble")
+    parser.add_argument(
+        "--dataset-url", required=True, help="URL or path to input BIDS dataset"
+    )
+    parser.add_argument(
+        "--input-origin",
+        action="append",
+        default=[],
+        metavar="KEY=URL",
+        help="Set origin_url for the named input_datasets entry (repeatable). "
+        "Used for chained inputs, whose upstream RIA URL is only known at "
+        "run time; KEY is the input_datasets key (== the producing "
+        "pipeline's short_name).",
+    )
+    parser.add_argument(
+        "--campaign-venv",
+        default=None,
+        help="abspath of the campaign venv; substitutes {{MECHABABS_VENV}} in the preamble",
+    )
     args = parser.parse_args()
 
     input_origins = {}
@@ -100,8 +118,13 @@ def main():
     with open(args.cluster) as f:
         cluster_config = yaml.safe_load(f)
 
-    merged = merge_babs_config(pipeline_config, cluster_config, args.dataset_url, input_origins,
-                               campaign_venv=args.campaign_venv)
+    merged = merge_babs_config(
+        pipeline_config,
+        cluster_config,
+        args.dataset_url,
+        input_origins,
+        campaign_venv=args.campaign_venv,
+    )
     yaml.dump(merged, sys.stdout, default_flow_style=False, sort_keys=False)
 
 

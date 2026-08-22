@@ -50,8 +50,12 @@ def run(cmd, *, dry_run, cwd=None, env=None):
         print(f"DRY-RUN  {shown}", file=sys.stderr)
         return
     print(f"+ {shown}", file=sys.stderr)
-    subprocess.run([str(c) for c in cmd], cwd=cwd, check=True,
-                   env={**os.environ, **env} if env else None)
+    subprocess.run(
+        [str(c) for c in cmd],
+        cwd=cwd,
+        check=True,
+        env={**os.environ, **env} if env else None,
+    )
 
 
 def datalad_duct(cmd, *, dataset, message, log_prefix, dry_run):
@@ -66,8 +70,12 @@ def datalad_duct(cmd, *, dataset, message, log_prefix, dry_run):
     764d5ae). Read-only babs shell-outs (`babs status`) are NOT wrapped — only the
     mutating steps (init now; submit/merge later)."""
     duct_cmd = ["duct", *[str(c) for c in cmd]]
-    run(["datalad", "run", "-d", str(dataset), "-m", message, *duct_cmd],
-        dry_run=dry_run, cwd=dataset, env={"DUCT_OUTPUT_PREFIX": log_prefix})
+    run(
+        ["datalad", "run", "-d", str(dataset), "-m", message, *duct_cmd],
+        dry_run=dry_run,
+        cwd=dataset,
+        env={"DUCT_OUTPUT_PREFIX": log_prefix},
+    )
 
 
 # TODO move to util
@@ -85,9 +93,14 @@ def warn_if_no_tmux():
     if os.environ.get("TMUX") or os.environ.get("STY"):
         return
     if not sys.stdin.isatty():
-        print("Note: not inside tmux/screen (non-interactive — continuing).", file=sys.stderr)
+        print(
+            "Note: not inside tmux/screen (non-interactive — continuing).",
+            file=sys.stderr,
+        )
         return
-    ans = input("Not inside tmux/screen — a disconnect will kill this run. Continue anyway? [y/N] ")
+    ans = input(
+        "Not inside tmux/screen — a disconnect will kill this run. Continue anyway? [y/N] "
+    )
     if not ans.lower().startswith("y"):
         sys.exit("Aborting.")
 
@@ -113,9 +126,11 @@ def assert_venv_tools(campaign, cfg):
     for tool in ("babs", "mechababs", "duct"):
         found = shutil.which(tool)
         if not (found and Path(found).resolve().is_relative_to(venv)):
-            sys.exit(f"{tool} resolves to {found or 'nothing'}, not under the campaign venv "
-                     f"{venv} — activate the campaign venv (a stray venv on PATH would run an "
-                     f"unpinned {tool}, silently breaking the campaign's provenance pin)")
+            sys.exit(
+                f"{tool} resolves to {found or 'nothing'}, not under the campaign venv "
+                f"{venv} — activate the campaign venv (a stray venv on PATH would run an "
+                f"unpinned {tool}, silently breaking the campaign's provenance pin)"
+            )
 
 
 def dataset_id(url):
@@ -152,8 +167,16 @@ def study_sourcedata_url(study, ds_id):
     gitmodules = study / ".gitmodules"
     for name in (ds_id, f"sourcedata/{ds_id}"):
         out = subprocess.run(
-            ["git", "config", "--file", str(gitmodules), "--get", f"submodule.{name}.url"],
-            capture_output=True, text=True,
+            [
+                "git",
+                "config",
+                "--file",
+                str(gitmodules),
+                "--get",
+                f"submodule.{name}.url",
+            ],
+            capture_output=True,
+            text=True,
         )
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
@@ -168,8 +191,10 @@ def babs_project(campaign, row, short):
 
 def selected_pipelines(campaign, cfg):
     """{short_name: loaded pipeline cfg} for every pipeline in this campaign."""
-    return {construct.pipeline_short(pf): yaml.safe_load((campaign / pf).read_text())
-            for pf in cfg["pipelines"]}
+    return {
+        construct.pipeline_short(pf): yaml.safe_load((campaign / pf).read_text())
+        for pf in cfg["pipelines"]
+    }
 
 
 def chain_edges(pipeline_cfg, selected):
@@ -203,6 +228,7 @@ def output_ria_url(project_root, producer_cfg):
 @dataclass
 class _ScaffoldCtx:
     """The paths + config one scaffold needs, gathered once and threaded to its steps."""
+
     campaign: Path
     cfg: dict
     short: str
@@ -225,20 +251,30 @@ def _scaffold_context(campaign, cfg, row, short, pipeline_file):
     ds_id = row["dataset_id"]
     processing_level = row.get("processing_level")
     if not processing_level:
-        sys.exit(f"processing_level not set for {ds_id} — set it in the ledger "
-                 f"(add-dataset derives it; a blank means the metadata fetch failed)")
+        sys.exit(
+            f"processing_level not set for {ds_id} — set it in the ledger "
+            f"(add-dataset derives it; a blank means the metadata fetch failed)"
+        )
     venv_rel = cfg.get("venv")
     if not venv_rel:
-        sys.exit(f"{state.CONFIG_FILENAME} has no 'venv' — run `mechababs configure` first")
+        sys.exit(
+            f"{state.CONFIG_FILENAME} has no 'venv' — run `mechababs configure` first"
+        )
     study = campaign / "studies" / f"study-{ds_id}"
     pipeline_path = campaign / pipeline_file
     pipeline_cfg = yaml.safe_load(pipeline_path.read_text())
     return _ScaffoldCtx(
-        campaign=campaign, cfg=cfg, short=short, ds_id=ds_id,
-        processing_level=processing_level, study=study,
+        campaign=campaign,
+        cfg=cfg,
+        short=short,
+        ds_id=ds_id,
+        processing_level=processing_level,
+        study=study,
         origin_url=study_sourcedata_url(study, ds_id),
-        pipeline_path=pipeline_path, cluster_path=campaign / cfg["cluster"],
-        pipeline_cfg=pipeline_cfg, container=pipeline_cfg["mechababs"]["container"],
+        pipeline_path=pipeline_path,
+        cluster_path=campaign / cfg["cluster"],
+        pipeline_cfg=pipeline_cfg,
+        container=pipeline_cfg["mechababs"]["container"],
         campaign_venv=str(campaign / venv_rel),
         project_root=study / "derivatives" / short,
     )
@@ -255,11 +291,15 @@ def _resolve_chained_inputs(ctx, row):
     edges = chain_edges(ctx.pipeline_cfg, selected)
     unmet = [u for u in edges if not row.get(f"{u}_babs-merged")]
     if unmet:
-        print(f"  {ctx.ds_id}/{ctx.short}: waiting on upstream {', '.join(unmet)} "
-              f"(not merged) — skipping this tick", file=sys.stderr)
+        print(
+            f"  {ctx.ds_id}/{ctx.short}: waiting on upstream {', '.join(unmet)} "
+            f"(not merged) — skipping this tick",
+            file=sys.stderr,
+        )
         return None
-    input_origins = {u: output_ria_url(ctx.campaign / row[f"{u}_babs"], selected[u])
-                     for u in edges}
+    input_origins = {
+        u: output_ria_url(ctx.campaign / row[f"{u}_babs"], selected[u]) for u in edges
+    }
     return edges, input_origins
 
 
@@ -278,30 +318,43 @@ def _resolve_inclusion(ctx, edges, *, dry_run):
     The pin records what we requested; babs writes its own processing_inclusion.csv,
     whose diff flags a requested subject the data lacks."""
     if edges:
-        print("  chained cell — no inclusion; babs intersects its inputs", file=sys.stderr)
+        print(
+            "  chained cell — no inclusion; babs intersects its inputs", file=sys.stderr
+        )
         return None
-    pin = ctx.campaign / state.MECHABABS_DIR / "inclusions" / f"{ctx.ds_id}_{ctx.short}.csv"
+    pin = (
+        ctx.campaign
+        / state.MECHABABS_DIR
+        / "inclusions"
+        / f"{ctx.ds_id}_{ctx.short}.csv"
+    )
     if pin.exists():
         print(f"  using pinned inclusion {pin}", file=sys.stderr)
         return pin
     mechababs_cfg = ctx.pipeline_cfg["mechababs"]
     if "selection" not in mechababs_cfg:
-        sys.exit(f"pipeline {ctx.short} has no `mechababs.selection` and no pinned "
-                 f"inclusion at {pin} — one is needed to define the job universe "
-                 f"(use `selection: {{}}` for pass-through)")
+        sys.exit(
+            f"pipeline {ctx.short} has no `mechababs.selection` and no pinned "
+            f"inclusion at {pin} — one is needed to define the job universe "
+            f"(use `selection: {{}}` for pass-through)"
+        )
     rule = mechababs_cfg["selection"] or {}
     # processing_level (from the ledger) formats the inclusion to match the level babs
     # runs at, so the two never disagree.
     limit = ctx.cfg.get("limit")
     if dry_run:
-        print(f"DRY-RUN  select.generate_inclusion for {ctx.ds_id}/{ctx.short} "
-              f"(rule={rule}, processing_level={ctx.processing_level}, "
-              f"limit={limit}) -> {pin}", file=sys.stderr)
+        print(
+            f"DRY-RUN  select.generate_inclusion for {ctx.ds_id}/{ctx.short} "
+            f"(rule={rule}, processing_level={ctx.processing_level}, "
+            f"limit={limit}) -> {pin}",
+            file=sys.stderr,
+        )
     else:
         pin.parent.mkdir(parents=True, exist_ok=True)
         tsv_text, _ = select.read_study_metadata(ctx.study)
-        select.generate_inclusion(tsv_text, rule, pin,
-                                  processing_level=ctx.processing_level, limit=limit)
+        select.generate_inclusion(
+            tsv_text, rule, pin, processing_level=ctx.processing_level, limit=limit
+        )
     return pin
 
 
@@ -313,10 +366,24 @@ def _compose_babs_config(ctx, input_origins, *, dry_run):
     references it relatively. (babs consumes it and stores its own altered copy at
     .babs/, so the config is recorded a few times over — the redundancy was always
     there, now it's visible/tracked.) Returns the config path."""
-    babs_config = ctx.campaign / state.MECHABABS_DIR / "babs-init-config" / f"{ctx.ds_id}_{ctx.short}.yaml"
-    merge_cmd = ["python3", str(MERGE_CONFIG_SCRIPT),
-                 "--pipeline", str(ctx.pipeline_path), "--cluster", str(ctx.cluster_path),
-                 "--dataset-url", ctx.origin_url, "--campaign-venv", ctx.campaign_venv]
+    babs_config = (
+        ctx.campaign
+        / state.MECHABABS_DIR
+        / "babs-init-config"
+        / f"{ctx.ds_id}_{ctx.short}.yaml"
+    )
+    merge_cmd = [
+        "python3",
+        str(MERGE_CONFIG_SCRIPT),
+        "--pipeline",
+        str(ctx.pipeline_path),
+        "--cluster",
+        str(ctx.cluster_path),
+        "--dataset-url",
+        ctx.origin_url,
+        "--campaign-venv",
+        ctx.campaign_venv,
+    ]
     for key, url in input_origins.items():
         merge_cmd += ["--input-origin", f"{key}={url}"]
     if dry_run:
@@ -337,21 +404,45 @@ def _babs_init(ctx, inclusion, babs_config, *, dry_run):
     which babs records as the derivative's code/processing_inclusion.csv — a chained
     cell omits it, letting babs intersect the inputs instead."""
     inputs = [str(babs_config)] + ([str(inclusion)] if inclusion is not None else [])
-    run(["datalad", "save", "-d", ctx.campaign,
-         "-m", f"scaffold inputs {ctx.ds_id}/{ctx.short}", *inputs], dry_run=dry_run)
+    run(
+        [
+            "datalad",
+            "save",
+            "-d",
+            ctx.campaign,
+            "-m",
+            f"scaffold inputs {ctx.ds_id}/{ctx.short}",
+            *inputs,
+        ],
+        dry_run=dry_run,
+    )
 
-    babs_init = ["babs", "init", str(ctx.project_root.relative_to(ctx.campaign)),
-                 "--container-ds",
-                 str(resolve_container_ds(ctx.campaign, ctx.container).relative_to(ctx.campaign)),
-                 "--container-name", ctx.container["name"],
-                 "--container-config", str(babs_config.relative_to(ctx.campaign)),
-                 "--processing-level", ctx.processing_level, "--queue", "slurm"]
+    babs_init = [
+        "babs",
+        "init",
+        str(ctx.project_root.relative_to(ctx.campaign)),
+        "--container-ds",
+        str(
+            resolve_container_ds(ctx.campaign, ctx.container).relative_to(ctx.campaign)
+        ),
+        "--container-name",
+        ctx.container["name"],
+        "--container-config",
+        str(babs_config.relative_to(ctx.campaign)),
+        "--processing-level",
+        ctx.processing_level,
+        "--queue",
+        "slurm",
+    ]
     if inclusion is not None:
         babs_init += ["--list-sub-file", str(inclusion.relative_to(ctx.campaign))]
-    datalad_duct(babs_init, dataset=ctx.campaign,
-                 message=f"scaffold {ctx.ds_id}/{ctx.short}: babs init",
-                 log_prefix=f".duct-logs/{ctx.ds_id}/{ctx.short}/babs-init_{{datetime}}-{{pid}}_",
-                 dry_run=dry_run)
+    datalad_duct(
+        babs_init,
+        dataset=ctx.campaign,
+        message=f"scaffold {ctx.ds_id}/{ctx.short}: babs init",
+        log_prefix=f".duct-logs/{ctx.ds_id}/{ctx.short}/babs-init_{{datetime}}-{{pid}}_",
+        dry_run=dry_run,
+    )
 
 
 def scaffold(campaign, cfg, row, short, pipeline_file, *, dry_run):
@@ -370,8 +461,10 @@ def scaffold(campaign, cfg, row, short, pipeline_file, *, dry_run):
         return None
     edges, input_origins = gate
 
-    print(f"\n=== scaffold {ctx.ds_id} / {short} -> {ctx.project_root.name} ===",
-          file=sys.stderr)
+    print(
+        f"\n=== scaffold {ctx.ds_id} / {short} -> {ctx.project_root.name} ===",
+        file=sys.stderr,
+    )
     if not dry_run:
         ctx.project_root.parent.mkdir(parents=True, exist_ok=True)
 
@@ -386,6 +479,7 @@ def scaffold(campaign, cfg, row, short, pipeline_file, *, dry_run):
 
 
 # --- ACTIVE-cell transitions: (campaign, cfg, row, short, *, dry_run) -> updates ---
+
 
 def submit(campaign, cfg, row, short, *, dry_run):
     """SUBMIT: deploy more jobs. Writes no column — submit-state is babs's."""
@@ -403,7 +497,10 @@ def merge(campaign, cfg, row, short, *, dry_run):
     """
     proj = babs_project(campaign, row, short)
     run(["babs", "merge", proj], dry_run=dry_run)
-    run(["datalad", "update", "--how", "merge", "-s", "output", "-d", proj], dry_run=dry_run)
+    run(
+        ["datalad", "update", "--how", "merge", "-s", "output", "-d", proj],
+        dry_run=dry_run,
+    )
     return {f"{short}_babs-merged": "true"}
 
 
@@ -416,8 +513,11 @@ def fail(campaign, cfg, row, short, *, dry_run):
     """FAIL: some jobs failed -> flag and leave unmerged (re-surfaces each tick;
     retry/policy deferred, #66)."""
     proj = babs_project(campaign, row, short)
-    print(f"  {row['dataset_id']}/{short}: jobs FAILED — not merging; needs "
-          f"attention (`babs status {proj}`)", file=sys.stderr)
+    print(
+        f"  {row['dataset_id']}/{short}: jobs FAILED — not merging; needs "
+        f"attention (`babs status {proj}`)",
+        file=sys.stderr,
+    )
     return None
 
 
@@ -485,19 +585,25 @@ def run_iterate(campaign, *, batch, dry_run):
             ds_id = row["dataset_id"]
             action = decide_action(campaign, row, short)
             if action == "scaffold":
-                transition = partial(scaffold, campaign, cfg, row, short, pf,
-                                     dry_run=dry_run)
+                transition = partial(
+                    scaffold, campaign, cfg, row, short, pf, dry_run=dry_run
+                )
             else:
-                transition = partial(ITERATE_ACTIONS[action], campaign, cfg, row, short,
-                                     dry_run=dry_run)
+                transition = partial(
+                    ITERATE_ACTIONS[action], campaign, cfg, row, short, dry_run=dry_run
+                )
             # Every transition is one recursive node on the campaign: the scope opens
             # clean, spans the transition's work + the ledger row, and its
             # save(since=, recursive=True) bumps the gitlink up each level of the nest
             # (derivative -> study -> campaign). scaffold and merge mutate the nest;
             # submit/skip mutate nothing trackable, so their scope saves nothing (a
             # no-op). The clean-in guard enforces the between-transitions clean-tree.
-            with datalad_save_scope(campaign_ds, f"{action} {ds_id}/{short}",
-                                    recursive=True, dry_run=dry_run):
+            with datalad_save_scope(
+                campaign_ds,
+                f"{action} {ds_id}/{short}",
+                recursive=True,
+                dry_run=dry_run,
+            ):
                 updates = transition()
                 if updates and not dry_run:
                     row.update(updates)

@@ -51,28 +51,36 @@ def campaign(study, monkeypatch):
     bundle (and the shard) in ways init would refuse — which is exactly how the
     dangling-`depends_on` case is reachable at all.
     """
+
     def build(*app_names, rows=None):
         cdir = campaign_mod.campaign_dir(study, "nprep")
         (cdir / campaign_mod.APPS_DIRNAME).mkdir(parents=True)
         for name in app_names:
             (campaign_mod.apps_dir(study, "nprep") / name).write_text(APPS[name])
-        campaign_mod.config_path(study, "nprep").write_text(yaml.safe_dump({
-            "label": "nprep",
-            "apps": [f"{campaign_mod.APPS_DIRNAME}/{n}" for n in app_names],
-            "cluster": "clusters/dartmouth.yaml",
-            "limit": None,
-        }))
-        campaign_mod.state_path(study, "nprep").write_text(campaign_mod.initial_header())
+        campaign_mod.config_path(study, "nprep").write_text(
+            yaml.safe_dump(
+                {
+                    "label": "nprep",
+                    "apps": [f"{campaign_mod.APPS_DIRNAME}/{n}" for n in app_names],
+                    "cluster": "clusters/dartmouth.yaml",
+                    "limit": None,
+                }
+            )
+        )
+        campaign_mod.state_path(study, "nprep").write_text(
+            campaign_mod.initial_header()
+        )
         if rows:
             campaign_mod.write_state(study, "nprep", rows)
-        campaign_mod.uv_lock_path(study, "nprep").write_text("lock-v1\n")   # uv.lock
+        campaign_mod.uv_lock_path(study, "nprep").write_text("lock-v1\n")  # uv.lock
         venv = campaign_mod.venv_path(study, "nprep")
         venv.mkdir()
         campaign_mod.write_env_stamp(venv, "nprep", "lock-v1\n")
         monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
         monkeypatch.setattr("sys.prefix", str(venv))
-        monkeypatch.chdir(study)          # operating verbs run from the campaign root
+        monkeypatch.chdir(study)  # operating verbs run from the campaign root
         return cdir
+
     return build
 
 
@@ -98,22 +106,29 @@ def saves(monkeypatch):
 
 
 def cells(study):
-    return [(r["source_dataset"], r["app_config"])
-            for r in campaign_mod.read_state(study, "nprep")]
+    return [
+        (r["source_dataset"], r["app_config"])
+        for r in campaign_mod.read_state(study, "nprep")
+    ]
 
 
 # --- resolving the sourcedata (from the study root) -------------------------
 
+
 def test_sourcedata_is_taken_relative_to_the_study_root(study, campaign, saves):
     campaign("MRIQC-24.0.2.yaml")
-    add_dataset.add("sourcedata/ds000001")      # relative, exactly as the user types it
-    assert cells(study) == [("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")]
+    add_dataset.add("sourcedata/ds000001")  # relative, exactly as the user types it
+    assert cells(study) == [
+        ("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")
+    ]
 
 
 def test_an_absolute_path_inside_the_study_also_works(study, campaign, saves):
     campaign("MRIQC-24.0.2.yaml")
     add_dataset.add(study / "sourcedata" / "ds000001")
-    assert cells(study) == [("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")]
+    assert cells(study) == [
+        ("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")
+    ]
 
 
 def test_a_path_outside_the_study_is_refused(study, tmp_path):
@@ -138,26 +153,36 @@ def test_a_file_is_not_a_source_dataset(study):
 
 # --- the sniff --------------------------------------------------------------
 
+
 def test_identity_columns_come_from_the_studys_metadata(study, campaign, saves):
     campaign("MRIQC-24.0.2.yaml")
     add_dataset.add(study / "sourcedata" / "ds000001")
-    row, = campaign_mod.read_state(study, "nprep")
+    (row,) = campaign_mod.read_state(study, "nprep")
     assert row == {
-        "source_dataset": "sourcedata/ds000001", "app_config": "bids-app-configs/MRIQC-24.0.2.yaml",
-        "processing_level": "subject", "n_subjects": "2", "n_sessions": "",
-        "depends_on": "", "babs": "", "merged": "",
+        "source_dataset": "sourcedata/ds000001",
+        "app_config": "bids-app-configs/MRIQC-24.0.2.yaml",
+        "processing_level": "subject",
+        "n_subjects": "2",
+        "n_sessions": "",
+        "depends_on": "",
+        "babs": "",
+        "merged": "",
     }
 
 
 def test_a_session_level_source_dataset_is_recorded_as_such(study, campaign, saves):
     campaign("MRIQC-24.0.2.yaml")
     added = add_dataset.add(study / "sourcedata" / "ds000002")
-    assert (added[0]["processing_level"], added[0]["n_subjects"],
-            added[0]["n_sessions"]) == ("session", "1", "2")
+    assert (
+        added[0]["processing_level"],
+        added[0]["n_subjects"],
+        added[0]["n_sessions"],
+    ) == ("session", "1", "2")
 
 
-def test_a_source_dataset_the_metadata_does_not_describe_is_refused(study, campaign,
-                                                                    saves):
+def test_a_source_dataset_the_metadata_does_not_describe_is_refused(
+    study, campaign, saves
+):
     campaign("MRIQC-24.0.2.yaml")
     (study / "sourcedata" / "ds000003" / ".datalad").mkdir(parents=True)
     with pytest.raises(SystemExit) as e:
@@ -167,9 +192,11 @@ def test_a_source_dataset_the_metadata_does_not_describe_is_refused(study, campa
 
 # --- the cells --------------------------------------------------------------
 
+
 def test_one_cell_per_app_in_the_bundle_in_bundle_order(study, campaign, saves):
-    campaign("MRIQC-24.0.2.yaml", "fMRIPrep-25.2.5+anat.yaml",
-             "fMRIPrep-25.2.5+minimal.yaml")
+    campaign(
+        "MRIQC-24.0.2.yaml", "fMRIPrep-25.2.5+anat.yaml", "fMRIPrep-25.2.5+minimal.yaml"
+    )
     add_dataset.add(study / "sourcedata" / "ds000001")
     assert cells(study) == [
         ("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml"),
@@ -183,8 +210,10 @@ def test_depends_on_comes_from_the_app_config(study, campaign, saves):
     added = add_dataset.add(study / "sourcedata" / "ds000001")
     assert [(r["app_config"], r["depends_on"]) for r in added] == [
         ("bids-app-configs/fMRIPrep-25.2.5+anat.yaml", ""),
-        ("bids-app-configs/fMRIPrep-25.2.5+minimal.yaml",
-         "bids-app-configs/fMRIPrep-25.2.5+anat.yaml"),
+        (
+            "bids-app-configs/fMRIPrep-25.2.5+minimal.yaml",
+            "bids-app-configs/fMRIPrep-25.2.5+anat.yaml",
+        ),
     ]
 
 
@@ -204,17 +233,25 @@ def test_a_dangling_depends_on_is_refused(study, campaign, saves):
     assert campaign_mod.read_state(study, "nprep") == []
 
 
-def test_another_datasets_producer_row_does_not_satisfy_the_edge(study, campaign, saves):
+def test_another_datasets_producer_row_does_not_satisfy_the_edge(
+    study, campaign, saves
+):
     # the edge is per source dataset; ds000002's anat cell says nothing about ds000001
-    campaign("fMRIPrep-25.2.5+minimal.yaml", rows=[{
-        "source_dataset": "sourcedata/ds000002",
-        "app_config": "bids-app-configs/fMRIPrep-25.2.5+anat.yaml",
-    }])
+    campaign(
+        "fMRIPrep-25.2.5+minimal.yaml",
+        rows=[
+            {
+                "source_dataset": "sourcedata/ds000002",
+                "app_config": "bids-app-configs/fMRIPrep-25.2.5+anat.yaml",
+            }
+        ],
+    )
     with pytest.raises(SystemExit):
         add_dataset.add(study / "sourcedata" / "ds000001")
 
 
 # --- re-adding --------------------------------------------------------------
+
 
 def test_re_adding_the_same_dataset_adds_nothing_and_says_so(study, campaign, saves):
     campaign("MRIQC-24.0.2.yaml")
@@ -222,25 +259,38 @@ def test_re_adding_the_same_dataset_adds_nothing_and_says_so(study, campaign, sa
     with pytest.raises(SystemExit) as e:
         add_dataset.add(study / "sourcedata" / "ds000001")
     assert "already selected" in str(e.value)
-    assert cells(study) == [("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")]
+    assert cells(study) == [
+        ("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml")
+    ]
 
 
 def test_a_second_source_dataset_gets_its_own_cells(study, campaign, saves):
     campaign("MRIQC-24.0.2.yaml")
     add_dataset.add(study / "sourcedata" / "ds000001")
     add_dataset.add(study / "sourcedata" / "ds000002")
-    assert cells(study) == [("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml"),
-                            ("sourcedata/ds000002", "bids-app-configs/MRIQC-24.0.2.yaml")]
+    assert cells(study) == [
+        ("sourcedata/ds000001", "bids-app-configs/MRIQC-24.0.2.yaml"),
+        ("sourcedata/ds000002", "bids-app-configs/MRIQC-24.0.2.yaml"),
+    ]
 
 
-def test_bundle_growth_is_unsupported_a_partial_dataset_still_refuses(study, campaign,
-                                                                      saves):
+def test_bundle_growth_is_unsupported_a_partial_dataset_still_refuses(
+    study, campaign, saves
+):
     # the bundle is fixed at init (growth deliberately unsupported — #116): a dataset
     # with ANY cell refuses whole, and its existing state is left exactly as it is
-    campaign("MRIQC-24.0.2.yaml", "fMRIPrep-25.2.5+anat.yaml", rows=[{
-        "source_dataset": "sourcedata/ds000001", "app_config": "bids-app-configs/MRIQC-24.0.2.yaml",
-        "babs": "derivatives/MRIQC-24.0.2", "merged": "yes",
-    }])
+    campaign(
+        "MRIQC-24.0.2.yaml",
+        "fMRIPrep-25.2.5+anat.yaml",
+        rows=[
+            {
+                "source_dataset": "sourcedata/ds000001",
+                "app_config": "bids-app-configs/MRIQC-24.0.2.yaml",
+                "babs": "derivatives/MRIQC-24.0.2",
+                "merged": "yes",
+            }
+        ],
+    )
     with pytest.raises(SystemExit) as e:
         add_dataset.add(study / "sourcedata" / "ds000001")
     assert "new campaign" in str(e.value)
@@ -249,8 +299,10 @@ def test_bundle_growth_is_unsupported_a_partial_dataset_still_refuses(study, cam
 
 # --- the guards and the commit ----------------------------------------------
 
-def test_the_campaign_guard_runs_against_the_enclosing_study(study, campaign, saves,
-                                                             monkeypatch):
+
+def test_the_campaign_guard_runs_against_the_enclosing_study(
+    study, campaign, saves, monkeypatch
+):
     campaign("MRIQC-24.0.2.yaml")
     # the venv of some OTHER environment: the env-match guard must refuse
     monkeypatch.setattr("sys.prefix", str(study / "elsewhere"))
@@ -266,13 +318,16 @@ def test_no_campaign_selected_is_refused(study, campaign, saves, monkeypatch):
         add_dataset.add(study / "sourcedata" / "ds000001")
 
 
-def test_the_statefile_change_is_committed_path_scoped_to_the_study(study, campaign,
-                                                                   saves):
+def test_the_statefile_change_is_committed_path_scoped_to_the_study(
+    study, campaign, saves
+):
     campaign("MRIQC-24.0.2.yaml")
     add_dataset.add(study / "sourcedata" / "ds000001")
     saved_study, message, path = saves[0]
-    assert (saved_study, path) == (study.resolve(),
-                                   campaign_mod.state_path(study.resolve(), "nprep"))
+    assert (saved_study, path) == (
+        study.resolve(),
+        campaign_mod.state_path(study.resolve(), "nprep"),
+    )
     assert "add-dataset sourcedata/ds000001" in message
 
 

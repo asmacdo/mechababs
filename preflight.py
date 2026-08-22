@@ -37,11 +37,15 @@ def check_no_mriqc_repo(dataset_id):
 def check_terminal_multiplexer(dataset_id):
     """Check that we're running inside screen or tmux."""
     import os
+
     if os.environ.get("TMUX") or os.environ.get("STY"):
         return True, "running in tmux/screen"
     if os.environ.get("TERM", "").startswith("screen"):
         return True, "running in screen"
-    return False, "not running in screen or tmux — long-running jobs may be killed on disconnect"
+    return (
+        False,
+        "not running in screen or tmux — long-running jobs may be killed on disconnect",
+    )
 
 
 CHECKS = [

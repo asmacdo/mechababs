@@ -66,7 +66,9 @@ def cells(campaign: Path, study=None, derivative=None):
     have no ``code/job_status.csv``, so the glob skips them.
     """
     want_dataset = study.removeprefix("study-") if study else None
-    pattern = str(campaign / "studies" / "*" / "derivatives" / "*" / "code" / "job_status.csv")
+    pattern = str(
+        campaign / "studies" / "*" / "derivatives" / "*" / "code" / "job_status.csv"
+    )
     for csv_path in sorted(glob(pattern)):
         cell = Path(csv_path).parent.parent  # .../derivatives/<pipeline>
         pipeline = cell.name
@@ -91,7 +93,10 @@ def refresh(matched):
         try:
             subprocess.run(["babs", "status", cell], capture_output=True, text=True)
         except FileNotFoundError:
-            print("`babs` not on PATH; skipping refresh (use --no-refresh)", file=sys.stderr)
+            print(
+                "`babs` not on PATH; skipping refresh (use --no-refresh)",
+                file=sys.stderr,
+            )
             return
 
 
@@ -136,8 +141,15 @@ def render(data, output):
         sys.stdout.write(tsv)
 
 
-def run_status(campaign, *, study=None, derivative=None, only_failed=False,
-               do_refresh=True, output="columns"):
+def run_status(
+    campaign,
+    *,
+    study=None,
+    derivative=None,
+    only_failed=False,
+    do_refresh=True,
+    output="columns",
+):
     """Render the campaign's job table. Returns a CLI exit code."""
     matched = list(cells(campaign, study, derivative))
     if not matched:

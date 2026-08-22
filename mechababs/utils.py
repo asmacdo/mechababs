@@ -97,27 +97,42 @@ def campaign_save_scope(root, path):
     ``since=``-based; here the scope is one directory, so both can be path-scoped.)
     """
     ds = Dataset(str(root))
-    dirty = ds.status(path=str(path), untracked="all", result_renderer="disabled",
-                      on_failure="ignore", return_type="list")
+    dirty = ds.status(
+        path=str(path),
+        untracked="all",
+        result_renderer="disabled",
+        on_failure="ignore",
+        return_type="list",
+    )
     dirty = [r for r in dirty if r.get("state") != "clean"]
     if dirty:
-        sys.exit(f"refusing to write into {path}: it is not clean, and the commit "
-                 f"would absorb changes mechababs did not make.\n" +
-                 "\n".join(f"  {r.get('state')}: {r.get('path')}" for r in dirty))
+        sys.exit(
+            f"refusing to write into {path}: it is not clean, and the commit "
+            f"would absorb changes mechababs did not make.\n"
+            + "\n".join(f"  {r.get('state')}: {r.get('path')}" for r in dirty)
+        )
 
     pending = PendingSave()
     yield pending
     if not pending.message:
         raise RuntimeError(f"campaign_save_scope({path}) exited with no message set")
 
-    results = ds.save(path=str(path), message=pending.message,
-                      result_renderer="disabled", on_failure="ignore",
-                      return_type="list")
+    results = ds.save(
+        path=str(path),
+        message=pending.message,
+        result_renderer="disabled",
+        on_failure="ignore",
+        return_type="list",
+    )
     failed = [r for r in results if r.get("status") not in ("ok", "notneeded")]
     if failed:
-        sys.exit(f"failed to commit {path} into {root}\n" +
-                 "\n".join(f"  {r.get('status')}: {r.get('path')} "
-                           f"({describe_result(r)})" for r in failed))
+        sys.exit(
+            f"failed to commit {path} into {root}\n"
+            + "\n".join(
+                f"  {r.get('status')}: {r.get('path')} ({describe_result(r)})"
+                for r in failed
+            )
+        )
 
 
 def shallow_status(root):
@@ -130,9 +145,11 @@ def shallow_status(root):
     check is looking for.
     """
     out = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain",
-         "--ignore-submodules=dirty"],
-        check=True, capture_output=True, text=True).stdout
+        ["git", "-C", str(root), "status", "--porcelain", "--ignore-submodules=dirty"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
     return [line for line in out.splitlines() if line.strip()]
 
 
@@ -156,7 +173,8 @@ def require_clean_shallow(root, *, what="this operation"):
             f"{root} is not clean — refusing {what}.\n"
             "Uncommitted work here is not mechababs', and a run recorded on top "
             "of it would not describe the tree it ran in. Commit or discard it "
-            "first:\n" + "\n".join(f"  {line}" for line in dirty))
+            "first:\n" + "\n".join(f"  {line}" for line in dirty)
+        )
 
 
 @contextmanager
@@ -196,8 +214,11 @@ def datalad_save_scope(ds, message, *, recursive=False, dry_run=False, **save_kw
     if dry_run:
         yield ds
         rflag = "--recursive " if recursive else ""
-        print(f"DRY-RUN  datalad save --dataset {ds.path} --since <HEAD> "
-              f"{rflag}--message {message!r}", file=sys.stderr)
+        print(
+            f"DRY-RUN  datalad save --dataset {ds.path} --since <HEAD> "
+            f"{rflag}--message {message!r}",
+            file=sys.stderr,
+        )
         return
     if ds.repo.dirty:
         raise RuntimeError(f"{ds.path} is dirty; refusing to open datalad_save_scope")

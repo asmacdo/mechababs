@@ -27,7 +27,13 @@ LOCK_FILENAME = "." + STATE_FILENAME + ".lock"
 MECHABABS_DIR = ".mechababs"
 CONFIG_FILENAME = "campaign.yaml"
 
-IDENTITY_COLUMNS = ["dataset_id", "study_url", "processing_level", "n_subjects", "n_sessions"]
+IDENTITY_COLUMNS = [
+    "dataset_id",
+    "study_url",
+    "processing_level",
+    "n_subjects",
+    "n_sessions",
+]
 PIPELINE_COLUMNS = ["babs", "babs-merged"]
 
 
@@ -82,12 +88,17 @@ def write_rows(campaign, cols, rows):
             w.writerow({c: row.get(c, "") for c in cols})
 
 
-
-
 def save(campaign, message):
     """Record the ledger change in the campaign's datalad history."""
     subprocess.run(
-        ["datalad", "save", "--dataset", str(campaign), "--message", message,
-         str(state_path(campaign))],
+        [
+            "datalad",
+            "save",
+            "--dataset",
+            str(campaign),
+            "--message",
+            message,
+            str(state_path(campaign)),
+        ],
         check=True,
     )

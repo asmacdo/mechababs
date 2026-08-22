@@ -17,8 +17,9 @@ from mechababs import state
 
 
 def _git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                   capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+    )
 
 
 def _campaign_with_pins(tmp_path):
