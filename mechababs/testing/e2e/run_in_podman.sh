@@ -18,6 +18,14 @@
 # the scenario — which checkout, which cluster config, and the container wrapped around
 # them — never a separate route into it.
 #
+# slurm-docker-ci is CentOS 7 (glibc 2.17), so the campaign environment `campaign init`
+# resolves here needs the same version caps a real old-glibc cluster needs — otherwise
+# uv falls back to source builds the image's gcc 4.8 cannot compile. Those caps are NOT
+# a harness special-case: they are `env_constraints` in
+# examples/clusters/test-docker.yaml, the same cluster-axis field
+# examples/clusters/sherlock.yaml uses, so this rung exercises that path rather than
+# routing around it.
+#
 # Rootless: no root daemon, and container-root maps to the invoking host user via
 # userns — so nothing here runs as real root and any host-touching bytes are
 # user-owned (root-in / user-out). slurm-docker-ci comes up rootless with no
