@@ -2,7 +2,8 @@
 
 The point of these: `mechababs test-cluster` has to find the suite through the
 INSTALLED package, not through a path into a vendored clone, so it keeps working
-when the code stops being cloned into the campaign (con/mechababs#101).
+now that the code is referenced and locked rather than cloned into the campaign
+(con/mechababs#101).
 """
 
 import mechababs.testing as testing
@@ -92,7 +93,7 @@ class _NoOptions:
             return None
 
 
-@pytest.mark.parametrize("fixture_name", ["campaign_under_test", "cluster_config"])
+@pytest.mark.parametrize("fixture_name", ["mechababs_pin", "cluster_config"])
 def test_the_scenario_refuses_to_run_without_its_provisioning_input(fixture_name):
     """Both required options must raise, not skip.
 
