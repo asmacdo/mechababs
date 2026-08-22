@@ -12,7 +12,9 @@ mechababs:
   # wired into the run.
   depends_on: SimBIDS-0.0.3+anchor
   container:
-    source: ../repronim-containers-shim
+    # See SimBIDS-0.0.3+anchor.yaml: a plain ReproNim/containers clone, resolved
+    # relative to the study root.
+    source: ../containers
     name: bids-simbids
 
 analysis_path: "."

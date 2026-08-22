@@ -1,4 +1,4 @@
-"""The study-first spine, end to current: `campaign init` -> `add-dataset`.
+"""The study-first spine, end to current: `campaign init` -> `add-dataset` -> `scaffold`.
 
 One test, run as ordered **stages**, against a real study on a real filesystem. It
 asserts the things only an end-to-end run can: that `uv lock` + `uv sync` actually
@@ -7,19 +7,20 @@ activates it in a fresh shell, that the env-match guard really refuses the wrong
 python, and that what landed in the study's git history is what should have.
 
 **It grows by appending stages, not by rewriting.** Each `_stage_*` takes the study
-and the campaign label and returns nothing but assertions; the driver below calls
-them in order. As the reconciler verbs land, `_stage_scaffold`, `_stage_submit` and
-`_stage_merge` join the list and the earlier stages are untouched. Keeping it one
-test (rather than one test per stage) is deliberate: the stages share one study, and
-a later stage is meaningless if an earlier one failed, so a cascade of red for a
-single cause is noise.
+and returns nothing but assertions; the driver below calls them in order. As the
+reconciler verbs land, `_stage_submit` and `_stage_merge` join the list and the
+earlier stages are untouched. Keeping it one test (rather than one test per stage)
+is deliberate: the stages share one study, and a later stage is meaningless if an
+earlier one failed, so a cascade of red for a single cause is noise.
 
-The stages here run no babs jobs, so the round trip is the campaign environment
-build plus a few git commits — the fixture study is cached between runs, which is
-what keeps the whole thing at the couple-of-minutes mark.
+No babs *jobs* run yet — `scaffold` is `babs init`, which needs no scheduler — so
+the round trip is the campaign environment build, one babs project, and a handful
+of git commits. The fixture study and the container dataset are cached between
+runs, which is what keeps the whole thing at the couple-of-minutes mark.
 """
 
 import csv
+import json
 import logging
 import os
 import subprocess
@@ -41,7 +42,11 @@ LABEL = "e2e"
 ANCHOR = "SimBIDS-0.0.3+anchor"
 CHAIN = "SimBIDS-0.0.3+chain"
 
-SOURCEDATA = "sourcedata/ds999999"
+# The fixture study's sentinel dataset (conftest's DATASET_ID). It is a NAMED
+# sourcedata slot, not a generic `raw`/`rawbids` one, so the derivatives scaffold
+# produces carry the source id — the collision-proof half of the naming rule.
+DATASET_ID = "ds999999"
+SOURCEDATA = f"sourcedata/{DATASET_ID}"
 
 
 # --------------------------------------------------------------------------
@@ -96,6 +101,24 @@ def _in_campaign(study, label, *args, check=True):
     return _run(["bash", "-c", script], study, check=check)
 
 
+def _dispatch(study, verb, source_dataset, app_config, *, check=True):
+    """Dispatch one cell's transition the way `iterate` will.
+
+    `iterate` is the next chunk; until it exists the scenario calls the dispatcher
+    itself — from inside the campaign venv, which is where `iterate` will call it
+    from, so the thing under test (a `datalad run` at the study invoking the pinned
+    `mechababs-inner`) is the real one either way.
+    """
+    env_sh = campaign_mod.env_path(study, LABEL)
+    script = (f'. "{env_sh}" && python -c '
+              f"'import sys; from mechababs import dispatch; "
+              f"getattr(dispatch, sys.argv[1])(*sys.argv[2:])' "
+              f'"$1" "$2" "$3" "$4" "$5"')
+    return _run(["bash", "-c", script, "e2e-dispatch",
+                 verb, str(study), LABEL, source_dataset, app_config],
+                study, check=check)
+
+
 def _git(cwd, *args):
     return subprocess.run(["git", "-C", str(cwd), *args], check=True,
                           text=True, capture_output=True).stdout
@@ -110,6 +133,17 @@ def _assert_clean(study, phase):
 def _state_rows(study, label):
     with open(campaign_mod.state_path(study, label), newline="") as f:
         return list(csv.DictReader(f, delimiter="\t"))
+
+
+def _run_record(study):
+    """The `datalad run` record datalad embeds as JSON in the HEAD commit's body.
+
+    This is the artifact the whole chunk exists to produce, so the scenario reads it
+    rather than trusting the commit subject: the subject says a run happened, the
+    record says *which command*, from *where*, declaring *what*.
+    """
+    body = _git(study, "log", "-1", "--format=%b")
+    return json.loads(body[body.index("{"):body.rindex("}") + 1])
 
 
 # --------------------------------------------------------------------------
@@ -269,20 +303,113 @@ def _stage_history(study):
     assert len(subjects) > 2, "the fixture study's own history is gone"
 
 
-# --------------------------------------------------------------------------
+def _stage_scaffold(study):
+    """The first mutating transition: `babs init` a real derivative, recorded as a run.
+
+    Everything a scaffold owns is asserted here — the derivative in its final home
+    and registered as a subdataset, the inclusion pinned beside the statefile, the
+    cell recorded — plus the two things that make it *provenance*: the study's HEAD
+    is a run record, and the command in it is study-relative, so it re-executes
+    somewhere other than this machine.
+    """
+    anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
+    _dispatch(study, "scaffold", SOURCEDATA, anchor_app)
+
+    # The derivative is created in its final home inside the study — nothing is
+    # composed or relocated afterwards, which is what keeps run provenance clean.
+    # It carries the source id because the sourcedata slot is a named one.
+    derivative = study / "derivatives" / f"{ANCHOR}+{DATASET_ID}"
+    assert derivative.is_dir(), f"no derivative at {derivative}"
+    assert (derivative / ".babs").is_dir(), "not a babs project — babs init did not run"
+    assert (derivative / "code" / "processing_inclusion.csv").is_file(), (
+        "babs recorded no inclusion; --list-sub-file never reached it")
+
+    # Registered as a real subdataset of the study, not a stray directory: that
+    # registration is the study's record that this derivative is part of it.
+    gitlink = _git(study, "ls-tree", "HEAD", str(derivative.relative_to(study))).split()
+    assert gitlink[:2] == ["160000", "commit"], (
+        f"the derivative is not registered as a subdataset: {gitlink}")
+
+    # The pin records what was REQUESTED; babs's own processing_inclusion.csv records
+    # what it could run. Their diff is what catches a selected subject the data lacks.
+    pin = campaign_mod.inclusions_dir(study, LABEL) / \
+        f"{SOURCEDATA.replace('/', '-')}_{ANCHOR}.csv"
+    assert pin.is_file(), f"no inclusion pinned at {pin}"
+    requested = pin.read_text().split()
+    assert requested[0] == "sub_id" and len(requested) == 2, (
+        f"--limit 1 should pin exactly one subject, got {requested}")
+
+    # The cell's durable fact, and only that cell's.
+    rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
+    assert rows[anchor_app]["babs"] == f"derivatives/{ANCHOR}+{DATASET_ID}", rows
+    assert rows[anchor_app]["merged"] == "", "scaffold claimed a merge"
+    assert rows[f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"]["babs"] == "", (
+        "scaffolding one cell advanced its sibling")
+
+    # The point of the whole chunk: the transition landed as a re-executable
+    # command, not as a save with an adjective on it.
+    subject = _git(study, "log", "-1", "--format=%s").strip()
+    assert subject.startswith("[DATALAD RUNCMD] mechababs scaffold"), subject
+    record = _run_record(study)
+    assert record["pwd"] == ".", record
+    assert record["cmd"] == (
+        f"mechababs-inner scaffold --campaign {LABEL} "
+        f"--source-dataset {SOURCEDATA} --app {anchor_app}"), record["cmd"]
+    assert str(study) not in record["cmd"], (
+        "the recorded command carries this machine's path, so it re-executes nowhere")
+
+    # Declared outputs, so this also says nothing undeclared was swept in.
+    assert set(record["outputs"]) == {
+        f"derivatives/{ANCHOR}+{DATASET_ID}",
+        str(campaign_mod.state_path(study, LABEL).relative_to(study)),
+        str(pin.relative_to(study)),
+        ".gitmodules",
+    }, record["outputs"]
+
+    _assert_clean(study, "scaffold")
+
+    # The self-guard: the recorded command re-run against a cell that has since been
+    # scaffolded must fail loudly, not init a second derivative over the first.
+    again = _dispatch(study, "scaffold", SOURCEDATA, anchor_app, check=False)
+    assert again.returncode != 0, "a scaffolded cell was scaffolded again"
+    assert "already scaffolded" in again.stderr, again.stderr
+    _assert_clean(study, "the refused re-scaffold")
+
+
+def _stage_dependent_cell_waits_for_its_producer(study):
+    """A cell is scaffolded only after its producer's results are merged.
+
+    The anchor is initialized but nothing has run, let alone merged, so the chain
+    cell is not ready — and this verb, which is only ever reached because something
+    decided a cell WAS ready, has to say so rather than proceed.
+    """
+    chain_app = f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"
+    refused = _dispatch(study, "scaffold", SOURCEDATA, chain_app, check=False)
+
+    assert refused.returncode != 0, "a dependent cell scaffolded before its producer"
+    assert "not merged yet" in refused.stderr, refused.stderr
+    rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
+    assert rows[chain_app]["babs"] == "", "the refused cell was recorded anyway"
+    assert not (study / "derivatives" / f"{CHAIN}+{DATASET_ID}").exists()
+    _assert_clean(study, "the refused dependent cell")
+
+
 
 def test_spine(study, cluster_config, app_configs, mechababs_pin, babs_pin,
                simbids_sif):
     """The whole spine, in order. Add later chunks' stages to the bottom.
 
-    `simbids_sif` is requested even though no job runs yet: the app configs name the
-    container, so a missing shim means this cluster config could not run anything —
-    better a loud skip at the top than a green run that proved less than it looks.
+    `simbids_sif` is requested because `scaffold` really inits against that container
+    dataset, and because a missing one means this cluster config could not run
+    anything — better a loud skip at the top than a green run that proved less than
+    it looks.
     """
     _stage_campaign_init(study, cluster_config, app_configs, mechababs_pin, babs_pin)
     _stage_env_sh_selects_and_activates(study)
     _stage_add_dataset(study)
     _stage_history(study)
+    _stage_scaffold(study)
+    _stage_dependent_cell_waits_for_its_producer(study)
 
 
 def test_campaign_init_refuses_outside_a_study(tmp_path, cluster_config, app_configs,

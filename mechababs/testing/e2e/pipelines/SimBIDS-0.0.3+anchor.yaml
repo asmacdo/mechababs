@@ -4,18 +4,24 @@
 # NOT for real data — paired with examples/clusters/test-docker.yaml.
 
 mechababs:
-  # mechababs-only config: consumed by mechababs, stripped by merge_config so none
-  # of it reaches the babs config. selection = deploy-time subject-eligibility rule
-  # ({} = pass-through: all subjects, still capped by --limit); container = which
-  # image to vendor + pass to `babs init --container-ds/--container-name`.
+  # mechababs-only config: consumed by mechababs, stripped from the composed babs
+  # config so none of it reaches babs. selection = scaffold-time subject-eligibility
+  # rule ({} = pass-through: all subjects, still capped by --limit); container =
+  # which image to pass to `babs init --container-ds/--container-name`.
   selection: {}
   container:
-    # Same repronim-containers-shim the real mriqc/fmriprep pipelines use, so the
-    # e2e exercises prod's real container-fetch path (and the shim itself). simbids
-    # isn't in upstream ReproNim, so tmp-repronim-container-shim.sh builds it from
-    # Docker Hub and registers it as `bids-simbids`. `configure` vendors the shim
-    # into code/; a relative source resolves against the campaign root.
-    source: ../repronim-containers-shim
+    # A PLAIN ReproNim/containers clone — the same dataset a production config
+    # names, no shim and no vendoring step. babs resolves the image out of the
+    # datalad-containers registration (`images/bids/bids-simbids--0.0.3.sif`)
+    # rather than its own default layout, which needs babs with PennLINC/babs#399
+    # — on babs main, in no release yet, so the suite pins babs main.
+    #
+    # A relative source resolves against the STUDY root, and the suite's studies
+    # are built as siblings of the clone under the e2e workdir. A production config
+    # names the GitHub URL instead: same knob, dev value vs prod value. Local here
+    # because babs installs `container.source` into every derivative it inits, so a
+    # URL would pay a clone per cell.
+    source: ../containers
     name: bids-simbids
 
 # BIDS-study layout (babs#369): the babs project root IS the analysis dataset, so
