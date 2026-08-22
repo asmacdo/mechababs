@@ -45,7 +45,7 @@ def configs(tmp_path):
     return src
 
 
-def pretend_build_env(campaign, label):
+def pretend_build_env(campaign, label, cluster_file=None):
     """What `build_env` leaves behind, without running uv: a stamped venv + a lock."""
     venv = campaign / campaign_mod.VENV_DIRNAME
     venv.mkdir()
@@ -63,8 +63,8 @@ def stub_env(monkeypatch):
     """
     calls = {}
 
-    def fake_build_env(campaign, label):
-        calls["build_env"] = campaign
+    def fake_build_env(campaign, label, cluster_file):
+        calls["build_env"] = (campaign, cluster_file)
         return pretend_build_env(campaign, label)
 
     @contextmanager
@@ -362,6 +362,13 @@ def test_env_constraints_compose_with_the_source_pins(study, configs, stub_env):
     assert uv["constraint-dependencies"] == ["pandas<=2.3.2", "h5py<=3.14.0"]
 
 
+def test_build_env_is_told_which_cluster_config_to_blame(study, configs, stub_env):
+    # the staged copy, so a failure message points at the file committed in the campaign
+    campaign = init(study, configs, cluster="old-glibc")
+    _, cluster_file = stub_env["build_env"]
+    assert Path(cluster_file) == campaign / "clusters" / "old-glibc.yaml"
+
+
 def test_a_bare_string_env_constraints_is_refused(tmp_path):
     # a scalar would otherwise be iterated one constraint per CHARACTER
     bad = tmp_path / "bad-cluster.yaml"
@@ -369,6 +376,74 @@ def test_a_bare_string_env_constraints_is_refused(tmp_path):
     with pytest.raises(SystemExit) as e:
         campaign_init.cluster_env_constraints(bad)
     assert "must be a LIST" in str(e.value)
+
+
+# --- a package with no wheel for this system --------------------------------
+
+@pytest.fixture
+def fake_uv(tmp_path, monkeypatch):
+    """Stand in for `uv` with a script that prints given output and fails.
+
+    A missing-wheel failure is a real network resolve plus a real compiler error, so it
+    cannot be provoked in a unit test — but what mechababs has to get right is only the
+    reading of uv's output, which this pins exactly.
+    """
+    def install(output, returncode=1):
+        script = tmp_path / "fake-uv"
+        script.write_text("#!/usr/bin/env bash\n"
+                          f"cat <<'UVEOF'\n{output}\nUVEOF\n"
+                          f"exit {returncode}\n")
+        script.chmod(0o755)
+        monkeypatch.setattr(campaign_init, "UV", str(script))
+        return script
+    return install
+
+
+# What uv prints when a package has no wheel for this platform: it falls back to the
+# sdist, the build backend fails, and this line precedes hundreds of compiler lines.
+UV_BUILD_FAILURE = """\
+Resolved 128 packages in 1.20s
+  × Failed to build `pandas==2.3.3`
+  ├─▶ The build backend returned an error
+  ╰─▶ Call to `setuptools.build_meta.build_wheel` failed (exit status: 1)
+      pandas/_libs/tslibs/base.c:31:10: fatal error: Python.h: No such file
+"""
+
+
+def test_a_missing_wheel_names_the_package_and_the_knob(fake_uv, tmp_path):
+    fake_uv(UV_BUILD_FAILURE)
+    campaign = tmp_path / "study" / ".mechababs" / "campaigns" / "nprep"
+    cluster = campaign / "clusters" / "sherlock.yaml"
+
+    with pytest.raises(SystemExit) as e:
+        campaign_init.run_uv("sync", "--frozen",
+                             campaign=campaign, cluster_file=cluster)
+
+    message = str(e.value)
+    # the package, not the header file the compiler complained about
+    assert "pandas" in message
+    # the lever, and the file to pull it in
+    assert "env_constraints" in message
+    assert str(cluster) in message
+    # the retry path: init does not re-run over an existing campaign
+    assert str(campaign) in message
+
+
+def test_a_failure_that_is_not_a_build_failure_is_not_blamed_on_the_cluster(fake_uv,
+                                                                            tmp_path):
+    # an unreachable pin, no network, a bad specifier — saying `env_constraints` here
+    # would send the user to edit the one file that is fine
+    fake_uv("error: Git operation failed\n  ╰─▶ failed to clone into: /tmp/x")
+    with pytest.raises(SystemExit) as e:
+        campaign_init.run_uv("lock", campaign=tmp_path, cluster_file=tmp_path / "c.yaml")
+    assert "env_constraints" not in str(e.value)
+
+
+def test_a_uv_command_that_succeeds_returns_and_streams(fake_uv, capfd):
+    fake_uv("Resolved 128 packages in 1.20s", returncode=0)
+    campaign_init.run_uv("lock", campaign="/x", cluster_file="/x/c.yaml")
+    # kept AND shown: a resolve is slow, so swallowing its progress would be worse
+    assert "Resolved 128 packages" in capfd.readouterr().err
 
 
 # --- refusals ---------------------------------------------------------------

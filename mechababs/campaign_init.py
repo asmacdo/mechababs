@@ -30,6 +30,7 @@ whole campaign.
 import json
 import re
 import shutil
+import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -39,7 +40,7 @@ from pathlib import Path
 import yaml
 
 from mechababs import campaign as campaign_mod
-from mechababs.utils import campaign_save_scope, run
+from mechababs.utils import campaign_save_scope
 
 # Runtime tools a campaign needs beyond mechababs + babs themselves. A literal rather
 # than a requirements file in the repo, because this command may run from an ephemeral
@@ -309,15 +310,76 @@ def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None,
     return "\n".join(lines) + "\n"
 
 
-def build_env(campaign, label):
+# uv's own line when a source build fails, e.g. ``Failed to build `pandas==2.3.3` ``.
+# It precedes the build backend's output, so it survives however many hundred lines of
+# compiler error follow.
+UV_BUILD_FAILURE_RE = re.compile(r"Failed to build [`'\"]([A-Za-z0-9._-]+)")
+
+
+def missing_wheel_message(package, campaign, cluster_file):
+    """What to tell a user whose site cannot install ``package``."""
+    return (
+        f"\ncould not build the campaign environment: uv had no installable wheel for "
+        f"{package!r} on this system and building it from source failed (above).\n"
+        f"\nThat is a SITE fact, and `env_constraints` in the cluster config is where "
+        f"it is declared — most often a glibc older than the newest manylinux wheels "
+        f"target. Cap the package to a version that still ships a wheel here:\n"
+        f"\n    # {cluster_file}\n"
+        f"    env_constraints:\n"
+        f"      - {package}<=<the last version with a wheel for this system>\n"
+        f"\nThen remove the half-built campaign and run `mechababs campaign init` "
+        f"again — init does not re-run over an existing campaign:\n"
+        f"\n    rm -rf {campaign}\n"
+    )
+
+
+def run_uv(*args, campaign, cluster_file):
+    """Run a ``uv`` command, and translate a source-build failure into a named one.
+
+    A package with no wheel for this system does not announce itself as one: uv falls
+    back to the sdist, and what reaches the user is the build backend's compiler error
+    — hundreds of lines naming a missing header rather than a package, with the actual
+    lever (`env_constraints`) nowhere in sight.
+
+    uv's blanket ``no-build`` would turn that into a clean "no wheel for X", but it
+    covers *every* source distribution, and a campaign's mechababs (and often babs) is
+    pinned to a git or path source, which is one — so it fails every campaign on every
+    platform. Scoping it per-package needs an allowlist uv does not have. So the output
+    is streamed (a resolve is slow; silence would be worse) and kept, and uv's own
+    ``Failed to build `<name>` `` line is what names the package afterwards.
+    """
+    cmd = [UV, *[str(a) for a in args]]
+    print("+ " + " ".join(cmd), file=sys.stderr)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True)
+    captured = []
+    for line in proc.stdout:
+        sys.stderr.write(line)
+        captured.append(line)
+    if proc.wait() == 0:
+        return
+    failed = UV_BUILD_FAILURE_RE.findall("".join(captured))
+    if not failed:
+        # Not a build failure at all (an unreachable pin, no network, a bad
+        # specifier). Say so plainly rather than dressing it as a platform problem.
+        sys.exit(f"\n{' '.join(cmd)} failed (exit {proc.returncode})")
+    sys.exit(missing_wheel_message(failed[0], campaign, cluster_file))
+
+
+def build_env(campaign, label, cluster_file):
     """Resolve the campaign's lock and build its venv from it; stamp the venv.
 
     ``uv lock`` pins every dependency (the git refs to commits) and ``uv sync``
     installs exactly that — so the environment and the committed lock agree by
     construction, which is what the env-match guard later checks.
+
+    ``cluster_file`` names the config a failure should send the user to edit; both uv
+    steps can hit a source build (lock builds an sdist it cannot read metadata from,
+    sync builds one that has no wheel), so both go through ``run_uv``.
     """
-    run(UV, "lock", "--project", str(campaign))
-    run(UV, "sync", "--project", str(campaign), "--frozen")
+    uv = dict(campaign=campaign, cluster_file=cluster_file)
+    run_uv("lock", "--project", str(campaign), **uv)
+    run_uv("sync", "--project", str(campaign), "--frozen", **uv)
     venv = campaign / campaign_mod.VENV_DIRNAME
     campaign_mod.write_env_stamp(
         venv, label, (campaign / campaign_mod.UV_LOCK_FILENAME).read_text())
@@ -440,7 +502,7 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
                              env_constraints))
 
         write_env_sh(campaign, label)
-        build_env(campaign, label)
+        build_env(campaign, label, campaign_mod.clusters_dir(study, label) / cluster_file)
 
         save.message = (
             f"mechababs campaign init {label} "
