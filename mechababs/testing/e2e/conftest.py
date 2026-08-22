@@ -1,22 +1,26 @@
 """pytest fixtures for the mechababs e2e harness.
 
 Locally this runs INSIDE the pennlinc/slurm-docker-ci container (launched by
-run_in_podman.sh); on a real cluster it runs on the login node. Either way the
-scenario drives the campaign CLI, so the fixtures provide everything it needs:
+run_in_podman.sh); on a real cluster it will run on the login node. Either way the
+scenario drives the real CLI against a real study, so the fixtures build the world
+that CLI expects to already exist:
 
 - `simbids_sif` — the simbids container, from the shim built once as host-prep
   (`tmp-repronim-container-shim.sh bids-simbids`). This is a temporary seam: when
   babs#383 lands + simbids is upstreamed to ReproNim/containers, only this fixture
   changes (shim path -> ReproNim `datalad get`).
-- `rawdata` — fake BIDS input, generated once into a gitignored repo cache. Prod
-  uses real OpenNeuro data, so fake input is a test-only concern that lives in the
-  test, not in any prod tool.
-- `campaign` — the throwaway campaign the scenario runs in, provisioned from the pins
-  of the campaign named by `--campaign` (required), exercising prod's real bootstrap.sh
-  construction path. Those pins are the ONE provisioning input: `mechababs test-cluster`
-  passes them, and a dev run arrives the same way, by bootstrapping a dev campaign from
-  the checkout first (run_in_podman.sh / run_on_cluster.sh do exactly that). So the
-  provisioning code a user hits is the code every dev run hits.
+- `rawdata` — fake BIDS input, generated once into the workdir cache. Prod uses real
+  OpenNeuro data, so fake input is a test-only concern that lives in the test, not in
+  any prod tool.
+- `study` — an OpenNeuroStudies-shaped study wrapping that raw data, cached and then
+  copied per test. mechababs operates on a study that ALREADY EXISTS (docs/spec.md,
+  "Layout & input") and never authors one, so the study is a fixture rather than
+  something a mechababs verb produces. Building it here is a test fixture, not study
+  authoring re-entering scope — the same carve-out the spec makes for `test-cluster`.
+
+There is no campaign fixture: `mechababs campaign init` is the first thing the
+scenario runs, so building a campaign is the code under test, not scaffolding
+around it.
 """
 
 import csv
@@ -30,7 +34,6 @@ import uuid
 from pathlib import Path
 
 import pytest
-from mechababs import validate
 
 log = logging.getLogger("mechababs.e2e")
 
@@ -51,18 +54,25 @@ def pytest_addoption(parser):
         default=None,
         help="REQUIRED. Path to the cluster config to validate. This is the "
         "cross-cluster axis — point it at a real site config to validate that config the "
-        "same way. Resolving a bare name (against the campaign's clusters/) belongs to "
-        "`mechababs test-cluster --cluster`, which every invocation comes through, so "
-        "what arrives here is already a resolved path.",
+        "same way. Always a resolved path: `campaign init --cluster` takes a path or URL "
+        "and copies it in, so there is no bare name to look up.",
     )
     parser.addoption(
-        "--campaign",
+        "--mechababs",
         default=None,
-        help="REQUIRED. An existing campaign to take the pinned tools from. The scenario "
-        "still builds its own campaign to run in (it configures and retires derivatives, "
-        "so it must not touch yours) but provisions it from these pins. Set by `mechababs "
-        "test-cluster`; a dev run bootstraps a dev campaign from the checkout and points "
-        "test-cluster at that (run_in_podman.sh, run_on_cluster.sh).",
+        help="REQUIRED. The mechababs the campaigns pin, as `URL@REF` — passed straight "
+        "to `campaign init --mechababs`, so the tools a scenario campaign records are the "
+        "code under test. A dev run passes its own checkout (run_in_podman.sh mounts it "
+        "and hands over the mount path); `git clone` takes a local path, which is what "
+        "makes an unpushed branch testable.",
+    )
+    parser.addoption(
+        "--babs",
+        default=None,
+        help="Optional `URL@REF` pinning babs to a git checkout. Omitted, a campaign "
+        "declares babs as a plain dependency and the lock freezes the latest PyPI "
+        "release — which is what a user gets, so it is the default here too. Pass it "
+        "to run the suite against an unmerged babs fix.",
     )
 
 
@@ -70,17 +80,15 @@ def pytest_addoption(parser):
 def cluster_config(request):
     """The cluster config under test, as an absolute path.
 
-    Checked here, not resolved: `validate.resolve_cluster` does the resolving (a path as
-    given, or a bare name in the campaign's `clusters/`) and every invocation goes
-    through it, so a second resolver here would be a second way to answer one question —
-    and the one that used to search the checkout's `examples/` built a path that
-    disappears once code is referenced and locked instead of cloned in.
+    A UsageError rather than a skip, here and for `--mechababs` below: pytest exits 0
+    when every test skips, so a skip would let a validation run report success having
+    validated nothing — the worst outcome for a validation command.
     """
     value = request.config.getoption("--cluster-config")
     if not value:
         raise pytest.UsageError(
-            "--cluster-config is required; run the scenario as "
-            "`mechababs test-cluster --cluster <config>`, which passes it"
+            "--cluster-config is required: it is the config under test. Pass the path "
+            "to the cluster config you want validated."
         )
     path = Path(value).expanduser()
     if not path.is_file():
@@ -89,17 +97,46 @@ def cluster_config(request):
 
 
 @pytest.fixture(scope="session")
-def pipelines():
-    """The suite's own test pipelines, shipped beside it.
+def mechababs_pin(request):
+    """The `URL@REF` the scenario's campaigns pin — the code under test.
 
-    The SimBIDS phantom pipelines are scenario fixtures, not starters a user would
-    copy, so they travel with the suite instead of living in `examples/`. That also
-    keeps the scenario runnable from an install, where the repo's `examples/` is
-    absent.
+    The scenario's whole claim is "these tools work on this cluster", so the mechababs
+    a campaign records has to be the one being tested, not whatever `campaign init`
+    would have inferred from its own install. Handing it in explicitly is also what
+    makes the dev route and the future `test-cluster` route the same route with a
+    different value.
+    """
+    value = request.config.getoption("--mechababs")
+    if not value:
+        raise pytest.UsageError(
+            "--mechababs is required: it names the code under test, as URL@REF. "
+            "A dev run passes its own checkout (see run_in_podman.sh)."
+        )
+    return value
+
+
+@pytest.fixture(scope="session")
+def babs_pin(request):
+    """The `URL@REF` for babs, or None to let the lock take the latest release.
+
+    Unlike `--mechababs` this is genuinely optional: babs is a dependency mechababs
+    shells out to, not the code under test, so the default (a released version, frozen
+    by the lock) is also the default a user gets.
+    """
+    return request.config.getoption("--babs")
+
+
+@pytest.fixture(scope="session")
+def app_configs():
+    """The suite's own test app configs, shipped beside it.
+
+    The SimBIDS phantom configs are scenario fixtures, not starters a user would copy,
+    so they travel with the suite instead of living in `examples/`. That also keeps the
+    scenario runnable from an install, where the repo's `examples/` is absent.
     """
     path = Path(__file__).resolve().parent / "pipelines"
     if not path.is_dir():
-        raise RuntimeError(f"suite pipelines missing at {path} (incomplete install?)")
+        raise RuntimeError(f"suite app configs missing at {path} (incomplete install?)")
     return path
 
 
@@ -186,22 +223,41 @@ def _generate_fake_bids(dest, sif):
 
 
 @pytest.fixture(scope="session")
-def study(rawdata, cache):
+def study_template(rawdata, cache):
     """A fake OpenNeuroStudies-shaped study wrapping the phantom `rawdata`.
 
-    mechababs clones a study and `babs init`s the derivative into its
-    `derivatives/`. Prod clones `OpenNeuroStudies/study-ds<X>`; dev has no such
-    study, so we build a faithful one from the phantom raw data — the same shape a
-    real clone would have, with no network. Built once into the workdir cache,
-    reused if present.
+    mechababs operates on a study that already exists and never authors one, so dev
+    needs a faithful stand-in for the `OpenNeuroStudies/study-ds<X>` prod clones:
+    upstream's `dataset_description.json`, the per-subject metadata TSV that the
+    add-dataset sniff reads, and the raw phantom registered as a real datalad
+    SUBDATASET (`sourcedata/<id>`) rather than a plain dir — so the scenario runs
+    against the nested-dataset structure derivatives land in.
 
-    The raw phantom is registered as a real datalad SUBDATASET (`sourcedata/<id>`),
-    not a plain dir, so the fixture exercises the nested-dataset structure the
-    campaign runs against (campaign -> study -> derivative).
+    Built once into the workdir cache; `study` hands each test its own copy.
     """
     dest = cache / f"study-{DATASET_ID}"
     if not (dest / ".datalad").exists():
         _build_study(dest, rawdata)
+    return dest
+
+
+@pytest.fixture(scope="function")
+def study(study_template, workdir):
+    """A private copy of the template study, one per test.
+
+    The scenario writes into the study — `campaign init` creates
+    `.mechababs/campaigns/<label>/` and commits it, `add-dataset` commits statefile
+    rows — so a shared study would leak state between tests and between runs. Copied
+    rather than re-derived: generating the phantom means running the simbids
+    container, which is the slow part of the whole suite.
+
+    Under the workdir, so the copy lives on the same host bind mount as everything
+    else and survives the run for inspection. `symlinks=True` keeps the raw data's
+    annex symlinks as symlinks; the annex objects they point into are copied with them.
+    """
+    dest = workdir / f"e2e-study-{uuid.uuid4().hex[:8]}"
+    shutil.copytree(study_template, dest, symlinks=True)
+    log.info("study for this test: %s", dest)
     return dest
 
 
@@ -260,110 +316,3 @@ def _write_study_description(path):
         "DatasetType": "study",
         "GeneratedBy": [{"Name": "openneuro-studies"}],
     }, indent=2) + "\n")
-
-
-def _ref_or_fail(clone):
-    """`validate.clone_ref`, reported as a test failure rather than an exception.
-
-    A pin with no re-clonable ref is a real precondition breach, so fail loudly: a
-    skip here would let `test-cluster` exit 0 having validated nothing.
-    """
-    try:
-        return validate.clone_ref(clone)
-    except validate.RefError as e:
-        pytest.fail(str(e))
-
-
-def _pins_from_campaign(campaign):
-    """The mechababs + babs pins a campaign is running, as bootstrap `URL@REF` specs.
-
-    The scenario's campaign is provisioned from the SAME code the campaign under test is
-    pinned to, which is what makes a green run mean "these tools work on this cluster".
-    Today the pins are the vendored clones (`code/<tool>`), so their checked-out branch
-    is the ref; when the pins become a lockfile this is the one place that has to learn
-    to read it.
-
-    A missing mechababs pin fails rather than skips: it is the provisioning input, so
-    without it there is nothing to validate, and a skip would let `test-cluster` exit 0
-    having validated nothing.
-    """
-    pins = {}
-    for tool in ("mechababs", "babs"):
-        clone = campaign / "code" / tool
-        if not (clone / ".git").exists():
-            continue
-        pins[tool] = f"{clone}@{_ref_or_fail(clone)}"
-    if "mechababs" not in pins:
-        pytest.fail(
-            f"{campaign} carries no mechababs pin at code/mechababs, so there is "
-            f"nothing to provision the scenario from"
-        )
-    return pins
-
-
-@pytest.fixture(scope="session")
-def campaign_under_test(request):
-    """The campaign whose pins provision the scenario — its only provisioning input.
-
-    Required, and a UsageError rather than a skip: a skip would let `test-cluster` exit 0
-    having validated nothing, the worst outcome for a validation command.
-    """
-    value = request.config.getoption("--campaign")
-    if not value:
-        raise pytest.UsageError(
-            "--campaign is required: the scenario provisions its own campaign from an "
-            "existing campaign's pins, so there has to be one to take them from.\n"
-            "Run it as `mechababs test-cluster --cluster <config>` from a campaign venv. "
-            "To test a checkout, bootstrap a dev campaign from it first and point "
-            "test-cluster at that — which is all run_in_podman.sh and run_on_cluster.sh do."
-        )
-    return Path(value).expanduser().resolve()
-
-
-@pytest.fixture(scope="function")
-def campaign(workdir, campaign_under_test):
-    """A freshly bootstrapped campaign for the scenario to work in, one per test.
-
-    Calls the real bootstrap.sh — prod's exact construction path — so each test gets its
-    OWN campaign. That is not incidental: the scenario configures the campaign, adds a
-    dataset, and retires a derivative, so it must never run inside a campaign holding
-    real work.
-
-    There is ONE provisioning input: the pins of the campaign under test, so the scenario
-    exercises exactly the mechababs + babs that campaign is running. A dev run reaches it
-    the way a user does — bootstrap a dev campaign from the checkout, then point
-    `test-cluster` at it — rather than through a second, dev-only route. That is
-    docs/overview.md's one-tool-two-modes rule: dev exercises prod's exact paths, so dev
-    validates prod. Not hypothetical — while the two routes existed they drifted, and a
-    detached-HEAD bug got fixed on one and left broken on the other.
-
-    The unique per-call name keeps bootstrap's refuse-existing-dir guard happy and
-    avoids clobbering a prior run; clean up stale ones with
-    `rm -rf $MECHABABS_E2E_WORKDIR/test-campaign-*`.
-
-    --system-site-packages is opt-in via MECHABABS_E2E_SYSTEM_SITE_PACKAGES (set by
-    run_in_podman.sh for the CentOS7 container, whose 2015 toolchain can't build the
-    newest wheels); a real cluster leaves it unset and builds prod's isolated venv.
-    """
-    pins = _pins_from_campaign(campaign_under_test)
-    # bootstrap.sh is not part of the installed distribution (it is what CREATES the
-    # environment the distribution runs in), so take it from the campaign's own pin —
-    # the same code the campaign is running.
-    bootstrap = campaign_under_test / "code" / "mechababs" / "bootstrap.sh"
-    if not bootstrap.is_file():
-        pytest.fail(
-            f"no bootstrap.sh at {bootstrap}, so there is nothing to build the "
-            f"scenario's campaign with"
-        )
-    path = workdir / f"test-campaign-{uuid.uuid4().hex[:8]}"
-    cmd = [str(bootstrap), str(path), "--mechababs", pins["mechababs"]]
-    if "babs" in pins:
-        cmd += ["--babs", pins["babs"]]
-    if os.environ.get("MECHABABS_E2E_SYSTEM_SITE_PACKAGES"):
-        cmd.append("--system-site-packages")
-    log.info("bootstrapping campaign at %s (mechababs %s)", path, pins["mechababs"])
-    subprocess.run(cmd, check=True)
-    # No config staging here: the tests hand configure the resolved config paths,
-    # exercising its copy-in (the prod path — a user points --cluster/--pipelines at a
-    # config and configure copies it into the campaign's clusters/ + pipelines/).
-    return path

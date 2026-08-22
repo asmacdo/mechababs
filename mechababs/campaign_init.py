@@ -30,6 +30,7 @@ whole campaign.
 import json
 import re
 import shutil
+import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -39,12 +40,11 @@ from pathlib import Path
 import yaml
 
 from mechababs import campaign as campaign_mod
-from mechababs.utils import campaign_save_scope, run
+from mechababs.utils import campaign_save_scope
 
-# Runtime tools a campaign needs beyond mechababs + babs themselves — the same set
-# requirements-campaign.txt installs into a bootstrap-built venv. Kept as a literal
-# because this command may run from an ephemeral uvx install, which has the
-# mechababs *package* but not the repo file.
+# Runtime tools a campaign needs beyond mechababs + babs themselves. A literal rather
+# than a requirements file in the repo, because this command may run from an ephemeral
+# uvx install, which has the mechababs *package* but no repo file to read.
 CAMPAIGN_EXTRAS = [
     "con-duct",     # usage/resource logs alongside every run
     "visidata",     # interactive TSV viewer for the statefile
@@ -73,10 +73,8 @@ UV = "uv"
 def parse_source_spec(spec, what):
     """Split a ``URL@REF`` pin. ``URL`` is anything git clones, a local path included.
 
-    The ``URL@REF`` shape (and the requirement that ``REF`` be given rather than
-    defaulted) is carried over from ``bootstrap.sh``: naming the ref explicitly is
-    what makes "run a campaign against this PR branch" a config change instead of a
-    code change.
+    ``REF`` is required rather than defaulted: naming it explicitly is what makes
+    "run a campaign against this PR branch" a config change instead of a code change.
     """
     url, sep, ref = spec.rpartition("@")
     if not sep or not url or not ref:
@@ -191,6 +189,32 @@ def declared_depends_on(config_path):
     return ((config.get("mechababs") or {}).get("depends_on") or "")
 
 
+def cluster_env_constraints(config_path):
+    """The cluster config's ``env_constraints``, or ``[]``.
+
+    A list of verbatim PEP 508 specifiers (``pandas<=2.3.2``). Which package versions
+    a site can actually install is a **cluster fact** — an old glibc stops loading the
+    newest manylinux wheels long before it stops running jobs — so it is declared on
+    the cluster axis and folded into the campaign's generated pyproject.
+
+    mechababs does not interpret them: they become uv ``constraint-dependencies``,
+    whose semantics (cap a package that is already in the resolution, never pull one
+    in that is not) are uv's own. The only check here is shape, and it insists on a
+    real list because the near-misses fail *quietly*: a bare string iterates one
+    constraint per character, and a mapping iterates its keys, dropping every
+    specifier — either way the resolution looks capped and is not.
+    """
+    config = yaml.safe_load(Path(config_path).read_text()) or {}
+    constraints = config.get("env_constraints")
+    if not constraints:
+        return []
+    if not isinstance(constraints, list) or \
+            not all(isinstance(c, str) for c in constraints):
+        sys.exit(f"env_constraints in {config_path} must be a LIST of version "
+                 f"specifiers (e.g. `- pandas<=2.3.2`), got: {constraints!r}")
+    return list(constraints)
+
+
 def resolve_apps(dest_dir, app_args):
     """Stage the app bundle; return ordered ``[(filename, name, depends_on), …]``.
 
@@ -232,7 +256,8 @@ def _toml_inline(source):
     return "{ " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in source.items()) + " }"
 
 
-def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None):
+def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None,
+                     env_constraints=()):
     """The campaign's dependency declaration — a uv *virtual* project.
 
     No ``[build-system]``: the campaign is not a package to build, it is a set of
@@ -242,6 +267,10 @@ def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None):
     PyPI and frozen to an exact released version by the lock — the default for both
     babs and a registry-installed mechababs. A source entry overrides that with a
     git (or path) checkout.
+
+    ``env_constraints`` (the cluster config's) become uv ``constraint-dependencies``:
+    caps that apply to whatever the resolution already contains, deep in the transitive
+    closure included, without adding a dependency or pinning one the site does not use.
     """
     deps = [mechababs_req, "babs", *CAMPAIGN_EXTRAS]
     sources = {}
@@ -269,18 +298,91 @@ def render_pyproject(label, mechababs_req, mechababs_source, babs_source=None):
     if sources:
         lines += ["", "[tool.uv.sources]"]
         lines += [f"{name} = {_toml_inline(source)}" for name, source in sources.items()]
+    if env_constraints:
+        lines += [
+            "",
+            "# `env_constraints` from this campaign's cluster config: version caps the",
+            "# SITE imposes (typically a glibc too old for the newest manylinux wheels).",
+            "# Constraints cap a package only if the resolution already contains it —",
+            "# they never add one — so this is a floor-preserving narrowing, not a pin.",
+            "[tool.uv]",
+            "constraint-dependencies = [",
+        ]
+        lines += [f"    {_toml_str(c)}," for c in env_constraints]
+        lines += ["]"]
     return "\n".join(lines) + "\n"
 
 
-def build_env(campaign, label):
+# uv's own line when a source build fails, e.g. ``Failed to build `pandas==2.3.3` ``.
+# It precedes the build backend's output, so it survives however many hundred lines of
+# compiler error follow.
+UV_BUILD_FAILURE_RE = re.compile(r"Failed to build [`'\"]([A-Za-z0-9._-]+)")
+
+
+def missing_wheel_message(package, campaign, cluster_file):
+    """What to tell a user whose site cannot install ``package``."""
+    return (
+        f"\ncould not build the campaign environment: uv had no installable wheel for "
+        f"{package!r} on this system and building it from source failed (above).\n"
+        f"\nThat is a SITE fact, and `env_constraints` in the cluster config is where "
+        f"it is declared — most often a glibc older than the newest manylinux wheels "
+        f"target. Cap the package to a version that still ships a wheel here:\n"
+        f"\n    # {cluster_file}\n"
+        f"    env_constraints:\n"
+        f"      - {package}<=<the last version with a wheel for this system>\n"
+        f"\nThen remove the half-built campaign and run `mechababs campaign init` "
+        f"again — init does not re-run over an existing campaign:\n"
+        f"\n    rm -rf {campaign}\n"
+    )
+
+
+def run_uv(*args, campaign, cluster_file):
+    """Run a ``uv`` command, and translate a source-build failure into a named one.
+
+    A package with no wheel for this system does not announce itself as one: uv falls
+    back to the sdist, and what reaches the user is the build backend's compiler error
+    — hundreds of lines naming a missing header rather than a package, with the actual
+    lever (`env_constraints`) nowhere in sight.
+
+    uv's blanket ``no-build`` would turn that into a clean "no wheel for X", but it
+    covers *every* source distribution, and a campaign's mechababs (and often babs) is
+    pinned to a git or path source, which is one — so it fails every campaign on every
+    platform. Scoping it per-package needs an allowlist uv does not have. So the output
+    is streamed (a resolve is slow; silence would be worse) and kept, and uv's own
+    ``Failed to build `<name>` `` line is what names the package afterwards.
+    """
+    cmd = [UV, *[str(a) for a in args]]
+    print("+ " + " ".join(cmd), file=sys.stderr)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True)
+    captured = []
+    for line in proc.stdout:
+        sys.stderr.write(line)
+        captured.append(line)
+    if proc.wait() == 0:
+        return
+    failed = UV_BUILD_FAILURE_RE.findall("".join(captured))
+    if not failed:
+        # Not a build failure at all (an unreachable pin, no network, a bad
+        # specifier). Say so plainly rather than dressing it as a platform problem.
+        sys.exit(f"\n{' '.join(cmd)} failed (exit {proc.returncode})")
+    sys.exit(missing_wheel_message(failed[0], campaign, cluster_file))
+
+
+def build_env(campaign, label, cluster_file):
     """Resolve the campaign's lock and build its venv from it; stamp the venv.
 
     ``uv lock`` pins every dependency (the git refs to commits) and ``uv sync``
     installs exactly that — so the environment and the committed lock agree by
     construction, which is what the env-match guard later checks.
+
+    ``cluster_file`` names the config a failure should send the user to edit; both uv
+    steps can hit a source build (lock builds an sdist it cannot read metadata from,
+    sync builds one that has no wheel), so both go through ``run_uv``.
     """
-    run(UV, "lock", "--project", str(campaign))
-    run(UV, "sync", "--project", str(campaign), "--frozen")
+    uv = dict(campaign=campaign, cluster_file=cluster_file)
+    run_uv("lock", "--project", str(campaign), **uv)
+    run_uv("sync", "--project", str(campaign), "--frozen", **uv)
     venv = campaign / campaign_mod.VENV_DIRNAME
     campaign_mod.write_env_stamp(
         venv, label, (campaign / campaign_mod.UV_LOCK_FILENAME).read_text())
@@ -393,11 +495,16 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
         # for running a PR branch (or a local one) through a campaign.
         babs_source = (git_source(*parse_source_spec(babs_spec, "babs"))
                        if babs_spec else None)
+        # The STAGED copy, not the argument: that is the file committed with the
+        # campaign, so it is what a failure should tell the user to edit — and the same
+        # read whether the config arrived as a path or a URL.
+        staged_cluster = campaign_mod.clusters_dir(study, label) / cluster_file
         (campaign / campaign_mod.PYPROJECT_FILENAME).write_text(
-            render_pyproject(label, mechababs_req, mechababs_source, babs_source))
+            render_pyproject(label, mechababs_req, mechababs_source, babs_source,
+                             cluster_env_constraints(staged_cluster)))
 
         write_env_sh(campaign, label)
-        build_env(campaign, label)
+        build_env(campaign, label, staged_cluster)
 
         save.message = (
             f"mechababs campaign init {label} "

@@ -4,6 +4,13 @@
 
 mechababs:
   selection: {}
+  # The orchestration edge, mechababs-owned and deliberately separate from babs's
+  # `input_datasets` below (docs/spec.md, "`depends_on` is a mechababs-owned
+  # declaration"). Declared by the producer's STEM — the natural name to write —
+  # and stored resolved to its campaign-relative config path in the statefile.
+  # This is an input-kind edge: `input_datasets` is where the same producer gets
+  # wired into the run.
+  depends_on: SimBIDS-0.0.3+anchor
   container:
     source: ../repronim-containers-shim
     name: bids-simbids

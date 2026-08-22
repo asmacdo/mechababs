@@ -17,9 +17,19 @@ import logging
 import os
 import subprocess
 
+import pytest
+
 import yaml
 
 from mechababs import state
+
+pytest.skip(
+    "pre-study-first scenario: drives the old campaign CLI (configure/legacy "
+    "add-dataset), whose entry path was replaced by `campaign init` + the new "
+    "add-dataset. Kept, not deleted: its scaffold/submit/merge coverage re-points "
+    "into test_spine.py as those verbs land (chunks 3-4).",
+    allow_module_level=True,
+)
 
 log = logging.getLogger("mechababs.e2e")
 

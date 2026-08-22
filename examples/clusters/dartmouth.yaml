@@ -6,3 +6,24 @@ script_preamble: |
   trap 'rm -rf "${JOB_TMP}"' EXIT
 
 job_compute_space: "/scratch/${USER}"
+
+# Optional: version caps for the campaign environment, as verbatim PEP 508 specifiers.
+# They become uv `constraint-dependencies` — they cap a package the resolution already
+# contains and never add one, so every floor the campaign's dependencies declare is
+# preserved. Leave this out entirely on a modern cluster, as here.
+#
+# The case for them is a site whose glibc is older than the newest manylinux wheels
+# target (CentOS 7's 2.17 is still common on HPC): uv falls back to source builds the
+# site cannot compile, and `campaign init` dies in compiler output. The starter block
+# below is the glibc-2.17 set (see examples/clusters/sherlock.yaml, where it is live).
+# If the environment build still fails, the error names the package to add here.
+#
+# env_constraints:
+#   - greenlet<=3.2.5
+#   - h5py<=3.14.0
+#   - pandas<=2.3.2
+#   - scipy<=1.15.3
+#   - scikit-learn<=1.7.2
+#   - scikit-image<=0.25.2
+#   - pillow<=12.2.0
+#   - contourpy<=1.3.2

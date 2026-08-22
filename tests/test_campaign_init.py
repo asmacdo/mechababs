@@ -37,10 +37,15 @@ def configs(tmp_path):
     (src / "fMRIPrep-25.2.5+minimal.yaml").write_text(
         "mechababs:\n  depends_on: fMRIPrep-25.2.5+anat\n")
     (src / "dartmouth.yaml").write_text("cluster_resources: {}\n")
+    (src / "old-glibc.yaml").write_text(
+        "cluster_resources: {}\n"
+        "env_constraints:\n"
+        "  - pandas<=2.3.2\n"
+        "  - h5py<=3.14.0\n")
     return src
 
 
-def pretend_build_env(campaign, label):
+def pretend_build_env(campaign, label, cluster_file=None):
     """What `build_env` leaves behind, without running uv: a stamped venv + a lock."""
     venv = campaign / campaign_mod.VENV_DIRNAME
     venv.mkdir()
@@ -58,8 +63,8 @@ def stub_env(monkeypatch):
     """
     calls = {}
 
-    def fake_build_env(campaign, label):
-        calls["build_env"] = campaign
+    def fake_build_env(campaign, label, cluster_file):
+        calls["build_env"] = (campaign, cluster_file)
         return pretend_build_env(campaign, label)
 
     @contextmanager
@@ -73,10 +78,10 @@ def stub_env(monkeypatch):
     return calls
 
 
-def init(study, configs, *names, label="nprep", **kwargs):
+def init(study, configs, *names, label="nprep", cluster="dartmouth", **kwargs):
     apps = [str(configs / f"{n}.yaml") for n in names] or \
         [str(configs / "MRIQC-24.0.2.yaml")]
-    return campaign_init.init(study, label, apps, str(configs / "dartmouth.yaml"),
+    return campaign_init.init(study, label, apps, str(configs / f"{cluster}.yaml"),
                               **kwargs)
 
 
@@ -318,6 +323,134 @@ def test_a_released_mechababs_is_pinned_by_version(monkeypatch):
 
     monkeypatch.setattr(campaign_init.metadata, "distribution", lambda n: FakeDist())
     assert campaign_init.running_mechababs_pin() == ("mechababs==0.2.1", None)
+
+
+# --- the cluster's env_constraints ------------------------------------------
+
+def parsed_pyproject(campaign):
+    """The generated pyproject, through a real TOML parser.
+
+    Asserting on parsed structure rather than rendered text is what proves uv can read
+    what we emit — the `[tool.uv]` block sits after `[tool.uv.sources]`, which is a
+    super-table-after-sub-table ordering worth checking rather than assuming.
+    """
+    tomllib = pytest.importorskip("tomllib")   # stdlib from 3.11; mechababs targets 3.10
+    return tomllib.loads((campaign / campaign_mod.PYPROJECT_FILENAME).read_text())
+
+
+def test_the_clusters_env_constraints_reach_the_pyproject(study, configs, stub_env):
+    # a site fact (an old glibc's wheels), declared on the cluster axis and folded in
+    # verbatim — mechababs does not interpret the specifiers
+    campaign = init(study, configs, cluster="old-glibc")
+    assert parsed_pyproject(campaign)["tool"]["uv"]["constraint-dependencies"] == [
+        "pandas<=2.3.2", "h5py<=3.14.0"]
+
+
+def test_a_cluster_without_env_constraints_declares_none(study, configs, stub_env):
+    # absent means no constraints: a modern cluster's pyproject is unchanged
+    campaign = init(study, configs)
+    pyproject = (campaign / campaign_mod.PYPROJECT_FILENAME).read_text()
+    assert "constraint-dependencies" not in pyproject
+
+
+def test_env_constraints_compose_with_the_source_pins(study, configs, stub_env):
+    # both blocks land in one pyproject, and neither eats the other
+    campaign = init(study, configs, cluster="old-glibc",
+                    babs_spec="https://github.com/PennLINC/babs.git@v0.5.0")
+    uv = parsed_pyproject(campaign)["tool"]["uv"]
+    assert uv["sources"]["babs"]["rev"] == "v0.5.0"
+    assert uv["constraint-dependencies"] == ["pandas<=2.3.2", "h5py<=3.14.0"]
+
+
+def test_build_env_is_told_which_cluster_config_to_blame(study, configs, stub_env):
+    # the staged copy, so a failure message points at the file committed in the campaign
+    campaign = init(study, configs, cluster="old-glibc")
+    _, cluster_file = stub_env["build_env"]
+    assert Path(cluster_file) == campaign / "clusters" / "old-glibc.yaml"
+
+
+@pytest.mark.parametrize("written, why", [
+    ("env_constraints: pandas<=2.3.2\n",
+     "a scalar would be iterated one constraint per CHARACTER"),
+    ("env_constraints:\n  pandas: '<=2.3.2'\n",
+     "a mapping would silently yield its KEYS, dropping every specifier"),
+    ("env_constraints:\n  - 3\n",
+     "a non-string is not a specifier"),
+])
+def test_env_constraints_that_is_not_a_list_of_strings_is_refused(tmp_path, written, why):
+    bad = tmp_path / "bad-cluster.yaml"
+    bad.write_text(written)
+    with pytest.raises(SystemExit) as e:
+        campaign_init.cluster_env_constraints(bad)
+    assert "must be a LIST" in str(e.value), why
+
+
+# --- a package with no wheel for this system --------------------------------
+
+@pytest.fixture
+def fake_uv(tmp_path, monkeypatch):
+    """Stand in for `uv` with a script that prints given output and fails.
+
+    A missing-wheel failure is a real network resolve plus a real compiler error, so it
+    cannot be provoked in a unit test — but what mechababs has to get right is only the
+    reading of uv's output, which this pins exactly.
+    """
+    def install(output, returncode=1):
+        script = tmp_path / "fake-uv"
+        script.write_text("#!/usr/bin/env bash\n"
+                          f"cat <<'UVEOF'\n{output}\nUVEOF\n"
+                          f"exit {returncode}\n")
+        script.chmod(0o755)
+        monkeypatch.setattr(campaign_init, "UV", str(script))
+        return script
+    return install
+
+
+# What uv prints when a package has no wheel for this platform: it falls back to the
+# sdist, the build backend fails, and this line precedes hundreds of compiler lines.
+UV_BUILD_FAILURE = """\
+Resolved 128 packages in 1.20s
+  × Failed to build `pandas==2.3.3`
+  ├─▶ The build backend returned an error
+  ╰─▶ Call to `setuptools.build_meta.build_wheel` failed (exit status: 1)
+      pandas/_libs/tslibs/base.c:31:10: fatal error: Python.h: No such file
+"""
+
+
+def test_a_missing_wheel_names_the_package_and_the_knob(fake_uv, tmp_path):
+    fake_uv(UV_BUILD_FAILURE)
+    campaign = tmp_path / "study" / ".mechababs" / "campaigns" / "nprep"
+    cluster = campaign / "clusters" / "sherlock.yaml"
+
+    with pytest.raises(SystemExit) as e:
+        campaign_init.run_uv("sync", "--frozen",
+                             campaign=campaign, cluster_file=cluster)
+
+    message = str(e.value)
+    # the package, not the header file the compiler complained about
+    assert "pandas" in message
+    # the lever, and the file to pull it in
+    assert "env_constraints" in message
+    assert str(cluster) in message
+    # the retry path: init does not re-run over an existing campaign
+    assert str(campaign) in message
+
+
+def test_a_failure_that_is_not_a_build_failure_is_not_blamed_on_the_cluster(fake_uv,
+                                                                            tmp_path):
+    # an unreachable pin, no network, a bad specifier — saying `env_constraints` here
+    # would send the user to edit the one file that is fine
+    fake_uv("error: Git operation failed\n  ╰─▶ failed to clone into: /tmp/x")
+    with pytest.raises(SystemExit) as e:
+        campaign_init.run_uv("lock", campaign=tmp_path, cluster_file=tmp_path / "c.yaml")
+    assert "env_constraints" not in str(e.value)
+
+
+def test_a_uv_command_that_succeeds_returns_and_streams(fake_uv, capfd):
+    fake_uv("Resolved 128 packages in 1.20s", returncode=0)
+    campaign_init.run_uv("lock", campaign="/x", cluster_file="/x/c.yaml")
+    # kept AND shown: a resolve is slow, so swallowing its progress would be worse
+    assert "Resolved 128 packages" in capfd.readouterr().err
 
 
 # --- refusals ---------------------------------------------------------------

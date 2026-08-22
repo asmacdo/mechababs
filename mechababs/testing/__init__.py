@@ -26,7 +26,7 @@ E2E_DIRNAME = "e2e"
 # actually the suite (a partial install would otherwise fail later, inside pytest).
 # Every module that ships is listed: a test file present in the distribution but
 # absent from here would be silently skipped by a truncated install.
-SUITE_MODULES = ("conftest.py", "test_runs.py", "test_study_fixture.py")
+SUITE_MODULES = ("conftest.py", "test_runs.py", "test_spine.py", "test_study_fixture.py")
 
 
 def suite_path():

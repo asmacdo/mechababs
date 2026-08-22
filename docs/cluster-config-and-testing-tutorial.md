@@ -9,9 +9,10 @@ scaffold-only deploy would miss.
 
 ## What a cluster profile is
 
-A cluster profile is small. It answers two questions: **how to enter the
-campaign environment**, and **where per-job scratch lives**. Here is the bundled
-`examples/clusters/dartmouth.yaml` in full:
+A cluster profile is small. It answers **how to enter the campaign environment**,
+**where per-job scratch lives**, and — only where the site needs it — **which package
+versions the site can install**. Here is the bundled `examples/clusters/dartmouth.yaml`,
+minus its commented-out `env_constraints` starter:
 
 ```yaml
 script_preamble: |
@@ -29,6 +30,11 @@ job_compute_space: "/scratch/${USER}"
   substitutes with the campaign's venv abspath at compose time — leave it literally
   as written), set a per-job `JOB_TMP` under your scratch, and clean it up on exit.
 - **`job_compute_space`** — the scratch base the job works in.
+- **`env_constraints`** (optional) — version caps for the campaign environment, as verbatim PEP 508 specifiers.
+  They become uv `constraint-dependencies`: they cap a package the resolution already contains and never add one, so the campaign's own dependency floors are preserved.
+  Leave the key out on a modern cluster.
+  It exists for a site whose glibc is older than the newest manylinux wheels target — CentOS 7's 2.17 is still common on HPC — where uv otherwise falls back to source builds the site cannot compile and `campaign init` dies in compiler output.
+  `examples/clusters/sherlock.yaml` carries the glibc-2.17 set live; `dartmouth.yaml` carries it commented, as a starter.
 
 **What is *not* here (a common misconception):** SLURM resources
 (`cluster_resources`) and the container's `-B $JOB_TMP:/tmp` bind live on the
@@ -76,6 +82,9 @@ intend to contribute the profile upstream as a starter alongside
    - set `JOB_TMP` to your scratch root,
    - add any `module load` / `PATH` lines your site needs (see `unity.yaml`).
 3. Set `job_compute_space` to your scratch base.
+3.1. Leave `env_constraints` out unless the environment build fails.
+   If it does, the error names the package with no installable wheel — add a cap for it under `env_constraints` and start the campaign again.
+   On a glibc-2.17 site, start from `sherlock.yaml`'s block rather than discovering the eight one at a time.
 4. If you'll run fmriprep/mriqc, point the templateflow / FS-license binds in those
    `examples/pipelines/*.yaml` at your site's paths (the gap above).
 5. Your profile does not have to be committed anywhere: `test-cluster --cluster` reads

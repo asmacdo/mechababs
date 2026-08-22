@@ -1,16 +1,30 @@
 #!/usr/bin/env bash
 #
-# run_in_podman.sh — validate the test-docker cluster config from a dev campaign built
-# out of this checkout, inside the slurm-docker-ci container, under ROOTLESS podman.
+# run_in_podman.sh — run the mechababs e2e against the test-docker cluster config,
+# inside the slurm-docker-ci container, under ROOTLESS podman.
 #
-# It runs the two steps a USER runs, and nothing else:
-#   1. `bootstrap.sh <dev campaign> --mechababs <this checkout>@<its ref>`
-#   2. `mechababs test-cluster --cluster examples/clusters/test-docker.yaml` from it
-# Everything dev-specific is a VALUE handed to those two steps — which checkout, which
-# cluster config, and the container wrapped around them — never a separate route into
-# the scenario. So the provisioning code a user's `test-cluster` runs is the code every
-# dev run exercises (docs/overview.md: dev exercises prod's exact paths, so dev
-# validates prod). Mirrors babs's tests/e2e_in_docker.sh.
+# It installs the bind-mounted checkout into the container's python and runs the
+# packaged scenario against it:
+#   1. `pip install -e /mechababs`  (the code under test, on PATH as `mechababs`)
+#   2. `pytest <the packaged suite> --cluster-config <test-docker.yaml>
+#                                   --mechababs /mechababs@<its ref>`
+# The scenario itself then runs `mechababs campaign init` in a fixture study, pinning
+# that same `/mechababs@<ref>` — so the campaign the scenario builds records the code
+# under test, and the campaign-building code a user hits is the code this exercises
+# (docs/overview.md: dev exercises prod's exact paths, so dev validates prod).
+#
+# `git clone` takes a local path, so the pin is a mount path here and a public URL in
+# prod; that is the only difference. Everything else dev-specific is a VALUE handed to
+# the scenario — which checkout, which cluster config, and the container wrapped around
+# them — never a separate route into it.
+#
+# slurm-docker-ci is CentOS 7 (glibc 2.17), so the campaign environment `campaign init`
+# resolves here needs the same version caps a real old-glibc cluster needs — otherwise
+# uv falls back to source builds the image's gcc 4.8 cannot compile. Those caps are NOT
+# a harness special-case: they are `env_constraints` in
+# examples/clusters/test-docker.yaml, the same cluster-axis field
+# examples/clusters/sherlock.yaml uses, so this rung exercises that path rather than
+# routing around it.
 #
 # Rootless: no root daemon, and container-root maps to the invoking host user via
 # userns — so nothing here runs as real root and any host-touching bytes are
@@ -27,7 +41,7 @@
 #   --security-opt systempaths=unconfined
 #                                     a babs job runs simbids via `singularity run`
 #                                     INSIDE this container; apptainer (with --userns,
-#                                     set on the simbids pipeline) creates a nested
+#                                     set on the simbids app config) creates a nested
 #                                     user+PID namespace and mounts a fresh /proc onto
 #                                     it. The kernel only allows that when the caller
 #                                     has a FULLY-VISIBLE /proc, but podman MASKS
@@ -36,35 +50,36 @@
 #                                     /proc so the nested mount is allowed. It relaxes
 #                                     THIS container's view of /proc, not host
 #                                     privilege — container-root still maps to the
-#                                     unprivileged host user. (Scaffold-only runs —
-#                                     `babs init`, no inner container — don't need it.)
+#                                     unprivileged host user. (Stages that run no inner
+#                                     container don't need it; it stays for the ones
+#                                     that will.)
 #
-# Both campaigns — the dev campaign this builds, and the throwaway one the scenario
-# provisions beside it — live on a host bind mount at $MECHABABS_E2E_WORKDIR, mounted at
-# the SAME absolute path inside the container. Same-path is deliberate: babs bakes
-# *absolute* RIA-store paths at init, so building at an identical host==container path is
-# what lets a campaign resolve — and stay operable — on the host after the run. They
-# persist regardless of --rm (they live on the host, not the container layer);
-# MECHABABS_E2E_KEEP=1 only additionally keeps the *container* for post-mortem.
+# The checkout is mounted READ-WRITE, not :ro. `pip install -e` has setuptools_scm
+# write `mechababs/_version.py` and an egg-info dir into the source tree; both are
+# gitignored, so this cannot dirty the worktree, and rootless podman maps the writes
+# to the invoking user rather than real root.
+#
+# The fixture study and its caches live on a host bind mount at
+# $MECHABABS_E2E_WORKDIR, mounted at the SAME absolute path inside the container.
+# Same-path is deliberate: babs bakes *absolute* RIA-store paths at init, so building
+# at an identical host==container path is what lets a study — and the derivatives in
+# it — stay operable on the host after the run. They persist regardless of --rm (they
+# live on the host, not the container layer); MECHABABS_E2E_KEEP=1 only additionally
+# keeps the *container* for post-mortem. The uv cache lives there too, so a second run
+# resolves the campaign environment from disk instead of the network.
 #
 # Host-prep ONCE first — build the shim (the prod container-shim command; dies at
 # babs#383):
 #   REPRONIM=$MECHABABS_E2E_WORKDIR/repronim-containers-shim \
 #       tmp-repronim-container-shim.sh bids-simbids
-# It sits as a campaign sibling under $MECHABABS_E2E_WORKDIR (default /tmp/mechababs-e2e),
-# visible through the same-path workdir mount, so configure resolves the pipeline's
-# `../repronim-containers-shim`. The fake BIDS input is NOT host-prep — the rawdata
+# It sits under $MECHABABS_E2E_WORKDIR (default /tmp/mechababs-e2e), visible through
+# the same-path workdir mount. The fake BIDS input is NOT host-prep — the rawdata
 # fixture generates it into the workdir cache, which persists across runs through the
-# same workdir mount (no separate cache mount needed).
+# same mount.
 #
-# Usage (extra args pass straight through to `mechababs test-cluster`, so pytest args
-# go after a literal `--`, the same as running test-cluster by hand):
+# Usage (extra args pass straight through to pytest):
 #   mechababs/testing/e2e/run_in_podman.sh
-#   mechababs/testing/e2e/run_in_podman.sh -- -k test_full_run
-#   BABS_SPEC=https://github.com/<owner>/babs.git@<branch> \
-#       mechababs/testing/e2e/run_in_podman.sh      # pin the babs under test
-#   BABS_SPEC=$MECHABABS_E2E_WORKDIR/babs-under-test@<branch> \
-#       mechababs/testing/e2e/run_in_podman.sh      # ... or an unpushed local clone
+#   mechababs/testing/e2e/run_in_podman.sh -k test_spine
 #   MECHABABS_E2E_KEEP=1 mechababs/testing/e2e/run_in_podman.sh   # keep the container
 set -euo pipefail
 
@@ -74,45 +89,46 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 echo "REPO=$REPO" >&2
 
-# The pin bootstrap will clone: this checkout at the ref it is on. `git clone --branch`
-# takes a branch or a tag, which is the same constraint `validate.clone_ref` enforces on
-# a campaign's pins — applied here to the checkout, before a long run discovers it.
+# The ref the scenario's campaigns pin: this checkout at the branch or tag it is on.
+# `campaign init --mechababs URL@REF` resolves REF with `git clone --branch`, which takes
+# a branch or a tag and not a bare sha — so check that here, before a long run
+# discovers it.
 REF="$(git -C "$REPO" symbolic-ref --short --quiet HEAD \
     || git -C "$REPO" describe --tags --exact-match 2>/dev/null || true)"
 if [ -z "$REF" ]; then
     echo "error: $REPO is on a detached HEAD with no exact tag, so there is no branch or" >&2
-    echo "    tag for bootstrap to clone. Check out a branch or tag first." >&2
+    echo "    tag for the campaign pin to clone. Check out a branch or tag first." >&2
     exit 2
 fi
 
-# bootstrap CLONES $REF, so uncommitted work would be absent from the campaign under
-# test. Refuse rather than quietly validate your last commit.
+# The campaign pin CLONES $REF, so uncommitted work would be absent from the campaign
+# under test. Refuse rather than quietly validate your last commit.
 DIRTY="$(git -C "$REPO" status --porcelain)"
 if [ -n "$DIRTY" ]; then
-    echo "error: $REPO is dirty. The dev campaign clones $REF, so this run would test" >&2
+    echo "error: $REPO is dirty. The scenario's campaign clones $REF, so this run would test" >&2
     echo "    your last commit and silently ignore the working tree:" >&2
     echo "$DIRTY" >&2
     exit 2
 fi
 
-# A worktree's .git is a FILE pointing at the main repo's common git dir; a clone
-# from /mechababs (what bootstrap.sh does) needs that dir reachable at the same
-# path inside the container. Mount it (a no-op extra mount for a normal checkout).
+# A worktree's .git is a FILE pointing at the main repo's common git dir; cloning
+# /mechababs (what the campaign pin does) needs that dir reachable at the same path
+# inside the container. Mount it (a no-op extra mount for a normal checkout).
 GIT_COMMON_DIR="$(cd "$REPO" && git rev-parse --git-common-dir)"
 REAL_GIT_DIR="$(cd "$GIT_COMMON_DIR" && pwd)"
 EXTRA_MOUNT=()
 [ "$REAL_GIT_DIR" != "$REPO/.git" ] && EXTRA_MOUNT=(-v "$REAL_GIT_DIR:$REAL_GIT_DIR")
 
 # Bind-mount the workdir at the SAME absolute path inside the container, and build the
-# campaigns there (via MECHABABS_E2E_WORKDIR, passed in below) instead of the
+# fixture studies there (via MECHABABS_E2E_WORKDIR, passed in below) instead of the
 # container's ephemeral /scratch layer. host==container path is what makes babs's
-# init-time *absolute* RIA-store paths resolve on the host afterwards, so a campaign
+# init-time *absolute* RIA-store paths resolve on the host afterwards, so a study
 # survives as a real, operable dataset — no `podman cp`, no dead /scratch abspaths. (One
-# exception: the dev campaign's own `code/mechababs` has `origin = /mechababs`, the
-# container-local mount of the checkout, so that one remote is not resolvable on the host.)
-# (Same idiom as $REAL_GIT_DIR above.) The shim is a sibling under the workdir, so the
-# pipeline's `../repronim-containers-shim` resolves through this one mount — no
-# separate shim mount needed.
+# exception: a campaign's mechababs pin is `/mechababs`, the container-local mount of
+# the checkout, so that source is not resolvable on the host.)
+# (Same idiom as $REAL_GIT_DIR above.) The shim lives under the workdir, so the app
+# config's `../repronim-containers-shim` resolves through this one mount — no separate
+# shim mount needed.
 MECHABABS_E2E_WORKDIR="${MECHABABS_E2E_WORKDIR:-/tmp/mechababs-e2e}"
 mkdir -p "$MECHABABS_E2E_WORKDIR"
 WORKDIR_MOUNT=(-v "$MECHABABS_E2E_WORKDIR:$MECHABABS_E2E_WORKDIR")
@@ -121,35 +137,36 @@ if [ ! -d "$MECHABABS_E2E_WORKDIR/repronim-containers-shim/.datalad" ]; then
     echo "    REPRONIM=$MECHABABS_E2E_WORKDIR/repronim-containers-shim tmp-repronim-container-shim.sh bids-simbids" >&2
 fi
 
-# The dev campaign: a fresh path per run, because bootstrap refuses an existing one. The
-# scenario's own throwaway campaign lands beside it (test-cluster builds it in the
-# campaign's parent, so the shim stays its sibling).
-# One id for the run, shared by the campaign path and the container name, so it is
-# obvious which container built which campaign. $RANDOM as well as $$ because PIDs are
-# recycled, and under MECHABABS_E2E_KEEP a container from an earlier run is still around
-# to collide with.
+# One id per run, used for the container name so it is obvious which container produced
+# which studies. $RANDOM as well as $$ because PIDs are recycled, and under
+# MECHABABS_E2E_KEEP a container from an earlier run is still around to collide with.
 RUN_ID="$$-$RANDOM"
-DEV_CAMPAIGN="$MECHABABS_E2E_WORKDIR/dev-campaign-$RUN_ID"
-echo "dev campaign: $DEV_CAMPAIGN (remove stale ones with" >&2
-echo "    rm -rf $MECHABABS_E2E_WORKDIR/dev-campaign-* $MECHABABS_E2E_WORKDIR/test-campaign-*)" >&2
+echo "fixture studies land under $MECHABABS_E2E_WORKDIR/e2e-study-* (remove stale ones" >&2
+echo "    with rm -rf $MECHABABS_E2E_WORKDIR/e2e-study-*)" >&2
 
-# Forward BABS_SPEC (the babs ref under test) into the container if set, so the dev
-# campaign PINS that babs — and the scenario's campaign, provisioned from these pins,
-# inherits it. An https URL must be public (the container clones anonymously); a local
-# path works too, as long as it is under $MECHABABS_E2E_WORKDIR, which is bind-mounted
-# at the same path inside the container. That is how an unpushed branch gets tested.
+# The uv cache on the host bind mount, so the campaign environment the scenario resolves
+# is downloaded once and reused by every later run. Without it each run re-fetches
+# mechababs' + babs' whole dependency closure into a container layer that --rm discards.
+UV_CACHE="$MECHABABS_E2E_WORKDIR/.uv-cache"
+mkdir -p "$UV_CACHE"
+
+# Forward BABS_SPEC (the babs ref under test) into the container if set, so the
+# scenario's campaign PINS that babs instead of the latest PyPI release. An https URL
+# must be public (the container clones anonymously); a local path works too, as long as
+# it is under $MECHABABS_E2E_WORKDIR, which is bind-mounted at the same path inside the
+# container. That is how an unpushed branch gets tested.
 BABS_SPEC_ENV=()
 [ -n "${BABS_SPEC:-}" ] && BABS_SPEC_ENV=(-e "BABS_SPEC=$BABS_SPEC")
 
 # The container is always NAMED, so the Ctrl-C handler below has something to address.
-# The campaigns persist on the host bind mount regardless of --rm.
+# The studies persist on the host bind mount regardless of --rm.
 # MECHABABS_E2E_KEEP=1 additionally keeps the *container* (drops --rm) for post-mortem of
 # the container itself.
 CONTAINER="mechababs-e2e-$RUN_ID"
 RM_FLAG=(--rm)
 if [ -n "${MECHABABS_E2E_KEEP:-}" ]; then
     RM_FLAG=()
-    echo "KEEP: container $CONTAINER persists (the campaigns are already on the host" >&2
+    echo "KEEP: container $CONTAINER persists (the studies are already on the host" >&2
     echo "    under $MECHABABS_E2E_WORKDIR). Remove the container with:" >&2
     echo "    podman rm $CONTAINER" >&2
 fi
@@ -174,9 +191,9 @@ fi
 # Both halves of the teardown are needed. Stopping the CLIENT covers an interrupt in the
 # first second or two, before the container exists: removing it by name would hit nothing,
 # and bash does not reap the backgrounded client on exit, so it would go on to create and
-# run the container unattended (verified — it reaches the end of bootstrap). Removing the
-# CONTAINER covers every later interrupt, and is what actually stops the work, since
-# pytest, babs and the inner singularity job all live inside it.
+# run the container unattended (verified). Removing the CONTAINER covers every later
+# interrupt, and is what actually stops the work, since pytest, babs and the inner
+# singularity job all live inside it.
 PODMAN_PID=
 abort() {
     echo >&2
@@ -191,9 +208,9 @@ abort() {
 }
 trap abort INT TERM
 
-# Bootstrap the dev campaign, then validate the docker cluster config from it. Extra
-# args ("$@") pass through to test-cluster, word boundaries preserved (so e.g.
-# `-- -k "a or b"` survives as one pytest arg).
+# Install the checkout into the container's python, then run the packaged scenario
+# against it. Extra args ("$@") pass through to pytest, word boundaries preserved (so
+# e.g. `-k "a or b"` survives as one arg).
 #
 # `${A[@]+"${A[@]}"}` rather than a bare `"${A[@]}"`: under `set -u`, bash before 4.4
 # reads an empty array's expansion as an unbound variable and aborts — and each of these
@@ -205,35 +222,35 @@ podman run ${RM_FLAG[@]+"${RM_FLAG[@]}"} --name "$CONTAINER" -i \
     --security-opt label=disable \
     --security-opt systempaths=unconfined \
     --device /dev/fuse \
-    -v "$REPO":/mechababs:ro \
+    -v "$REPO":/mechababs \
     ${EXTRA_MOUNT[@]+"${EXTRA_MOUNT[@]}"} \
     ${WORKDIR_MOUNT[@]+"${WORKDIR_MOUNT[@]}"} \
     ${BABS_SPEC_ENV[@]+"${BABS_SPEC_ENV[@]}"} \
     -e "MECHABABS_E2E_WORKDIR=$MECHABABS_E2E_WORKDIR" \
-    -e "DEV_CAMPAIGN=$DEV_CAMPAIGN" \
     -e "MECHABABS_REF=$REF" \
-    -e MECHABABS_E2E_SYSTEM_SITE_PACKAGES=1 \
+    -e "UV_CACHE_DIR=$UV_CACHE" \
     docker.io/pennlinc/slurm-docker-ci:0.14 \
     bash -c '
         set -e
-        # Container-only prep: the repo is host-owned but git runs as
-        # container-root, and the image lacks uv (bootstrap.sh needs it).
+        # Container-only prep: the repo is host-owned but git runs as container-root,
+        # and the image lacks uv (`campaign init` resolves the campaign env with it).
         git config --global --add safe.directory "*"
         command -v uv >/dev/null 2>&1 || pip install --quiet uv
-        # 1. The dev campaign — prod bootstrap contract, with this checkout as the
-        #    mechababs pin. --system-site-packages because this image is CentOS 7 and
-        #    its 2015 toolchain cannot build the newest wheels; the same env var tells
-        #    the scenario to pass it when it bootstraps its own campaign.
-        /mechababs/bootstrap.sh "$DEV_CAMPAIGN" \
+        # The code under test, editable so `mechababs` on PATH IS the mount. pytest
+        # comes with it via the `test` extra.
+        pip install --quiet -e "/mechababs[test]"
+        # cwd outside the checkout: pytest would otherwise pick up the repo pyproject
+        # `testpaths = ["tests"]` and collect the unit suite instead of the scenario.
+        cd "$MECHABABS_E2E_WORKDIR"
+        # `-p no:cacheprovider` + PYTHONPYCACHEPREFIX keep pytest from writing a cache
+        # and .pyc files into the bind-mounted checkout.
+        PYTHONPYCACHEPREFIX=/tmp/pycache \
+        python -m pytest -s -p no:cacheprovider \
+            "$(python -c "import mechababs.testing as t; print(t.suite_path())")" \
+            --cluster-config /mechababs/examples/clusters/test-docker.yaml \
             --mechababs "/mechababs@$MECHABABS_REF" \
             ${BABS_SPEC:+--babs "$BABS_SPEC"} \
-            ${MECHABABS_E2E_SYSTEM_SITE_PACKAGES:+--system-site-packages}
-        # 2. Validate from that campaign — the user-facing command, unmodified. The
-        #    config is read from the checkout by path; configure copies it in.
-        cd "$DEV_CAMPAIGN"
-        . .venv/bin/activate
-        mechababs test-cluster \
-            --cluster /mechababs/examples/clusters/test-docker.yaml "$@"
+            "$@"
     ' _ "$@" &
 PODMAN_PID=$!
 
