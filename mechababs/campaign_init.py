@@ -199,8 +199,10 @@ def cluster_env_constraints(config_path):
 
     mechababs does not interpret them: they become uv ``constraint-dependencies``,
     whose semantics (cap a package that is already in the resolution, never pull one
-    in that is not) are uv's own. The only check here is shape — a bare string would
-    otherwise be iterated one character per constraint.
+    in that is not) are uv's own. The only check here is shape, and it insists on a
+    real list because the near-misses fail *quietly*: a bare string iterates one
+    constraint per character, and a mapping iterates its keys, dropping every
+    specifier — either way the resolution looks capped and is not.
     """
     config = yaml.safe_load(Path(config_path).read_text()) or {}
     constraints = config.get("env_constraints")
@@ -493,17 +495,16 @@ def init(study, label, app_args, cluster_arg, *, limit=None,
         # for running a PR branch (or a local one) through a campaign.
         babs_source = (git_source(*parse_source_spec(babs_spec, "babs"))
                        if babs_spec else None)
-        # Read from the STAGED copy, not the argument: that is the file committed with
-        # the campaign, and it is the same read whether the config came from a path or
-        # a URL.
-        env_constraints = cluster_env_constraints(
-            campaign / campaign_mod.CLUSTERS_DIRNAME / cluster_file)
+        # The STAGED copy, not the argument: that is the file committed with the
+        # campaign, so it is what a failure should tell the user to edit — and the same
+        # read whether the config arrived as a path or a URL.
+        staged_cluster = campaign_mod.clusters_dir(study, label) / cluster_file
         (campaign / campaign_mod.PYPROJECT_FILENAME).write_text(
             render_pyproject(label, mechababs_req, mechababs_source, babs_source,
-                             env_constraints))
+                             cluster_env_constraints(staged_cluster)))
 
         write_env_sh(campaign, label)
-        build_env(campaign, label, campaign_mod.clusters_dir(study, label) / cluster_file)
+        build_env(campaign, label, staged_cluster)
 
         save.message = (
             f"mechababs campaign init {label} "
