@@ -369,13 +369,20 @@ def test_build_env_is_told_which_cluster_config_to_blame(study, configs, stub_en
     assert Path(cluster_file) == campaign / "clusters" / "old-glibc.yaml"
 
 
-def test_a_bare_string_env_constraints_is_refused(tmp_path):
-    # a scalar would otherwise be iterated one constraint per CHARACTER
+@pytest.mark.parametrize("written, why", [
+    ("env_constraints: pandas<=2.3.2\n",
+     "a scalar would be iterated one constraint per CHARACTER"),
+    ("env_constraints:\n  pandas: '<=2.3.2'\n",
+     "a mapping would silently yield its KEYS, dropping every specifier"),
+    ("env_constraints:\n  - 3\n",
+     "a non-string is not a specifier"),
+])
+def test_env_constraints_that_is_not_a_list_of_strings_is_refused(tmp_path, written, why):
     bad = tmp_path / "bad-cluster.yaml"
-    bad.write_text("env_constraints: pandas<=2.3.2\n")
+    bad.write_text(written)
     with pytest.raises(SystemExit) as e:
         campaign_init.cluster_env_constraints(bad)
-    assert "must be a LIST" in str(e.value)
+    assert "must be a LIST" in str(e.value), why
 
 
 # --- a package with no wheel for this system --------------------------------

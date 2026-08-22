@@ -206,7 +206,8 @@ def cluster_env_constraints(config_path):
     constraints = config.get("env_constraints")
     if not constraints:
         return []
-    if isinstance(constraints, str) or not all(isinstance(c, str) for c in constraints):
+    if not isinstance(constraints, list) or \
+            not all(isinstance(c, str) for c in constraints):
         sys.exit(f"env_constraints in {config_path} must be a LIST of version "
                  f"specifiers (e.g. `- pandas<=2.3.2`), got: {constraints!r}")
     return list(constraints)
