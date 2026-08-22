@@ -5,7 +5,6 @@ import yaml
 
 from mechababs import compose
 
-
 APP = {
     "mechababs": {"selection": {}, "container": {"source": "../containers",
                                                  "name": "bids-simbids"}},

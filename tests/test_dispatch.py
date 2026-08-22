@@ -21,7 +21,6 @@ import pytest
 from mechababs import campaign as campaign_mod
 from mechababs import dispatch
 
-
 LABEL = "e2e"
 ANCHOR = "bids-app-configs/SimBIDS-0.0.3+anchor.yaml"
 SOURCEDATA = "sourcedata/ds999999"
@@ -48,8 +47,8 @@ def test_scaffold_declares_the_four_paths_it_writes(tmp_path):
     assert outputs == [
         "derivatives/SimBIDS-0.0.3+anchor+ds999999",
         ".mechababs/campaigns/e2e/sourcedata+derivatives.tsv",
-        ".mechababs/campaigns/e2e/inclusions/"
-        "sourcedata-ds999999_SimBIDS-0.0.3+anchor.csv",
+        (".mechababs/campaigns/e2e/inclusions/"
+         "sourcedata-ds999999_SimBIDS-0.0.3+anchor.csv"),
         ".gitmodules",
     ]
     assert all(not os.path.isabs(o) for o in outputs), outputs
@@ -121,9 +120,9 @@ def test_the_run_is_recorded_study_relative_even_when_dispatched_from_elsewhere(
 def test_an_undeclared_output_is_not_captured_by_the_run(dataset):
     """Explicit mode's cost, asserted so it is a known one: what is not declared is
     not recorded. This is exactly why the clean check runs first."""
-    cmd = ["python", "-c", "import pathlib;"
-           "pathlib.Path('landed.txt').write_text('x\\n');"
-           "pathlib.Path('undeclared.txt').write_text('y\\n')"]
+    cmd = ["python", "-c", ("import pathlib;"
+                            "pathlib.Path('landed.txt').write_text('x\\n');"
+                            "pathlib.Path('undeclared.txt').write_text('y\\n')")]
     dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="partial")
 
     tracked = subprocess.run(
@@ -162,10 +161,10 @@ def test_a_command_that_commits_for_itself_still_lands_a_run_record(dataset):
     datalad's own save gets a turn. datalad >= 1.6 keeps the record; the pyproject
     floor says so and this says it is in force."""
     cmd = ["python", "-c",
-           "import pathlib, subprocess;"
-           "pathlib.Path('landed.txt').write_text('x\\n');"
-           "subprocess.run(['git','add','landed.txt'], check=True);"
-           "subprocess.run(['git','commit','-qm','inner commit'], check=True)"]
+           ("import pathlib, subprocess;"
+            "pathlib.Path('landed.txt').write_text('x\\n');"
+            "subprocess.run(['git','add','landed.txt'], check=True);"
+            "subprocess.run(['git','commit','-qm','inner commit'], check=True)")]
     dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="inner-commits")
     assert dispatch.head_subject(dataset) == "[DATALAD RUNCMD] inner-commits"
 
@@ -178,11 +177,11 @@ def test_an_undeclared_path_in_an_inner_commit_is_refused(dataset):
     commits when it registers the new derivative — rather than muting the guard.
     """
     cmd = ["python", "-c",
-           "import pathlib, subprocess;"
-           "pathlib.Path('landed.txt').write_text('x\\n');"
-           "pathlib.Path('smuggled.txt').write_text('y\\n');"
-           "subprocess.run(['git','add','.'], check=True);"
-           "subprocess.run(['git','commit','-qm','inner commit'], check=True)"]
+           ("import pathlib, subprocess;"
+            "pathlib.Path('landed.txt').write_text('x\\n');"
+            "pathlib.Path('smuggled.txt').write_text('y\\n');"
+            "subprocess.run(['git','add','.'], check=True);"
+            "subprocess.run(['git','commit','-qm','inner commit'], check=True)")]
     with pytest.raises(subprocess.CalledProcessError):
         dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="smuggler")
 

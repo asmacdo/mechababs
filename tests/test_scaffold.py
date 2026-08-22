@@ -13,7 +13,6 @@ import yaml
 from mechababs import campaign as campaign_mod
 from mechababs import scaffold
 
-
 LABEL = "e2e"
 ANCHOR = "bids-app-configs/SimBIDS-0.0.3+anchor.yaml"
 CHAIN = "bids-app-configs/SimBIDS-0.0.3+chain.yaml"
@@ -174,9 +173,9 @@ def babs_calls(monkeypatch):
     calls = []
 
     def record(cmd, kwargs):
-        config = cmd[cmd.index("--container-config") + 1]
-        calls.append({"cmd": cmd, "kwargs": kwargs,
-                      "config": yaml.safe_load(open(config).read())})
+        with open(cmd[cmd.index("--container-config") + 1]) as f:
+            config = yaml.safe_load(f)
+        calls.append({"cmd": cmd, "kwargs": kwargs, "config": config})
 
     _stub_babs(monkeypatch, record)
     return calls

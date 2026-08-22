@@ -93,7 +93,7 @@ def source_dataset_url(study, source_dataset):
         out = subprocess.run(
             ["git", "config", "--file", str(gitmodules), "--get",
              f"submodule.{name}.url"],
-            capture_output=True, text=True)
+            capture_output=True, text=True, check=False)
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
     sys.exit(f"no submodule url for {source_dataset} in {gitmodules}\n"
@@ -208,7 +208,7 @@ def resolve_inclusion(study, label, row, app_config_data, limit):
     return pin
 
 
-def babs_init_command(study, label, row, app_config_data, inclusion, babs_config):
+def babs_init_command(study, row, app_config_data, inclusion, babs_config):
     """The ``babs init`` argv for this cell, with study-relative paths.
 
     Study-relative because the run's cwd is the study: the recorded command has to
@@ -282,8 +282,7 @@ def scaffold(study, label, source_dataset, app_config):
             source_dataset_url(study, source_dataset),
             input_origins=input_origins,
             campaign_venv=campaign_mod.venv_path(study, label))
-        cmd = babs_init_command(study, label, row, app_config_data, inclusion,
-                                babs_config)
+        cmd = babs_init_command(study, row, app_config_data, inclusion, babs_config)
         print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr)
         subprocess.run([str(c) for c in cmd], cwd=str(study), check=True)
 
