@@ -220,6 +220,37 @@ def find_cell(rows, source_dataset, app_config):
     )
 
 
+def require_active_cell(row, verb):
+    """Refuse unless the cell is ACTIVE — scaffolded, and not yet merged.
+
+    The column routing (``babs`` empty -> scaffold; set with ``merged`` empty ->
+    active; ``merged`` set -> done) read as a guard, for the two verbs that advance
+    an active cell. It lives here because it is the statefile's semantics rather
+    than either verb's.
+
+    Self-guarding, in ``mechababs-inner``'s sense: these verbs are only ever reached
+    because something decided the cell was in this state, so being wrong about that
+    must be loud — a `datalad rerun` onto current HEAD lands right here.
+
+    Returns the cell's ``babs`` path (study-relative), which is what both verbs
+    drive babs against.
+    """
+    where = f"{row['source_dataset']} / {Path(row['app_config']).stem}"
+    if not row.get("babs"):
+        sys.exit(
+            f"{where} is not scaffolded, so there are no jobs to {verb}.\n"
+            "An empty `babs` column is the not-started state; scaffold is what "
+            "advances it."
+        )
+    if row.get("merged"):
+        sys.exit(
+            f"{where} is already merged ({row['babs']}), so there is nothing to "
+            f"{verb}.\nA merged cell is done. To redo it, retire the derivative — "
+            "that resets the cell in the same act."
+        )
+    return row["babs"]
+
+
 def babs_bin():
     """The pinned ``babs``: this environment's, never PATH's.
 
