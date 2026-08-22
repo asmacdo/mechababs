@@ -236,9 +236,12 @@ def _repo(path, tag=None):
     import subprocess
 
     path.mkdir(parents=True)
-    run = lambda *a: subprocess.run(
-        ["git", "-C", str(path), *a], check=True, capture_output=True
-    )
+
+    def run(*a):
+        return subprocess.run(
+            ["git", "-C", str(path), *a], check=True, capture_output=True
+        )
+
     run("init", "-q", "-b", "main")
     run(
         "-c",
