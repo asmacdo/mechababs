@@ -59,12 +59,14 @@ One verb covers every shape — a dataset in your lone study, another dataset of
 
 ## Run it
 
-`iterate` is one reconciler tick — scaffold → submit → merge, each cell advancing as far as it can.
-Repeat until everything is merged.
+`iterate` is one reconciler tick: every cell advances by **at most one** transition — scaffold, then submit, then merge — so you repeat it until everything is merged.
+A cell waiting on an unmerged producer is noted and passed over, and a cell whose jobs failed is flagged rather than merged; neither stops the other cells.
+`status` shows where every cell stands, with live job counts for the ones that are running.
 ```bash
 mechababs iterate
 mechababs status
 ```
+`iterate --batch N` advances at most N cells this tick, `--derivative <stem>` narrows to one app's cells, and `--dry-run` prints the transitions it would dispatch without dispatching them.
 A campaign is operated from the level where it was configured — the superstudy for a superstudy campaign, the study for a study campaign.
 At a superstudy, `iterate --study study-ds000001` narrows the tick to one member, to concentrate resources on finishing it.
 
