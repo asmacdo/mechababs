@@ -567,6 +567,14 @@ def _stage_dependent_cell_waits_for_its_producer(study):
     assert not (study / "derivatives" / f"{CHAIN}+{DATASET_ID}").exists()
     _assert_clean(study, "the refused dependent cell")
 
+    # This is the one moment the waiting state exists — the producer scaffolded, not
+    # merged — so it is where `status` gets asserted for it. (Only the dependent's row:
+    # the producer's is an active cell, whose live counts need a scheduler this rung
+    # may not have.)
+    assert _status_row(_status(study), CHAIN)["state"] == f"waiting on {ANCHOR}", (
+        _status(study)
+    )
+
 
 def _stage_submit(study):
     """Jobs reach the scheduler — and the study's history does not notice.
@@ -690,11 +698,11 @@ def _stage_iterate_drives_the_chain_cell(study):
     derivative = study / "derivatives" / f"{CHAIN}+{DATASET_ID}"
 
     # Where the campaign stands before the reconciler touches it, as `status` sees it:
-    # the anchor done, the chain gated on it. The gate opened when the anchor merged,
-    # so this is the last moment the waiting state is observable.
+    # the anchor done, and the chain no longer waiting — merging the anchor is what
+    # opened its gate, so it now reads as an ordinary not-started cell.
     table = _status(study)
     assert _status_row(table, ANCHOR)["state"] == "merged", table
-    assert _status_row(table, CHAIN)["state"].startswith("waiting on"), table
+    assert _status_row(table, CHAIN)["state"] == "not started", table
 
     # --- tick 1: the gate is open, so the cell is scaffolded ---------------
     tick = _iterate(study)
@@ -748,10 +756,10 @@ def _stage_iterate_drives_the_chain_cell(study):
     )
     _assert_clean(study, "the tick that submitted")
 
-    # --- the jobs run; a tick while they are in flight must advance nothing ---
-    mid = _iterate(study)
-    assert "0 cell(s) advanced" in mid.stderr, mid.stderr
-
+    # The in-flight tick — jobs running, so the cell is skipped — is deliberately NOT
+    # asserted here: whether the jobs have ended by the time a tick lands is the
+    # scheduler's business, so the e2e version of that assertion is a race. It is a
+    # unit test (`test_jobs_still_in_flight_are_left_alone`), where the counts are ours.
     _wait_for_jobs(study, derivative)
 
     # --- tick 3: everything ended successfully, so merge -------------------
