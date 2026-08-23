@@ -65,6 +65,19 @@ GITATTRIBUTES = "* annex.largefiles=nothing\n"
 
 UV = "uv"
 
+# TEMPORARY PIN — delete once a datalad release carries datalad/datalad#7904.
+# Every released datalad breaks the merge verb's `datalad run`: 1.6.2 crashes in
+# `save._inject_sub_info` when the wrapped command commits in a subdataset below a
+# plain dir (work done, nothing recorded), and 1.4 silently drops the run record in
+# the same shape. Until the fix is released, every campaign pins the fix — the PR's
+# head sha on the CANONICAL repo (kept fetchable by the PR ref), not the fork: the
+# fork carries no tags, so a checkout of it versions below every dependency floor.
+# With the pin gone, datalad reverts to a transitive dependency (the >=1.6 floor).
+DATALAD_PIN = {
+    "git": "https://github.com/datalad/datalad.git",
+    "rev": "2947978572812dbae20d614b10d345d1796795f9",  # datalad/datalad#7904 head
+}
+
 
 # --------------------------------------------------------------------------
 # Pinning the tools
@@ -291,8 +304,8 @@ def render_pyproject(
     caps that apply to whatever the resolution already contains, deep in the transitive
     closure included, without adding a dependency or pinning one the site does not use.
     """
-    deps = [mechababs_req, "babs", *CAMPAIGN_EXTRAS]
-    sources = {}
+    deps = [mechababs_req, "babs", "datalad", *CAMPAIGN_EXTRAS]
+    sources = {"datalad": DATALAD_PIN}
     if mechababs_source:
         sources["mechababs"] = mechababs_source
     if babs_source:
