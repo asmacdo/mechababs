@@ -218,16 +218,8 @@ def cmd_test_cluster(args):
 
 
 def cmd_status(args):
-    """Read-only: one row per job across every (dataset, pipeline) cell."""
-    campaign = _ensure_campaign(args)
-    return status_mod.run_status(
-        campaign,
-        study=args.study,
-        derivative=args.derivative,
-        only_failed=args.failed,
-        do_refresh=not args.no_refresh,
-        output=args.output,
-    )
+    """Read-only: one row per cell, with live job counts for the running ones."""
+    return status_mod.run_status(".")
 
 
 def main():
@@ -464,31 +456,15 @@ def main():
     )
     pt.set_defaults(func=cmd_test_cluster)
 
-    ps = sub.add_parser("status", help="campaign-wide job table (read-only)")
-    ps.add_argument(
-        "--campaign-path",
-        type=Path,
-        default=Path("."),
-        help="the campaign dataset (default: current directory)",
-    )
-    ps.add_argument(
-        "-o",
-        "--output",
-        choices=["columns", "tsv", "vd"],
-        default="columns",
-        help="aligned table (default), raw TSV to pipe anywhere, or open VisiData",
-    )
-    ps.add_argument(
-        "--study", default=None, help="only this study (ds004044 or study-ds004044)"
-    )
-    ps.add_argument(
-        "--derivative", default=None, help="only this derivative (e.g. MRIQC-24.0.2)"
-    )
-    ps.add_argument("--failed", action="store_true", help="only jobs that failed")
-    ps.add_argument(
-        "--no-refresh",
-        action="store_true",
-        help="skip the per-cell `babs status` refresh; read the (possibly stale) cache",
+    ps = sub.add_parser(
+        "status",
+        help="one row per cell of the selected campaign (read-only)",
+        description=(
+            "Render this study's cells for the selected campaign, one row each — the "
+            "statefile as it is, plus the part it deliberately does not store: for a "
+            "cell whose jobs are running, the live `babs status` counts. Read-only, "
+            "and it takes no lock, so it can be run while a tick is in progress."
+        ),
     )
     ps.set_defaults(func=cmd_status)
 
