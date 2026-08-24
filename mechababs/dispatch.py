@@ -1,9 +1,17 @@
-"""dispatch.py — running a change-making verb inside a `datalad run`.
+"""dispatch.py — running an action verb, inside a `datalad run` when it changes the study.
 
 A transition that changes the study is not saved with a hand-written label; it is
 **dispatched**, so what lands in git is the verbatim command that produced the
 change. That is the provenance this rewrite delivers: the study's history is a
 list of re-executable orchestration steps, not a list of adjectives.
+
+**Only the change-making verbs are wrapped.** `scaffold` and `merge` write into the
+study, so they go through `dispatch`. `submit` only sbatches — babs's job
+bookkeeping is gitignored inside the derivative — so it goes through `plain`, which
+runs the same verb with no run record because there is no change to record. Wrapping
+it anyway would put an empty node in the study's history for every tick that deploys
+jobs, which is noise pretending to be provenance. `plain` re-checks the study
+afterwards, so the claim is enforced rather than asserted.
 
 Three mechanics, each load-bearing:
 
@@ -34,7 +42,7 @@ from pathlib import Path
 
 from mechababs import campaign as campaign_mod
 from mechababs import scaffold as scaffold_mod
-from mechababs.utils import require_clean_shallow
+from mechababs.utils import require_clean_shallow, shallow_status
 
 # The hidden action CLI the run records. A bare name, resolved on PATH: inside a
 # campaign that is the campaign venv's, which is the pinned mechababs — and a
@@ -52,15 +60,28 @@ RUNCMD_PREFIX = "[DATALAD RUNCMD]"
 GITMODULES = ".gitmodules"
 
 
-def inner_command(verb, label, source_dataset, app_config):
+def inner_bin():
+    """This environment's `mechababs-inner`, for a verb that is NOT being recorded.
+
+    The bare `INNER` above is a deliberate exception, forced by provenance: an
+    absolute path in a run record would not re-execute anywhere else. Nothing forces
+    it on an unrecorded verb, so that one resolves beside `sys.prefix` like every
+    other shell-out in the package, and cannot be answered by a stray install on
+    PATH.
+    """
+    return str(Path(sys.prefix) / "bin" / INNER)
+
+
+def inner_command(verb, label, source_dataset, app_config, *, executable=INNER):
     """The argv of the action verb — the thing the run record will hold verbatim.
 
     Every identifier here is study- or campaign-relative, and the campaign label is
     a flag rather than the `MECHABABS_CAMPAIGN` env var: a `datalad rerun` must not
-    depend on the ambient environment of whoever reruns it.
+    depend on the ambient environment of whoever reruns it. `executable` defaults to
+    the bare, recordable name; an unrecorded verb passes `inner_bin()`.
     """
     return [
-        INNER,
+        executable,
         verb,
         "--campaign",
         label,
@@ -95,9 +116,43 @@ def scaffold_message(source_dataset, app_config):
     )
 
 
+def merge_outputs(study, label, source_dataset, app_config):
+    """What a merge writes, study-relative — its `--output` declaration.
+
+    Two things, and deliberately not `.gitmodules`: at the study level merge
+    registers and drops nothing. The derivative was registered as a subdataset at
+    scaffold; merge only moves its HEAD, so the study's diff is that gitlink plus
+    the statefile row. (The merged branch may well change the DERIVATIVE's own
+    `.gitmodules` — that is inside the derivative, and declaring the derivative
+    covers it.)
+    """
+    return [
+        scaffold_mod.derivative_path(source_dataset, app_config),
+        str(campaign_mod.state_path(study, label).relative_to(study)),
+    ]
+
+
+def merge_message(source_dataset, app_config):
+    return f"mechababs merge {source_dataset} {scaffold_mod.app_stem(app_config)}"
+
+
+def submit_message(source_dataset, app_config):
+    """What a submit prints. There is no `submit_outputs`, and that is the statement:
+    submit declares nothing because it writes nothing the study tracks."""
+    return f"mechababs submit {source_dataset} {scaffold_mod.app_stem(app_config)}"
+
+
 def head_subject(study):
+    return _git_log(study, "%s")
+
+
+def head_sha(study):
+    return _git_log(study, "%H")
+
+
+def _git_log(study, fmt):
     return subprocess.run(
-        ["git", "-C", str(study), "log", "-1", "--format=%s"],
+        ["git", "-C", str(study), "log", "-1", f"--format={fmt}"],
         check=True,
         capture_output=True,
         text=True,
@@ -146,6 +201,48 @@ def dispatch(study, cmd, *, outputs, message, dry_run=False):
     require_runcmd_head(study, message)
 
 
+def require_unchanged(study, head, *, what):
+    """Assert a plain verb really left the study's tracked state alone.
+
+    The determination that a verb needs no `datalad run` is a claim about a tool we
+    do not own, so it is checked on every run rather than trusted once. Both halves
+    matter: a verb could dirty the tree (uncommitted, uncaptured) or commit for
+    itself (captured, but as a bare commit with no command in it).
+    """
+    dirty = shallow_status(study)
+    moved = head_sha(study) != head
+    if not dirty and not moved:
+        return
+    raise RuntimeError(
+        f"{what} changed {study}'s tracked state, and it was run without a "
+        "`datalad run` because it is not supposed to.\n"
+        + (f"  HEAD moved: {head} -> {head_sha(study)}\n" if moved else "")
+        + "".join(f"  {line}\n" for line in dirty)
+        + "That change is now in the study with no command recorded against it. "
+        "The verb needs dispatching, with what it writes declared as outputs."
+    )
+
+
+def plain(study, cmd, *, message, dry_run=False):
+    """Run ``cmd`` at ``study`` with NO run record — for a verb that changes nothing.
+
+    Same shape as `dispatch`, minus the wrapper: clean in, the verb, and then the
+    check that it stayed clean. `require_clean_shallow` runs first for the same
+    reason it does there — so the after-check can attribute what it finds.
+    """
+    study = Path(study)
+    require_clean_shallow(study, what=f"running: {message}")
+    argv = [str(c) for c in cmd]
+
+    if dry_run:
+        print(f"DRY-RUN  {' '.join(argv)}   (cwd={study})", file=sys.stderr)
+        return
+    head = head_sha(study)
+    print(f"+ {' '.join(argv)}   (cwd={study})", file=sys.stderr)
+    subprocess.run(argv, cwd=str(study), check=True)
+    require_unchanged(study, head, what=message)
+
+
 def scaffold(study, label, source_dataset, app_config, *, dry_run=False):
     """Dispatch the scaffold transition for one cell."""
     dispatch(
@@ -153,5 +250,28 @@ def scaffold(study, label, source_dataset, app_config, *, dry_run=False):
         inner_command("scaffold", label, source_dataset, app_config),
         outputs=scaffold_outputs(study, label, source_dataset, app_config),
         message=scaffold_message(source_dataset, app_config),
+        dry_run=dry_run,
+    )
+
+
+def submit(study, label, source_dataset, app_config, *, dry_run=False):
+    """Run the submit transition for one cell — plainly, with no run record."""
+    plain(
+        study,
+        inner_command(
+            "submit", label, source_dataset, app_config, executable=inner_bin()
+        ),
+        message=submit_message(source_dataset, app_config),
+        dry_run=dry_run,
+    )
+
+
+def merge(study, label, source_dataset, app_config, *, dry_run=False):
+    """Dispatch the merge transition for one cell."""
+    dispatch(
+        study,
+        inner_command("merge", label, source_dataset, app_config),
+        outputs=merge_outputs(study, label, source_dataset, app_config),
+        message=merge_message(source_dataset, app_config),
         dry_run=dry_run,
     )

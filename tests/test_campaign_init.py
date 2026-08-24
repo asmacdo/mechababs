@@ -304,6 +304,17 @@ def test_babs_defaults_to_the_released_version_from_pypi(study, configs, stub_en
     assert not [line for line in sources if line.startswith("babs = ")]
 
 
+def test_datalad_is_pinned_to_the_run_fix_branch(study, configs, stub_env):
+    # TEMPORARY — delete with campaign_init.DATALAD_PIN (datalad/datalad#7904):
+    # until a datalad release carries the fix, every campaign pins the fix branch,
+    # which requires promoting datalad to a direct dependency.
+    campaign = init(study, configs)
+    pyproject = (campaign / campaign_mod.PYPROJECT_FILENAME).read_text()
+    assert '    "datalad",' in pyproject
+    pin = campaign_init.DATALAD_PIN
+    assert f'datalad = {{ git = "{pin["git"]}", rev = "{pin["rev"]}" }}' in pyproject
+
+
 def test_pyproject_pins_mechababs_and_babs_by_ref(study, configs, stub_env):
     campaign = init(
         study,

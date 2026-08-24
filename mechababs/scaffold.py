@@ -143,33 +143,23 @@ def output_ria_url(project_root, app_config_data):
     return f"ria+file://{Path(project_root).resolve()}/{ria_rel}#~data"
 
 
-def find_cell(rows, source_dataset, app_config):
-    """The one row for this cell, or exit naming what was asked for."""
-    for row in rows:
-        if campaign_mod.cell_key(row) == (source_dataset, app_config):
-            return row
-    sys.exit(
-        f"no cell for ({source_dataset}, {app_config}) in this campaign's "
-        f"statefile — `mechababs add-dataset` writes the cells, and scaffold "
-        f"only advances one that is already there."
-    )
+def require_producer_merged(rows, row):
+    """The ``depends_on`` gate — **ordering only**, and nothing else.
 
+    ``depends_on`` carries no kind and wires nothing. It says one thing: this cell
+    is not scaffolded until the producer's cell is merged. The producer is resolved
+    as a **row lookup in this shard** — the same source dataset's upstream-app row —
+    so an edge can never cross studies.
 
-def resolve_upstream(study, label, rows, row, app_config_data):
-    """Gate on the producer and, for an input-kind edge, resolve its origin URL.
-
-    ``depends_on`` is resolved as a **row lookup in this shard**: the same source
-    dataset's upstream-app row. The edge's kind is read off the app config rather
-    than declared — the producer appears as an ``input_datasets`` key exactly when
-    its output is consumed as an input, which is also where babs wires it. An edge
-    with no such key is a gate: it orders the two cells and wires nothing.
-
-    Returns ``{input key: origin url}``, empty for an unchained or gate-kind cell.
+    Input wiring is a separate declaration (``input_datasets``, see
+    ``resolve_input_origins``) that this function never reads. The two typically
+    name the same producer, which is deliberate: one is orchestration topology,
+    the other is what babs consumes.
     """
     upstream = row.get("depends_on") or ""
     if not upstream:
-        return {}
-    producer = find_cell(rows, row["source_dataset"], upstream)
+        return
+    producer = campaign_mod.find_cell(rows, row["source_dataset"], upstream)
     if not producer.get("merged"):
         sys.exit(
             f"{row['source_dataset']} / {app_stem(row['app_config'])} depends on "
@@ -178,14 +168,57 @@ def resolve_upstream(study, label, rows, row, app_config_data):
             "merged — the reconciler waits for that; this verb refuses."
         )
 
-    key = app_stem(upstream)
-    if key not in (app_config_data.get("input_datasets") or {}):
-        return {}  # a gate edge: ordering only, nothing wired
-    producer_root = Path(study) / producer["babs"]
-    producer_config = yaml.safe_load(
-        (campaign_mod.campaign_dir(study, label) / upstream).read_text()
-    )
-    return {key: output_ria_url(producer_root, producer_config)}
+
+def find_producer(rows, row, stem):
+    """The cell in this shard whose app config has ``stem``, for this source dataset.
+
+    ``None`` when nothing matches: an ``input_datasets`` key naming no cell is an
+    input from outside the campaign (raw BIDS, a precomputed derivative), which
+    carries its own ``origin_url`` in the config and is left alone.
+    """
+    for candidate in rows:
+        if candidate is row or candidate["source_dataset"] != row["source_dataset"]:
+            continue
+        if app_stem(candidate["app_config"]) == stem:
+            return candidate
+    return None
+
+
+def resolve_input_origins(study, label, rows, row, app_config_data):
+    """Resolve every ``input_datasets`` entry that names a producer in this campaign.
+
+    Input wiring is driven **solely** by the app config's ``input_datasets`` — the
+    declaration the user writes for babs's sake. A key that names another cell's app
+    is that cell's output being consumed, so it is wired to the producing babs
+    project's merged output store; the YAML cannot carry that URL, because the store
+    does not exist until the producer has run.
+
+    ``depends_on`` is not consulted here. Where both are declared (the normal case)
+    its gate has already refused an unmerged producer; the check below is what
+    catches a config that declares the wiring and forgets the ordering edge, where
+    handing babs an input with no origin would be the quieter, worse failure.
+
+    Returns ``{input key: origin url}``, empty for a cell with no in-campaign inputs.
+    """
+    origins = {}
+    for key in app_config_data.get("input_datasets") or {}:
+        producer = find_producer(rows, row, key)
+        if producer is None:
+            continue
+        if not producer.get("merged"):
+            sys.exit(
+                f"{row['source_dataset']} / {app_stem(row['app_config'])} takes "
+                f"{key} as an input, and the cell that produces it is not merged "
+                "yet.\nThere is no output store to wire until it is — declare the "
+                "ordering with `depends_on` so the reconciler waits for it."
+            )
+        producer_config = yaml.safe_load(
+            (
+                campaign_mod.campaign_dir(study, label) / producer["app_config"]
+            ).read_text()
+        )
+        origins[key] = output_ria_url(Path(study) / producer["babs"], producer_config)
+    return origins
 
 
 def resolve_inclusion(study, label, row, app_config_data, limit):
@@ -246,10 +279,7 @@ def babs_init_command(study, row, app_config_data, inclusion, babs_config):
             f"`mechababs.container` — scaffold has no image to give babs."
         )
     cmd = [
-        # This environment's babs, not PATH's: the env-match guard vouches for
-        # sys.prefix, and PATH can disagree with it (a stray user-level babs has
-        # shadowed the pinned one before).
-        str(Path(sys.prefix) / "bin" / "babs"),
+        campaign_mod.babs_bin(),
         "init",
         derivative_path(row["source_dataset"], row["app_config"]),
         "--container-ds",
@@ -278,7 +308,7 @@ def scaffold(study, label, source_dataset, app_config):
     config = yaml.safe_load(campaign_mod.config_path(study, label).read_text()) or {}
 
     rows = campaign_mod.read_state(study, label)
-    row = find_cell(rows, source_dataset, app_config)
+    row = campaign_mod.find_cell(rows, source_dataset, app_config)
     if row.get("babs"):
         sys.exit(
             f"{source_dataset} / {app_stem(app_config)} is already scaffolded at "
@@ -298,8 +328,10 @@ def scaffold(study, label, source_dataset, app_config):
         yaml.safe_load((campaign / config["cluster"]).read_text()) or {}
     )
 
-    # The gate first: nothing is written before we know the cell may proceed.
-    input_origins = resolve_upstream(study, label, rows, row, app_config_data)
+    # The gate first: nothing is written before we know the cell may proceed. The
+    # two are independent — ordering is `depends_on`'s, wiring is `input_datasets`'.
+    require_producer_merged(rows, row)
+    input_origins = resolve_input_origins(study, label, rows, row, app_config_data)
 
     project = derivative_path(source_dataset, app_config)
     print(

@@ -204,6 +204,65 @@ def cell_key(row):
     return (row["source_dataset"], row["app_config"])
 
 
+def find_cell(rows, source_dataset, app_config):
+    """The one row for this cell, or exit naming what was asked for.
+
+    Every action verb starts here, which is why it lives beside ``read_state``
+    rather than in any one of them: the shard is what they share.
+    """
+    for row in rows:
+        if cell_key(row) == (source_dataset, app_config):
+            return row
+    sys.exit(
+        f"no cell for ({source_dataset}, {app_config}) in this campaign's "
+        f"statefile — `mechababs add-dataset` writes the cells, and an action "
+        f"verb only advances one that is already there."
+    )
+
+
+def require_active_cell(row, verb):
+    """Refuse unless the cell is ACTIVE — scaffolded, and not yet merged.
+
+    The column routing (``babs`` empty -> scaffold; set with ``merged`` empty ->
+    active; ``merged`` set -> done) read as a guard, for the two verbs that advance
+    an active cell. It lives here because it is the statefile's semantics rather
+    than either verb's.
+
+    Self-guarding, in ``mechababs-inner``'s sense: these verbs are only ever reached
+    because something decided the cell was in this state, so being wrong about that
+    must be loud — a `datalad rerun` onto current HEAD lands right here.
+
+    Returns the cell's ``babs`` path (study-relative), which is what both verbs
+    drive babs against.
+    """
+    where = f"{row['source_dataset']} / {Path(row['app_config']).stem}"
+    if not row.get("babs"):
+        sys.exit(
+            f"{where} is not scaffolded, so there are no jobs to {verb}.\n"
+            "An empty `babs` column is the not-started state; scaffold is what "
+            "advances it."
+        )
+    if row.get("merged"):
+        sys.exit(
+            f"{where} is already merged ({row['babs']}), so there is nothing to "
+            f"{verb}.\nA merged cell is done. To redo it, retire the derivative — "
+            "that resets the cell in the same act."
+        )
+    return row["babs"]
+
+
+def babs_bin():
+    """The pinned ``babs``: this environment's, never PATH's.
+
+    A campaign's venv *is* its babs pin, and ``require_env_match`` is what vouches
+    for ``sys.prefix`` being that venv. PATH can disagree with it — a stray
+    user-level babs has shadowed the pinned one before — and a run attributed to
+    the recorded pin but produced by another babs is the failure the whole
+    pinning apparatus exists to prevent.
+    """
+    return str(Path(sys.prefix) / "bin" / "babs")
+
+
 def lock_digest(lock_text):
     """The identity of a lock's *content* (what the env-match guard compares)."""
     return hashlib.sha256(lock_text.encode()).hexdigest()
