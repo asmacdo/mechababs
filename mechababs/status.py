@@ -1,164 +1,147 @@
-"""status.py — the campaign-wide job table (read-only observation).
+"""status.py — the campaign at a glance: one row per cell, read-only.
 
-Backs ``mechababs status``. Distinct from ``babs_status.py``, which parses one
-cell's ``babs status --json`` for the reconciler to decide on; this one is for a
-human looking at the whole campaign at once.
+The statefile is tall — one row per (source dataset x app config) cell — and so is
+this: ``status`` renders the shard as it is, with each cell's state filled in. No
+pivot, no per-job table. What it adds to the file is the part the file deliberately
+does not store: for a cell that is running, the live job counts, asked of babs at the
+moment you look.
 
-babs tracks jobs per-cell in each project's ``code/job_status.csv``, which carries no
-dataset/pipeline column and names every job ``bid`` — so answering "which job was
-that dataset's failing subject?" otherwise means log-filename -> ``sacct``
-gymnastics. This aggregates every babs project's CSV across the campaign into ONE
-table, tagging each row with its dataset + pipeline (derived from the path) and
-computing each job's stderr log path, so a failure points straight at its log.
+Distinct from ``babs_status.py``, which parses one cell's ``babs status --json`` for
+the reconciler to route on. This is for a human looking at the whole study at once.
 
-Read-only by construction: it never writes campaign state, so it costs no
-provenance — observability is free, unlike a run-config change.
+**The state column is the reconciler's own reading.** It comes from ``iterate.route``
+rather than a second interpretation of the same columns — a cell that ``iterate``
+calls "waiting on X" and ``status`` called "not started" would be a bug that only
+shows up when it matters.
 
-The CSV is a *cache* babs recomputes from ``sacct``. By default each matched cell is
-refreshed (``babs status``) before rendering so ``state``/``time_used``/``is_failed``
-are live; ``--no-refresh`` skips that and accepts what's on disk. Refresh is
-deliberately the default: a stale row can show a *running* job as failed (babs's
-submit path rewrites a resubmitted row's job_id without clearing the prior attempt's
-``is_failed``), so reading the cache is an explicit choice, not an accident.
-
-Columns are read **by name** (``csv.DictReader``), never by position — babs's CSV is
-not a contracted API, so a reordering is safe here and a missing column renders
-empty rather than crashing.
+**Read-only, and never in the way.** It takes no flock: the campaign lock is
+exclusive, so holding it here would make looking at a campaign block until the tick
+finished — precisely when you most want to look. The cost is a torn read if a verb
+rewrites the shard in the same instant, which fixes itself on the next invocation.
+Nothing here writes campaign state, so observability costs no provenance.
 """
 
-import csv
-import io
 import subprocess
 import sys
-from glob import glob
 from pathlib import Path
 
+from mechababs import babs_status, iterate
+from mechababs import campaign as campaign_mod
+from mechababs import scaffold as scaffold_mod
+
 COLUMNS = [
-    "dataset",
-    "pipeline",
-    "sub_id",
-    "ses_id",
-    "job_id",
-    "task_id",
+    "source_dataset",
+    "app",
+    "level",
+    "subjects",
+    "sessions",
     "state",
-    "time_used",
-    "time_limit",
-    "is_failed",
-    "has_results",
-    "log",
+    "jobs",
+    "derivative",
 ]
 
-# babs names every job `bid`; used when the CSV's `name` isn't populated yet.
-DEFAULT_JOB_NAME = "bid"
+# What a cell's state reads as. The four routed states, plus the one a human has to
+# act on: an active cell whose live counts say jobs failed. It is called out rather
+# than left as "active" because it is the only row on the table that is stuck.
+NOT_STARTED = "not started"
+MERGED = "merged"
+ACTIVE = "active"
+FAILED = "FAILED"
 
-# `columns`/`vd` hand the TSV to a viewer so the caller needn't remember the
-# `column -t -s $'\t'` incantation; `tsv` is the pipe-anywhere data form.
-_RENDERERS = {
-    "columns": ["column", "-t", "-s", "\t"],
-    "vd": ["vd", "-f", "tsv"],
-}
+# When babs cannot be asked about a cell (a moved project, a broken derivative). One
+# unreadable cell must not cost the view of the others, so it is reported in place.
+UNAVAILABLE = "babs status unavailable"
 
 
-def cells(campaign: Path, study=None, derivative=None):
-    """Yield (csv_path, dataset, pipeline) for each babs project, filtered.
+def cell_jobs(project):
+    """The live counts for one active cell, or why they could not be read.
 
-    Only babs projects match: a study's *published* derivatives (no babs scaffold)
-    have no ``code/job_status.csv``, so the glob skips them.
+    ``ValueError`` covers unparsable output (``json.JSONDecodeError`` is one), the
+    other two a babs that exited non-zero or is not there at all.
     """
-    want_dataset = study.removeprefix("study-") if study else None
-    pattern = str(
-        campaign / "studies" / "*" / "derivatives" / "*" / "code" / "job_status.csv"
-    )
-    for csv_path in sorted(glob(pattern)):
-        cell = Path(csv_path).parent.parent  # .../derivatives/<pipeline>
-        pipeline = cell.name
-        dataset = cell.parent.parent.name.removeprefix("study-")
-        if want_dataset and dataset != want_dataset:
-            continue
-        if derivative and pipeline != derivative:
-            continue
-        yield csv_path, dataset, pipeline
-
-
-def refresh(matched):
-    """Recompute each matched cell's job_status.csv via ``babs status`` (slow).
-
-    Filtering narrows this first, so ``--study X`` gets live state for one dataset
-    without paying for the whole campaign.
-    """
-    total = len(matched)
-    for i, (csv_path, dataset, pipeline) in enumerate(matched, 1):
-        cell = str(Path(csv_path).parent.parent)
-        print(f"refreshing {i}/{total}: {dataset}/{pipeline}", file=sys.stderr)
-        try:
-            subprocess.run(["babs", "status", cell], capture_output=True, text=True)
-        except FileNotFoundError:
-            print(
-                "`babs` not on PATH; skipping refresh (use --no-refresh)",
-                file=sys.stderr,
-            )
-            return
-
-
-def rows(matched):
-    for csv_path, dataset, pipeline in matched:
-        with open(csv_path, newline="") as fh:
-            for record in csv.DictReader(fh):
-                job_id = record.get("job_id", "")
-                task_id = record.get("task_id", "")
-                name = record.get("name") or DEFAULT_JOB_NAME
-                log = (
-                    f"studies/study-{dataset}/derivatives/{pipeline}"
-                    f"/logs/{name}.e{job_id}_{task_id}"
-                    if job_id
-                    else ""
-                )
-                row = {col: (record.get(col) or "") for col in COLUMNS}
-                row.update(dataset=dataset, pipeline=pipeline, log=log)
-                yield row
-
-
-def _sort_key(row):
-    task = row["task_id"]
-    return (row["dataset"], row["pipeline"], int(task) if task.isdigit() else 0)
-
-
-def render(data, output):
-    """Emit the table. TSV is the data form; `columns`/`vd` hand it to a viewer."""
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=COLUMNS, delimiter="\t")
-    writer.writeheader()
-    writer.writerows(data)
-    tsv = buf.getvalue()
-    if output == "tsv":
-        sys.stdout.write(tsv)
-        return
-    cmd = _RENDERERS[output]
     try:
-        subprocess.run(cmd, input=tsv, text=True)
-    except FileNotFoundError:
-        print(f"`{cmd[0]}` not on PATH; emitting tsv", file=sys.stderr)
-        sys.stdout.write(tsv)
+        status = babs_status.read_status(project)
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        return UNAVAILABLE, None
+    return iterate.describe_counts(status), status
 
 
-def run_status(
-    campaign,
-    *,
-    study=None,
-    derivative=None,
-    only_failed=False,
-    do_refresh=True,
-    output="columns",
-):
-    """Render the campaign's job table. Returns a CLI exit code."""
-    matched = list(cells(campaign, study, derivative))
-    if not matched:
-        print("no matching babs cells found", file=sys.stderr)
-        return 1
-    if do_refresh:
-        refresh(matched)
-    data = sorted(rows(matched), key=_sort_key)
-    if only_failed:
-        data = [row for row in data if row["is_failed"].lower() == "true"]
-    render(data, output)
+def cell_record(study, rows, row):
+    """One rendered row: the shard's identity columns, plus the derived state.
+
+    Only an active cell costs a babs query — a merged or not-yet-started one has
+    nothing volatile to ask about, which is the same economy the reconciler makes.
+    """
+    state, detail = iterate.route(rows, row)
+    record = {
+        "source_dataset": row.get("source_dataset", ""),
+        "app": scaffold_mod.app_stem(row.get("app_config", "")),
+        "level": row.get("processing_level", ""),
+        "subjects": row.get("n_subjects", ""),
+        "sessions": row.get("n_sessions", ""),
+        "state": NOT_STARTED,
+        "jobs": "",
+        "derivative": row.get("babs", ""),
+    }
+    if state == iterate.DONE:
+        record["state"] = MERGED
+    elif state == iterate.WAITING:
+        record["state"] = f"waiting on {detail}"
+    elif state == iterate.ACTIVE:
+        jobs, status = cell_jobs(Path(study) / detail)
+        record["jobs"] = jobs
+        record["state"] = (
+            FAILED if status and babs_status.decide(status) == "fail" else ACTIVE
+        )
+    return record
+
+
+def records(study, label):
+    """Every cell in the shard, in file order, rendered."""
+    rows = campaign_mod.read_state(study, label)
+    return [cell_record(study, rows, row) for row in rows]
+
+
+def render(data, columns=COLUMNS):
+    """The aligned table, as text.
+
+    Aligned here rather than piped through ``column -t``: the table is small, the
+    alignment is four lines, and a status command should not fail (or silently change
+    shape) because a coreutils binary is missing from a container.
+    """
+    widths = {
+        col: max([len(col)] + [len(str(row.get(col, ""))) for row in data])
+        for col in columns
+    }
+    lines = []
+    for row in [{col: col for col in columns}, *data]:
+        cells = [str(row.get(col, "")).ljust(widths[col]) for col in columns]
+        lines.append("  ".join(cells).rstrip())
+    return "\n".join(lines) + "\n"
+
+
+def run_status(root="."):
+    """Resolve where we are standing, then report. Returns a CLI exit code.
+
+    Same split as the reconciler's: ``run_status`` answers "which study, which
+    campaign, and is this the right environment", and ``report`` takes both as
+    parameters — so nothing below here assumes the study is the cwd.
+    """
+    study, label, _ = campaign_mod.require_selected_campaign(root)
+    return report(study, label)
+
+
+def report(study, label):
+    """Render ``study``'s cells for ``label``. Returns a CLI exit code."""
+    campaign_mod.require_statefile(study, label)
+
+    data = records(study, label)
+    if not data:
+        print(
+            f"campaign {label!r} has no cells yet — `mechababs add-dataset "
+            f"--sourcedata <path>` selects the data it acts on.",
+            file=sys.stderr,
+        )
+        return 0
+    sys.stdout.write(render(data))
     return 0

@@ -1,4 +1,4 @@
-"""The study-first spine: `campaign init` -> `add-dataset` -> `scaffold` -> `submit` -> `merge`.
+"""The study-first spine: `campaign init` -> `add-dataset` -> scaffold -> submit -> merge.
 
 One test, run as ordered **stages**, against a real study on a real filesystem. It
 asserts the things only an end-to-end run can: that `uv lock` + `uv sync` actually
@@ -6,6 +6,12 @@ resolve a campaign environment, that the committed `env.sh` really selects and
 activates it in a fresh shell, that the env-match guard really refuses the wrong
 python, that real jobs reach a real scheduler and their results land in a
 derivative, and that what landed in the study's git history is what should have.
+
+**Two cells, driven two ways.** The anchor cell's transitions are dispatched by hand
+(`_dispatch`), one named verb at a time, which is how a verb and its self-guards are
+tested. The chain cell is driven by `mechababs iterate` alone (`_iterate`) — nobody
+names a verb; the reconciler reads the shard and decides. Both are the real path, and
+between them the whole loop a user actually runs is covered.
 
 **It grows by appending stages, not by rewriting.** Each `_stage_*` takes the study
 and returns nothing but assertions; the driver below calls them in order. Keeping it
@@ -37,6 +43,7 @@ import yaml
 
 from mechababs import babs_status
 from mechababs import campaign as campaign_mod
+from mechababs import status as status_mod
 
 log = logging.getLogger("mechababs.e2e")
 
@@ -116,12 +123,16 @@ def _in_campaign(study, label, *args, check=True):
 
 
 def _dispatch(study, verb, source_dataset, app_config, *, check=True):
-    """Dispatch one cell's transition the way `iterate` will.
+    """Dispatch ONE named cell's transition, choosing it by hand.
 
-    `iterate` is the next chunk; until it exists the scenario calls the dispatcher
-    itself — from inside the campaign venv, which is where `iterate` will call it
-    from, so the thing under test (a `datalad run` at the study invoking the pinned
-    `mechababs-inner`) is the real one either way.
+    The scenario drives cells both ways, on purpose. This one names the verb and the
+    cell, which is how a verb — and each of its self-guards — is tested in isolation:
+    the anchor cell's whole life goes through here. `_iterate` is the other way, where
+    nobody chooses and the reconciler decides; the chain cell goes through that.
+
+    It calls the dispatcher from inside the campaign venv, which is exactly where
+    `iterate` calls it from, so what runs is the real thing either way: a `datalad
+    run` at the study invoking the pinned `mechababs-inner`.
     """
     env_sh = campaign_mod.env_path(study, LABEL)
     script = (
@@ -231,6 +242,43 @@ def _run_record(study):
     """
     body = _git(study, "log", "-1", "--format=%b")
     return json.loads(body[body.index("{") : body.rindex("}") + 1])
+
+
+def _iterate(study, *args):
+    """One reconciler tick, run the way a user runs it: sourced env.sh, then `iterate`.
+
+    No `--campaign-path` and no cell named: where you stand is the study, the env var
+    is the campaign, and which cell moves is the reconciler's decision, not ours. That
+    is the whole difference between this and `_dispatch`.
+    """
+    return _in_campaign(study, LABEL, "iterate", *args)
+
+
+def _status(study):
+    return _in_campaign(study, LABEL, "status").stdout
+
+
+def _status_row(table, app):
+    """One row of the `status` table, parsed by the header's column positions.
+
+    The table is aligned, not delimited, and its values carry spaces ("not started",
+    "waiting on X"), so `split()` would tear them. Alignment means the header line
+    holds every column's start, so that is what this reads it by.
+    """
+    lines = table.splitlines()
+    starts, pos = [], 0
+    for col in status_mod.COLUMNS:
+        pos = lines[0].index(col, pos)
+        starts.append(pos)
+        pos += len(col)
+    bounds = list(zip(starts, starts[1:] + [None]))
+    for line in lines[1:]:
+        fields = {
+            col: line[a:b].strip() for col, (a, b) in zip(status_mod.COLUMNS, bounds)
+        }
+        if fields["app"] == app:
+            return fields
+    raise AssertionError(f"no row for {app} in:\n{table}")
 
 
 # --------------------------------------------------------------------------
@@ -519,6 +567,14 @@ def _stage_dependent_cell_waits_for_its_producer(study):
     assert not (study / "derivatives" / f"{CHAIN}+{DATASET_ID}").exists()
     _assert_clean(study, "the refused dependent cell")
 
+    # This is the one moment the waiting state exists — the producer scaffolded, not
+    # merged — so it is where `status` gets asserted for it. (Only the dependent's row:
+    # the producer's is an active cell, whose live counts need a scheduler this rung
+    # may not have.)
+    assert _status_row(_status(study), CHAIN)["state"] == f"waiting on {ANCHOR}", (
+        _status(study)
+    )
+
 
 def _stage_submit(study):
     """Jobs reach the scheduler — and the study's history does not notice.
@@ -622,23 +678,49 @@ def _stage_merge(study):
     _assert_clean(study, "the refused re-merge")
 
 
-def _stage_chained_cell_scaffolds_from_its_producer(study):
-    """The positive half of the chain: the gate opens, and the wiring is real.
+def _stage_iterate_drives_the_chain_cell(study):
+    """The reconciler, end to end: one cell's whole life, driven by ticks alone.
 
-    This is the first run of the input-wiring path — the dependent's
-    `input_datasets` entry names the producer's app, so scaffold resolves it to that
-    cell's merged output store and hands babs the URL the YAML cannot carry.
+    Every stage above dispatched a transition by hand, because that is how a verb is
+    tested. This is the other half — nobody chooses the transition. `iterate` reads
+    the shard, works out what each cell is owed, and dispatches it; the operator only
+    says "again".
+
+    So the chain cell is deliberately left unscaffolded by the stages above, and gets
+    its scaffold, its submit and its merge from three ticks. That also makes this the
+    first run of the input-wiring path (the dependent's `input_datasets` entry names
+    the producer's app, so scaffold resolves it to that cell's merged output store and
+    hands babs the URL the YAML cannot carry) — asserted here, where it happens.
     """
-    if _skip_without_scheduler("_stage_chained_cell_scaffolds_from_its_producer"):
+    if _skip_without_scheduler("_stage_iterate_drives_the_chain_cell"):
         return
     chain_app = f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"
     derivative = study / "derivatives" / f"{CHAIN}+{DATASET_ID}"
 
-    _dispatch(study, "scaffold", SOURCEDATA, chain_app)
+    # Where the campaign stands before the reconciler touches it, as `status` sees it:
+    # the anchor done, and the chain no longer waiting — merging the anchor is what
+    # opened its gate, so it now reads as an ordinary not-started cell.
+    table = _status(study)
+    assert _status_row(table, ANCHOR)["state"] == "merged", table
+    assert _status_row(table, CHAIN)["state"] == "not started", table
+
+    # --- tick 1: the gate is open, so the cell is scaffolded ---------------
+    tick = _iterate(study)
+    assert "not started -> scaffold" in tick.stderr, tick.stderr
 
     assert (derivative / ".babs").is_dir(), f"no babs project at {derivative}"
     rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
     assert rows[chain_app]["babs"] == f"derivatives/{CHAIN}+{DATASET_ID}", rows
+
+    # The tick dispatched a real `datalad run` — iterate itself is a plain
+    # coordinator, so what lands in the study is the verb's record, not iterate's.
+    subject = _git(study, "log", "-1", "--format=%s").strip()
+    assert subject.startswith("[DATALAD RUNCMD] mechababs scaffold"), subject
+    record = _run_record(study)
+    assert record["cmd"] == (
+        f"mechababs-inner scaffold --campaign {LABEL} "
+        f"--source-dataset {SOURCEDATA} --app {chain_app}"
+    ), record["cmd"]
 
     # The config babs kept carries the producer's output RIA, in the alias form.
     babs_config = yaml.safe_load(
@@ -656,8 +738,56 @@ def _stage_chained_cell_scaffolds_from_its_producer(study):
     assert f"sourcedata/{ANCHOR}" in (derivative / ".gitmodules").read_text(), (
         "babs did not register the producer's output as this cell's input"
     )
+    _assert_clean(study, "the tick that scaffolded the chain cell")
 
-    _assert_clean(study, "the chained scaffold")
+    # --- tick 2: the cell is active with nothing submitted, so submit ------
+    head = _git(study, "rev-parse", "HEAD").strip()
+    tick = _iterate(study)
+    assert "-> submit" in tick.stderr, tick.stderr
+
+    status = _babs_status(study, derivative)
+    assert status["total"] > 0, f"babs knows of no jobs for the chain cell: {status}"
+    assert status["submitted"] == status["total"], (
+        f"the tick left jobs undeployed: {status}"
+    )
+    assert _git(study, "rev-parse", "HEAD").strip() == head, (
+        "the submitting tick committed — submit is dispatched plainly because it "
+        "changes nothing tracked"
+    )
+    _assert_clean(study, "the tick that submitted")
+
+    # The in-flight tick — jobs running, so the cell is skipped — is deliberately NOT
+    # asserted here: whether the jobs have ended by the time a tick lands is the
+    # scheduler's business, so the e2e version of that assertion is a race. It is a
+    # unit test (`test_jobs_still_in_flight_are_left_alone`), where the counts are ours.
+    _wait_for_jobs(study, derivative)
+
+    # --- tick 3: everything ended successfully, so merge -------------------
+    tick = _iterate(study)
+    assert "-> merge" in tick.stderr, tick.stderr
+
+    rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
+    assert rows[chain_app]["merged"] == "true", rows[chain_app]
+    subject = _git(study, "log", "-1", "--format=%s").strip()
+    assert subject.startswith("[DATALAD RUNCMD] mechababs merge"), subject
+
+    produced = [
+        p
+        for p in _git(derivative, "ls-files").split()
+        if p.startswith("sub-") and p.endswith(".zip")
+    ]
+    assert produced, "the chain cell's derivative carries no per-subject results"
+    _assert_clean(study, "the tick that merged")
+
+    # --- the terminal state: every cell merged, and a tick is a no-op ------
+    done = _iterate(study)
+    assert "0 cell(s) advanced" in done.stderr, done.stderr
+    table = _status(study)
+    assert [_status_row(table, name)["state"] for name in (ANCHOR, CHAIN)] == [
+        "merged",
+        "merged",
+    ], table
+    _assert_clean(study, "the tick with nothing left to do")
 
 
 def test_spine(
@@ -678,7 +808,7 @@ def test_spine(
     _stage_dependent_cell_waits_for_its_producer(study)
     _stage_submit(study)
     _stage_merge(study)
-    _stage_chained_cell_scaffolds_from_its_producer(study)
+    _stage_iterate_drives_the_chain_cell(study)
 
 
 def test_campaign_init_refuses_outside_a_study(

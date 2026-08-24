@@ -170,12 +170,19 @@ def cmd_add_dataset(args):
 
 
 def cmd_iterate(args):
-    """One reconciler tick: scaffold each (dataset, pipeline) whose init is empty."""
-    campaign = _ensure_campaign(args)
-    guard.require_clean_pins(campaign)
-    if not args.dry_run:
-        iterate_mod.warn_if_no_tmux()
-    iterate_mod.run_iterate(campaign, batch=args.batch, dry_run=args.dry_run)
+    """One reconciler tick: advance each cell of the selected campaign by one step.
+
+    Runs from the campaign root — the study — like every operating verb; which
+    campaign is the env var's answer, not a flag's. The clean check raises rather
+    than exits (it is a library guard the verbs share), so it is turned into a plain
+    message here: its text is already the explanation, and a traceback would bury it.
+    """
+    try:
+        iterate_mod.run_iterate(
+            ".", batch=args.batch, derivative=args.derivative, dry_run=args.dry_run
+        )
+    except RuntimeError as e:
+        sys.exit(str(e))
     return 0
 
 
@@ -211,16 +218,8 @@ def cmd_test_cluster(args):
 
 
 def cmd_status(args):
-    """Read-only: one row per job across every (dataset, pipeline) cell."""
-    campaign = _ensure_campaign(args)
-    return status_mod.run_status(
-        campaign,
-        study=args.study,
-        derivative=args.derivative,
-        only_failed=args.failed,
-        do_refresh=not args.no_refresh,
-        output=args.output,
-    )
+    """Read-only: one row per cell, with live job counts for the running ones."""
+    return status_mod.run_status(".")
 
 
 def main():
@@ -345,24 +344,38 @@ def main():
     pa.set_defaults(func=cmd_add_dataset)
 
     pi = sub.add_parser(
-        "iterate", help="advance pending pipelines one scaffold transition"
-    )
-    pi.add_argument(
-        "--campaign-path",
-        type=Path,
-        default=Path("."),
-        help="the campaign dataset (default: current directory)",
+        "iterate",
+        help="advance the selected campaign's cells by one transition each",
+        description=(
+            "One reconciler tick over this study's cells for the selected campaign. "
+            "Each cell advances by AT MOST ONE transition, routed on the statefile's "
+            "columns: not started -> scaffold; scaffolded and not merged -> what the "
+            "live `babs status` counts say (submit / wait / merge / flag a failure); "
+            "merged -> skipped. A cell waiting on an unmerged producer is noted and "
+            "passed over, not blocked on, and a cell whose jobs failed is flagged "
+            "rather than merged. Nothing is remembered between ticks: every tick "
+            "re-reads ground truth, so run it again and again until the campaign is "
+            "done."
+        ),
     )
     pi.add_argument(
         "--batch",
         type=int,
         default=None,
-        help="cap to N (dataset, pipeline) pairs this tick (default: all)",
+        help="advance at most N cells this tick (default: all). A cell that is "
+        "already done, waiting, or still running does not count against it.",
+    )
+    pi.add_argument(
+        "--derivative",
+        default=None,
+        metavar="STEM",
+        help="only this app config's cells, by its filename stem (e.g. MRIQC-24.0.2)",
     )
     pi.add_argument(
         "--dry-run",
         action="store_true",
-        help="print the planned commands and change nothing",
+        help="route every cell for real and print the transitions it would "
+        "dispatch, without dispatching them",
     )
     pi.set_defaults(func=cmd_iterate)
 
@@ -443,31 +456,15 @@ def main():
     )
     pt.set_defaults(func=cmd_test_cluster)
 
-    ps = sub.add_parser("status", help="campaign-wide job table (read-only)")
-    ps.add_argument(
-        "--campaign-path",
-        type=Path,
-        default=Path("."),
-        help="the campaign dataset (default: current directory)",
-    )
-    ps.add_argument(
-        "-o",
-        "--output",
-        choices=["columns", "tsv", "vd"],
-        default="columns",
-        help="aligned table (default), raw TSV to pipe anywhere, or open VisiData",
-    )
-    ps.add_argument(
-        "--study", default=None, help="only this study (ds004044 or study-ds004044)"
-    )
-    ps.add_argument(
-        "--derivative", default=None, help="only this derivative (e.g. MRIQC-24.0.2)"
-    )
-    ps.add_argument("--failed", action="store_true", help="only jobs that failed")
-    ps.add_argument(
-        "--no-refresh",
-        action="store_true",
-        help="skip the per-cell `babs status` refresh; read the (possibly stale) cache",
+    ps = sub.add_parser(
+        "status",
+        help="one row per cell of the selected campaign (read-only)",
+        description=(
+            "Render this study's cells for the selected campaign, one row each — the "
+            "statefile as it is, plus the part it deliberately does not store: for a "
+            "cell whose jobs are running, the live `babs status` counts. Read-only, "
+            "and it takes no lock, so it can be run while a tick is in progress."
+        ),
     )
     ps.set_defaults(func=cmd_status)
 
