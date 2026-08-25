@@ -322,7 +322,13 @@ def render_pyproject(
         "[project]",
         f"name = {_toml_str('mechababs-campaign-' + label)}",
         'version = "0"',
-        'requires-python = ">=3.10"',
+        # TEMPORARY, drop to ">=3.10" when PennLINC/babs#403 lifts babs' numpy pin.
+        # The reason is emitted into the file itself: a user reading their own
+        # campaign's pyproject should not have to guess why 3.13 is excluded.
+        "# The upper bound is babs' `numpy < 2.0` pin: numpy 1.26.4 has no wheel past",
+        "# cp312, so 3.13+ falls back to a source build that fails. Tracked upstream as",
+        "# PennLINC/babs#403; the bound goes away when that pin lifts.",
+        'requires-python = ">=3.10,<3.13"',
         "dependencies = [",
     ]
     lines += [f"    {_toml_str(d)}," for d in deps]
