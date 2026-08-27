@@ -2,10 +2,10 @@
 
 Bringing mechababs to a new HPC is two steps: write one small **cluster profile**,
 then **validate it by running the real e2e suite on your cluster**. That second
-step is a stronger check than `babs check-setup` — it drives the whole campaign
-path (bootstrap → configure → add-dataset → iterate: scaffold → submit → wait →
-merge) and asserts a real derivative landed, so it catches HPC-specific breakage a
-scaffold-only deploy would miss.
+step is a stronger check than `babs check-setup` — it drives the whole spine
+(`campaign init` → `add-dataset` → `iterate`: scaffold → submit → wait → merge) in a
+throwaway study and asserts a real derivative landed, so it catches HPC-specific
+breakage a scaffold-only deploy would miss.
 
 ## What a cluster profile is
 
@@ -61,19 +61,19 @@ help with:
   doesn't. (The simbids test pipeline has no such binds, so the e2e below is
   unaffected — but a real fmriprep run will need this.)
 
-Cluster and pipeline configs themselves are **campaign-owned**: they live in the
-campaign's own `clusters/` and `pipelines/`, and `configure` copies the config you
-name into the campaign and resolves it by name — so the config that produced a run
-is committed alongside it. The files under `examples/` are starters to copy from,
-not a directory the tool resolves against; using mechababs at your site needs no
-fork of it.
+Cluster and app configs themselves are **campaign-owned**: `campaign init` copies the
+configs you name into the campaign's own `clusters/` and `bids-app-configs/`, so the
+config that produced a run is committed alongside it. They are always given **by
+path or URL**, never by a name the tool looks up: the files under `examples/` are
+starters to copy from, not a directory mechababs resolves against, so using mechababs
+at your site needs no fork of it.
 
 ## Add your cluster
 
-Write your profile wherever you keep site config and pass its path — `test-cluster`
-takes a path, and `configure --cluster <path>` copies it into the campaign, so
-nothing has to live in a checkout. Copy `examples/clusters/` into it only if you also
-intend to contribute the profile upstream as a starter alongside
+Write your profile wherever you keep site config and pass its path — both
+`test-cluster --cluster` and `campaign init --cluster` take one, so nothing has to
+live in a checkout. Copy `examples/clusters/` into it only if you also intend to
+contribute the profile upstream as a starter alongside
 `dartmouth`/`unity`/`sherlock`.
 
 1. Copy the closest starter: `cp examples/clusters/dartmouth.yaml ~/config/your-site.yaml`.
@@ -88,90 +88,64 @@ intend to contribute the profile upstream as a starter alongside
 4. If you'll run fmriprep/mriqc, point the templateflow / FS-license binds in those
    `examples/pipelines/*.yaml` at your site's paths (the gap above).
 5. Your profile does not have to be committed anywhere: `test-cluster --cluster` reads
-   the config from the path you hand it, and `configure` copies it into the campaign.
-   (Validating from a *checkout* does require your mechababs work to be committed, since
-   the dev campaign clones your branch — but that is about the code under test, not your
-   cluster profile.)
+   the config from the path you hand it, and `campaign init` copies it into the campaign
+   when you go on to use it for real.
 
 ## Validate by running the e2e on your cluster
 
-Run this on a **login node** — the cluster is the substrate, so there is no
-container here.
-
-### From a campaign
-
-If you have a bootstrapped campaign, validate from it (under `tmux`/`screen` — a
-login-node disconnect kills the run):
+Run this on a **login node**, under `tmux`/`screen` — the cluster is the substrate, so
+there is no container here, and a login-node disconnect kills the run.
 
 ```bash
-cd my-campaign
-source .venv/bin/activate
-mechababs test-cluster --cluster ~/config/your-site.yaml
+uvx --from 'git+https://github.com/con/mechababs@main#egg=mechababs[test]' \
+    mechababs test-cluster \
+    --cluster ~/config/your-site.yaml \
+    --scratch-path /your/cluster/scratch
 ```
 
-That is the whole setup. The campaign already carries the pinned babs, an isolated
-venv with the scenario in it, and a workdir, so there is nothing to export and no
-checkout to make. Pass the **path** to your config, as above: a bare name is resolved
-against the campaign's own `clusters/`, which `configure` populates — so the name form
-only works after you have configured, and validating first is the point. Arguments after
-a literal `--` pass through to pytest
-(`mechababs test-cluster --cluster ~/config/your-site.yaml -- -k test_full_run`).
-The container shim remains the one prerequisite — see [installation.md](installation.md).
+That is the whole setup — no checkout, no venv to build, nothing to export.
+Arguments after a literal `--` pass through to pytest
+(`… --scratch-path /scratch -- -k test_spine`).
 
-**It does not run in the campaign you point at.** The scenario configures a campaign,
-registers a dataset, and retires a derivative, so it builds its *own* throwaway
-campaign — provisioned from your campaign's pins, so the tools under test are the ones
-your campaign records. Your campaign supplies the environment, not the workspace.
+Three things about that command are load-bearing:
 
-### From a checkout
+- **`--cluster` takes a path.** Configs are user-provided; there is no directory
+  mechababs resolves a bare name against.
+- **`--scratch-path` is required**, and belongs on fast cluster scratch. The fixture
+  studies, the container dataset they resolve as their sibling, and the caches all
+  live there — never home or `/tmp`.
+- **The `[test]` extra is not optional.** The scenario runs as
+  `sys.executable -m pytest`, so pytest has to be installed beside the mechababs you
+  invoke. It cannot come from the campaign the scenario builds, because building that
+  campaign is the scenario's first step.
 
-Developing mechababs itself, you take the *same two steps* a user does — bootstrap a
-campaign, then validate from it — with your checkout as the mechababs pin instead of a
-released ref. `run_on_cluster.sh` does both:
+**It never touches a real study.** A campaign lives *inside* a study, so there is
+nothing standalone to point this at: the scenario fabricates its own study under the
+scratch path and runs the real spine — `campaign init` → `add-dataset` → `iterate`
+(scaffold → submit → merge) — in that.
 
-```bash
-export MECHABABS_E2E_WORKDIR=/your/cluster/scratch
-./mechababs/testing/e2e/run_on_cluster.sh ~/config/your-site.yaml
-# a single test:
-./mechababs/testing/e2e/run_on_cluster.sh ~/config/your-site.yaml -- -k test_full_run
-```
+**It validates the mechababs you invoked.** With `--mechababs` unset, `campaign init`
+pins whichever mechababs is running the command, exactly as it would for a user's own
+campaign — so the ref in the `uvx --from` above is the code under test, and testing a
+branch is a matter of changing it. babs is different: it is not a mechababs dependency
+but a dependency of the *generated campaign*, frozen by that campaign's lock, so the
+fixture campaign gets what a user's campaign would get. `--babs <url@ref>` overrides
+that, which is how an unmerged babs fix gets run through the scenario.
 
-which is this, by hand:
+### Developing mechababs itself
 
-```bash
-# a fresh path each run — bootstrap refuses one that exists
-DEV=$MECHABABS_E2E_WORKDIR/dev-campaign-$$
-./bootstrap.sh "$DEV" \
-    --mechababs "$PWD@$(git symbolic-ref --short HEAD)" \
-    ${BABS_SPEC:+--babs "$BABS_SPEC"}
-cd "$DEV"
-source .venv/bin/activate
-mechababs test-cluster --cluster ~/config/your-site.yaml
-```
+An unpushed branch is testable the same way: `uvx --from` takes anything `pip` can
+install, and `--mechababs` takes anything `git clone` accepts — a path on the cluster
+filesystem included. There is no separate dev route into the scenario; dev and prod
+differ only in the *value* of those pins.
 
-Get the prerequisites in place first — see [installation.md](installation.md): the PATH
-tools (`git` and `uv` for bootstrap, apptainer/singularity for the jobs), a scratch
-workspace and `MECHABABS_E2E_WORKDIR`, and the container shim. The campaign venv
-bootstrap builds is what runs the scenario, so there is no separate driver venv to make.
+The much faster local rung — the same scenario under rootless podman against a
+container running SLURM — is in [CONTRIBUTORS.md](../CONTRIBUTORS.md).
 
-Because bootstrap **clones** your branch into the campaign, only committed work is under
-test — the wrapper refuses a dirty tree rather than quietly validate your last commit.
-
-By default babs is pinned to `PennLINC/babs@main`; set `BABS_SPEC=<url@ref>` (a public
-https URL the campaign clones anonymously) if your run needs an unmerged babs branch. The
-wrapper forwards it to bootstrap as `--babs`, so the dev campaign pins it and the
-scenario's own campaign inherits it from those pins. Nothing else reads the variable —
-by hand, pass `--babs` yourself, as above.
-
-`run_on_cluster.sh` is a thin wrapper: it guards the environment contract above (workdir
-set, shim built, site-packages unset, tmux, a clonable ref) and hands off to
-`test-cluster`. Every site runs the *same* command with its own config — per-site
-differences belong in your cluster YAML, never in how you invoke this.
-
-**What a green run means:** the suite bootstrapped a campaign, configured it with
-*your* cluster profile, submitted real SLURM jobs, waited on them, merged, and
-asserted a produced derivative landed in the output RIA. If it passes, your cluster
-config produces derivatives — you're ready to point mechababs at real datasets.
+**What a green run means:** the suite built a campaign against *your* cluster profile,
+resolved and installed its environment, submitted real SLURM jobs, waited on them,
+merged, and asserted a produced derivative landed. If it passes, your cluster config
+produces derivatives — you're ready to point mechababs at a real study.
 
 ## See also
 

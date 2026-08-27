@@ -60,12 +60,14 @@ mechababs add-dataset https://github.com/OpenNeuroDatasets/ds005896
 # advance the campaign one reconciler tick (see below)
 mechababs iterate [--batch N] [--dry-run]
 
-# validate a cluster config end to end, using this campaign's pinned tools: runs the
-# e2e scenario (configure -> add-dataset -> iterate: scaffold -> submit -> merge) and
-# asserts a real derivative landed. A stronger check than `babs check-setup`.
-mechababs test-cluster --cluster your-site.yaml   # a path, or a name in clusters/
-                 [--workdir DIR]                 # default: beside this campaign
-                 [-- -k test_full_run]           # after `--`, args go to pytest
+# validate a cluster config end to end: runs the e2e scenario in a throwaway study
+# (campaign init -> add-dataset -> iterate: scaffold -> submit -> merge) and asserts
+# a real derivative landed. A stronger check than `babs check-setup`.
+mechababs test-cluster --cluster your-site.yaml   # by path; configs are not looked up by name
+                 --scratch-path DIR              # where the fixture studies + caches go
+                 [--mechababs URL@REF]           # default: the mechababs running this command
+                 [--babs URL@REF]                # default: what a user's campaign gets
+                 [-- -k test_spine]              # after `--`, args go to pytest
 
 # read-only: one row per job across every (dataset, pipeline) cell —
 # dataset · pipeline · sub/ses · job_id · state · time_used/limit · failed · log path
@@ -79,13 +81,32 @@ mechababs retire-derivative studies/study-ds004044/derivatives/fMRIPrep-25.2.5+m
                  [--dry-run]
 ```
 
-`test-cluster` **does not run in the campaign you invoke it from.** The scenario
-configures a campaign, registers a dataset, and retires a derivative, so it builds its
-own throwaway campaign — provisioned from this campaign's pins, so the babs +
-mechababs under test are the ones this campaign records. The campaign supplies the
-environment (pinned tools, venv, workdir), not the workspace. The
-[cluster config & testing tutorial](cluster-config-and-testing-tutorial.md) is the
-full walk-through.
+`test-cluster` **recreates the environment it was called from, in a throwaway study.**
+A campaign lives inside a study, so there is nothing standalone to point it at: the
+scenario builds its own fixture study under `--scratch-path` and runs `campaign init`
+there. Real studies are never touched.
+
+The two pins get there differently. With no `--mechababs`, `campaign init` pins
+whichever mechababs is running the command — so what is validated is the code you
+invoked, by the same path a user's own `campaign init` takes. babs cannot mirror the
+caller, because babs is not a mechababs dependency at all: it is a dependency of the
+*generated campaign*, frozen by that campaign's lock, so the fixture campaign gets
+what a user's campaign would get. Both are overridable, which is how a branch gets
+tested.
+
+The suite runs as `sys.executable -m pytest`, so pytest has to be installed beside
+the mechababs you invoke — it cannot come from the fixture campaign's venv, which
+does not exist yet when pytest starts. Hence the `test` extra:
+
+```bash
+uvx --from 'git+https://github.com/con/mechababs@<ref>#egg=mechababs[test]' \
+    mechababs test-cluster \
+    --cluster ~/config/your-site.yaml \
+    --scratch-path /your/cluster/scratch
+```
+
+The [cluster config & testing tutorial](cluster-config-and-testing-tutorial.md) is
+the full walk-through.
 
 `retire-derivative` exists because a cell that must be redone (a resource change, a
 tool bug, a config fix) leaves a derivative that is no longer wanted in the study but
