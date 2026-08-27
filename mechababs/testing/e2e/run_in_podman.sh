@@ -130,9 +130,9 @@ EXTRA_MOUNT=()
 # survives as a real, operable dataset — no `podman cp`, no dead /scratch abspaths. (One
 # exception: a campaign's mechababs pin is `/mechababs`, the container-local mount of
 # the checkout, so that source is not resolvable on the host.)
-# (Same idiom as $REAL_GIT_DIR above.) The shim lives under the workdir, so the app
-# config's `../repronim-containers-shim` resolves through this one mount — no separate
-# shim mount needed.
+# (Same idiom as $REAL_GIT_DIR above.) The container dataset lives under the workdir
+# too, so the app config's `../containers` resolves through this one mount — no
+# separate container mount needed.
 MECHABABS_E2E_WORKDIR="${MECHABABS_E2E_WORKDIR:-/tmp/mechababs-e2e}"
 mkdir -p "$MECHABABS_E2E_WORKDIR"
 WORKDIR_MOUNT=(-v "$MECHABABS_E2E_WORKDIR:$MECHABABS_E2E_WORKDIR")

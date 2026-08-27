@@ -54,8 +54,8 @@ def test_the_scenario_is_declared_as_package_data():
     )
 
 
-def test_the_dev_wrapper_scripts_are_excluded_from_the_distribution():
-    """The wrapper scripts drive the suite from a checkout, so they must not ship.
+def test_the_dev_wrapper_script_is_excluded_from_the_distribution():
+    """The wrapper drives the suite from a checkout, so it must not ship.
 
     This needs an explicit exclude: setuptools_scm's file finder plus the default
     include-package-data would otherwise ship every git-tracked file under the package,
