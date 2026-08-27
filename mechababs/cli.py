@@ -1,17 +1,18 @@
-"""mechababs — the operate-side CLI (configure / add-dataset / iterate / …).
+"""mechababs — the user CLI (campaign init / add-dataset / iterate / …).
 
-Runs inside a campaign's venv (built by bootstrap.sh). ``configure`` binds an
-ordered pipeline-set to a cluster (the mechababs config + the ledger) from inside
-that venv; the other subcommands mutate or advance the state-file ledger. The
-environment half of the bootstrap — datalad dataset, vendored code pins, venv —
-is bootstrap.sh's job.
+``campaign init`` creates a campaign inside a study — its config, its pinned
+environment, and its empty statefile — and is the one verb that runs before that
+environment exists, so it may run from anywhere (typically ``uvx --from git+…``).
+Every other verb operates on the campaign selected by ``MECHABABS_CAMPAIGN``, from
+the study it lives in, and runs from that campaign's own venv. The action verbs
+``iterate`` dispatches under ``datalad run`` live in ``mechababs-inner``.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from mechababs import __version__, campaign_init, construct, guard, state
+from mechababs import __version__, campaign_init, state
 from mechababs import add_dataset as add_dataset_mod
 from mechababs import campaign as campaign_mod
 from mechababs import iterate as iterate_mod
@@ -27,40 +28,6 @@ def _ensure_campaign(args):
     if not state.state_path(campaign).is_file():
         sys.exit(f"not a campaign (no {state.STATE_FILENAME}): {campaign}")
     return campaign
-
-
-def _ensure_campaign_skeleton(args):
-    """Resolve --campaign-path and confirm it is the campaign ENVIRONMENT bootstrap built.
-
-    A datalad dataset with both code pins registered — deliberately NOT the ledger, which
-    is what `_ensure_campaign` checks. Both commands that use this run *before* a ledger
-    exists: `configure` is what writes it, and `test-cluster` validates a cluster before
-    you commit real data to it, which is the whole point of validating.
-    """
-    campaign = args.campaign_path.resolve()
-    if not (campaign / ".datalad").is_dir():
-        sys.exit(f"not a datalad dataset: {campaign}")
-    for sub in ("code/mechababs", "code/babs"):
-        if not (campaign / sub).is_dir():
-            sys.exit(f"not a campaign skeleton (missing {sub}): {campaign}")
-    return campaign
-
-
-def _require_campaign_venv(campaign):
-    """Refuse unless THIS process is the campaign venv's python.
-
-    The guard that kills the wrong-babs bug: the campaign's `.venv` is where the
-    pinned babs + mechababs live, so an ambient install running instead would
-    scaffold (or validate) with tools the campaign does not record.
-    """
-    venv = (campaign / ".venv").resolve()
-    prefix = Path(sys.prefix).resolve()
-    if prefix != venv:
-        sys.exit(
-            f"must run from the campaign venv ({venv}), but sys.prefix is {prefix}\n"
-            f"invoke as: {venv}/bin/mechababs …"
-        )
-    return venv
 
 
 def cmd_campaign_init(args):
@@ -96,50 +63,6 @@ def cmd_campaign_init(args):
     )
     print(f"  source {rel}/{campaign_mod.ENV_FILENAME}", file=sys.stderr)
     print("  mechababs add-dataset --sourcedata sourcedata/<id>", file=sys.stderr)
-    return 0
-
-
-def cmd_configure(args):
-    """Configure the campaign: bind an ordered pipeline-set to a cluster.
-
-    Runs from inside the campaign venv. bootstrap.sh established the
-    preconditions this checks: the path is a datalad dataset with code/mechababs
-    + code/babs registered, and THIS process runs from the campaign's own .venv —
-    which is how we know the pinned code (not some ambient install) is executing.
-    This is the guard that kills the wrong-babs bug. Then construct.build copies
-    the named configs into the campaign, vendors the pipelines' containers, and
-    writes the config + the ledger.
-    """
-    # Look like a campaign skeleton bootstrap.sh built?
-    campaign = _ensure_campaign_skeleton(args)
-
-    # Provenance guard: the code pins must match what the campaign records.
-    guard.require_clean_pins(campaign)
-
-    # The PATH guard, the whole point: are we the campaign venv's python? If not, an
-    # ambient mechababs is running and would scaffold with the wrong (unpinned) babs.
-    venv = _require_campaign_venv(campaign)
-
-    # State guard: never clobber add-dataset rows. Reset = delete the ledger first.
-    if state.state_path(campaign).is_file():
-        sys.exit(
-            f"{state.STATE_FILENAME} already exists — refusing to overwrite.\n"
-            f"To reset, delete it first, then re-run: mechababs configure …"
-        )
-
-    pipeline_files = [p.strip() for p in args.pipelines.split(",") if p.strip()]
-    if not pipeline_files:
-        sys.exit("--pipelines must list at least one pipeline config file")
-
-    pipelines = construct.build(
-        campaign,
-        pipeline_files,
-        args.cluster,
-        str(venv.relative_to(campaign)),
-        limit=args.limit,
-    )
-    print(f"campaign constructed: pipelines {', '.join(pipelines)}", file=sys.stderr)
-    print("Next: mechababs add-dataset <url>; mechababs iterate", file=sys.stderr)
     return 0
 
 
@@ -291,37 +214,6 @@ def main():
     )
     pci.set_defaults(func=cmd_campaign_init)
 
-    pc = sub.add_parser(
-        "configure",
-        help="bind an ordered pipeline-set to a cluster (run from the campaign venv)",
-    )
-    pc.add_argument(
-        "--campaign-path",
-        type=Path,
-        default=Path("."),
-        help="the campaign dataset (default: current directory)",
-    )
-    pc.add_argument(
-        "--pipelines",
-        required=True,
-        help="comma-separated pipeline configs (ordered): a path to copy into the "
-        "campaign's pipelines/, or the name of one already there",
-    )
-    pc.add_argument(
-        "--cluster",
-        required=True,
-        help="cluster config: a path to copy into the campaign's clusters/, or the "
-        "name of one already there",
-    )
-    pc.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="cap each dataset's inclusion to the first N eligible subjects "
-        "(default: all)",
-    )
-    pc.set_defaults(func=cmd_configure)
-
     pa = sub.add_parser(
         "add-dataset",
         help="select a source dataset already in a study into this campaign",
@@ -464,7 +356,7 @@ def main():
         nargs=argparse.REMAINDER,
         metavar="-- PYTEST_ARGS",
         help="args after a literal `--` pass through to pytest "
-        "(e.g. `-- -k test_full_run`)",
+        "(e.g. `-- -k test_spine`)",
     )
     pt.set_defaults(func=cmd_test_cluster)
 
