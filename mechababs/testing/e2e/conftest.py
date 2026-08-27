@@ -72,10 +72,12 @@ def pytest_addoption(parser):
     parser.addoption(
         "--mechababs",
         default=None,
-        help="REQUIRED. The mechababs the campaigns pin, as `URL@REF` — passed straight "
-        "to `campaign init --mechababs`, so the tools a scenario campaign records are the "
-        "code under test. A dev run passes its own checkout (run_in_podman.sh mounts it "
-        "and hands over the mount path); `git clone` takes a local path, which is what "
+        help="Optional `URL@REF` pinning the mechababs the campaigns record — passed "
+        "straight to `campaign init --mechababs`. Omitted, `campaign init` pins "
+        "whichever mechababs is running it (read from its PEP 610 install metadata), "
+        "which is what a user's own `campaign init` does and what `test-cluster` "
+        "relies on. A dev run passes its own checkout (run_in_podman.sh mounts it and "
+        "hands over the mount path); `git clone` takes a local path, which is what "
         "makes an unpushed branch testable.",
     )
     parser.addoption(
@@ -92,9 +94,10 @@ def pytest_addoption(parser):
 def cluster_config(request):
     """The cluster config under test, as an absolute path.
 
-    A UsageError rather than a skip, here and for `--mechababs` below: pytest exits 0
-    when every test skips, so a skip would let a validation run report success having
-    validated nothing — the worst outcome for a validation command.
+    A UsageError rather than a skip: pytest exits 0 when every test skips, so a skip
+    would let a validation run report success having validated nothing — the worst
+    outcome for a validation command. The cluster config is the one option with no
+    sane default, because it is the thing being validated.
     """
     value = request.config.getoption("--cluster-config")
     if not value:
@@ -110,21 +113,22 @@ def cluster_config(request):
 
 @pytest.fixture(scope="session")
 def mechababs_pin(request):
-    """The `URL@REF` the scenario's campaigns pin — the code under test.
+    """The `URL@REF` the scenario's campaigns pin, or ``None`` to let init self-pin.
 
-    The scenario's whole claim is "these tools work on this cluster", so the mechababs
-    a campaign records has to be the one being tested, not whatever `campaign init`
-    would have inferred from its own install. Handing it in explicitly is also what
-    makes the dev route and the future `test-cluster` route the same route with a
-    different value.
+    The scenario's claim is "these tools work on this cluster", so the mechababs a
+    campaign records has to be the code under test. There are two ways to get that,
+    and both are real:
+
+    - **Hand it in** (`--mechababs`), which a dev run does: the checkout under test is
+      a mount path, not something `campaign init` could have inferred.
+    - **Leave it unset**, which `test-cluster` does: `campaign init` then pins whichever
+      mechababs is running it, read from PEP 610 install metadata. The mechababs
+      running `test-cluster` IS the code under test, so the self-pin names it — and
+      omitting the flag exercises the same path a user's own `campaign init` takes.
+
+    So this fixture has no default of its own: unset means "omit the flag", not "guess".
     """
-    value = request.config.getoption("--mechababs")
-    if not value:
-        raise pytest.UsageError(
-            "--mechababs is required: it names the code under test, as URL@REF. "
-            "A dev run passes its own checkout (see run_in_podman.sh)."
-        )
-    return value
+    return request.config.getoption("--mechababs")
 
 
 @pytest.fixture(scope="session")
