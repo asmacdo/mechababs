@@ -193,27 +193,26 @@ def cmd_retire_derivative(args):
 
 
 def cmd_test_cluster(args):
-    """Validate a cluster config end to end, using this campaign's pinned tools.
+    """Validate a cluster config end to end, in a throwaway study.
 
-    Runs from the campaign venv for the same reason `configure` does: the pinned babs
-    is what makes the result mean anything. The scenario builds its own throwaway
-    campaign to work in — it configures and retires derivatives, so it must not touch
-    this one.
+    Runs from anywhere — there is nothing to stand in. A campaign lives inside a
+    study, so the scenario builds a fixture study on the scratch path and runs the
+    real spine in it; real studies are never touched.
 
-    Takes the campaign SKELETON, not a configured campaign: validating a cluster before
-    committing real data to it is the point, so this has to work on a campaign that has
-    only been bootstrapped (no ledger yet).
+    With no `--mechababs`, the fixture campaign pins whichever mechababs is running
+    this command, so what gets validated is the code you invoked. babs is a dependency
+    of the *generated campaign*, not of mechababs, so it cannot mirror the caller —
+    the fixture campaign gets what a user's campaign would get, unless `--babs` says
+    otherwise.
     """
-    campaign = _ensure_campaign_skeleton(args)
-    guard.require_clean_pins(campaign)
-    _require_campaign_venv(campaign)
     # argparse.REMAINDER keeps the `--` separator in the list; pytest does not need it.
     extra = args.pytest_args[1:] if args.pytest_args[:1] == ["--"] else args.pytest_args
     return validate_mod.run_test_cluster(
-        campaign,
         args.cluster,
+        args.scratch_path,
         extra_args=extra,
-        workdir=args.workdir,
+        mechababs=args.mechababs,
+        babs=args.babs,
     )
 
 
@@ -414,36 +413,49 @@ def main():
 
     pt = sub.add_parser(
         "test-cluster",
-        help="validate a cluster config end to end, using this campaign's pinned tools",
+        help="validate a cluster config end to end, in a throwaway study",
         description=(
-            "Run the e2e scenario against a cluster config: configure -> add-dataset -> "
-            "iterate (scaffold -> submit -> merge), asserting a real derivative landed. "
-            "A stronger check than `babs check-setup`, because it proves the config "
-            "actually produces output on this scheduler. Uses this campaign's pinned "
-            "babs + mechababs and its venv, so no repo checkout or env-var setup is "
-            "needed. NOTE: the scenario builds its OWN throwaway campaign to work in "
-            "(it configures and retires derivatives); this campaign supplies the "
-            "environment, not the workspace."
+            "Run the e2e scenario against a cluster config: campaign init -> "
+            "add-dataset -> iterate (scaffold -> submit -> merge), asserting a real "
+            "derivative landed. A stronger check than `babs check-setup`, because it "
+            "proves the config actually produces output on this scheduler. The "
+            "scenario builds its OWN fixture study on the scratch path and works "
+            "there; real studies are never touched. With no --mechababs it recreates "
+            "the environment it was called from — the fixture campaign pins whichever "
+            "mechababs is running this command. It runs the packaged suite with this "
+            "interpreter's pytest, so install mechababs with its `test` extra: "
+            "uvx --from 'git+https://github.com/con/mechababs@<ref>#egg=mechababs[test]' "
+            "mechababs test-cluster --cluster <site.yaml> --scratch-path <scratch>"
         ),
     )
     pt.add_argument(
         "--cluster",
         required=True,
-        help="cluster config to validate: a path, or the name of one in the "
-        "campaign's clusters/",
+        metavar="PATH",
+        help="the cluster config to validate, by path (configs are user-provided, "
+        "never a name mechababs looks up)",
     )
     pt.add_argument(
-        "--campaign-path",
-        type=Path,
-        default=Path("."),
-        help="the campaign dataset (default: current directory)",
+        "--scratch-path",
+        required=True,
+        metavar="DIR",
+        help="scratch dir the scenario works in: the fixture studies, the container "
+        "dataset they resolve as their sibling, and the caches. Put it on fast "
+        "cluster scratch — never home or /tmp.",
     )
     pt.add_argument(
-        "--workdir",
-        type=Path,
+        "--babs",
         default=None,
-        help="where to build the scenario's campaign (default: beside this "
-        "campaign, so the container shim resolves as its sibling)",
+        metavar="URL@REF",
+        help="pin babs to a git checkout instead of the default, which is what a "
+        "user's own campaign gets: the latest release, frozen by the campaign's lock",
+    )
+    pt.add_argument(
+        "--mechababs",
+        default=None,
+        metavar="URL@REF",
+        help="the mechababs the fixture campaign pins (default: whichever mechababs "
+        "is running this command, pinned by its resolved commit)",
     )
     # Flag-looking pytest args have to be fenced off from this parser, so they go
     # after a literal `--` (the usual convention: `uv run --`, `npm run x --`).
