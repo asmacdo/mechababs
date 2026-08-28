@@ -26,6 +26,7 @@ time, where the pipeline's eligibility rule and the campaign's ``--limit`` apply
 pinned inside that cell's ``datalad run``.
 """
 
+import contextlib
 import os
 import re
 import shutil
@@ -188,10 +189,10 @@ def write_member_footprint(superstudy, member, label):
     level, and a member of a super-campaign is not operated from.
     """
     dest = campaign_mod.campaign_dir(member, label)
-    if dest.exists():
+    if (dest / campaign_mod.CONFIG_FILENAME).is_file():
         return dest
     src = campaign_mod.campaign_dir(superstudy, label)
-    dest.mkdir(parents=True)
+    dest.mkdir(parents=True, exist_ok=True)
     for name in (
         ".gitattributes",
         ".gitignore",
@@ -241,11 +242,13 @@ def add(sourcedata, member_arg=None):
         )
     superstudy = root if at_super else None
     study = resolve_member(root, member_arg) if at_super else root
-    if superstudy:
-        write_member_footprint(superstudy, study, label)
     source_dataset = resolve_sourcedata(study, sourcedata)
 
-    apps = campaign_apps(study, label)
+    # The bundle is read at the level the campaign was CONFIGURED at, where it is
+    # canonical. At a super the member's copy is materialized from it inside the
+    # scope below, so reading the member's would be a chicken-and-egg on the first
+    # selection into it.
+    apps = campaign_apps(root, label)
     try:
         identity = select.sniff_source_dataset(study, Path(source_dataset).name)
     except RuntimeError as e:
@@ -254,54 +257,80 @@ def add(sourcedata, member_arg=None):
         # generalization work, so say what is missing rather than guessing at counts.
         sys.exit(f"cannot read the study metadata for {source_dataset}: {e}")
 
-    # Flock first (the campaign's single-writer guarantee), clean-in second (the
-    # statefile must be untouched before this write, so the commit is attributable),
-    # then the read-modify-write — committed as one node when the scope exits.
-    with (
-        utils.flocked(campaign_mod.flock_path(study, label)),
-        utils.campaign_save_scope(study, campaign_mod.state_path(study, label)) as save,
-    ):
-        rows = campaign_mod.read_state(study, label)
-        # The bundle is fixed at init, so a dataset is selected whole or not at all —
-        # re-adding refuses. To run more apps on this data, start a new campaign
-        # (a new config epoch): bundle growth is deliberately unsupported (#116).
-        if any(r["source_dataset"] == source_dataset for r in rows):
-            sys.exit(
-                f"{source_dataset} is already selected into campaign {label!r}.\n"
-                f"The app bundle is fixed at campaign init — to run more apps "
-                f"on this data, create a new campaign."
-            )
-        check_dependencies(source_dataset, apps)
+    # What this write covers, and so what must be clean going in. At a study, the
+    # statefile alone — the rest of the campaign dir is init's, and a config the user
+    # has edited is none of add-dataset's business. At a superstudy the member may be
+    # receiving the whole footprint right now, so the scope is its campaign dir and
+    # the footprint lands as part of the same attributable node as the cells it is
+    # there to hold. An empty directory is invisible to git, so creating it before
+    # the check does not dirty it.
+    if superstudy:
+        scope_target = campaign_mod.campaign_dir(study, label)
+        scope_target.mkdir(parents=True, exist_ok=True)
+    else:
+        scope_target = campaign_mod.state_path(study, label)
 
-        added = [
-            {
-                "source_dataset": source_dataset,
-                "app_config": name,
-                "depends_on": upstream,
-                **identity,
-            }
-            for name, upstream in apps
-        ]
-        campaign_mod.write_state(study, label, rows + added)
+    # Nested, and in this order for a reason. The super declares the member as one
+    # of its outputs, so its clean-in must run while the member is still clean —
+    # opened the other way round it would see its own intended change (the member's
+    # advanced gitlink) as pre-existing dirt and refuse. Nesting also makes each
+    # level commit exactly once for one add-dataset.
+    with contextlib.ExitStack() as stack:
+        super_save = (
+            stack.enter_context(
+                utils.campaign_save_scope(
+                    superstudy,
+                    # Both of the super's changes, declared: its catalog, and the
+                    # member itself — newly cloned it is a NEW SUBDATASET here, and
+                    # already present it still moves its gitlink by committing the
+                    # footprint. Every level stays clean; nothing is left for later.
+                    [campaign_mod.campaign_dir(superstudy, label), study],
+                )
+            )
+            if superstudy
+            else None
+        )
+        save = stack.enter_context(utils.campaign_save_scope(study, scope_target))
+        # Inside the scope, and before the flock: the footprint carries the campaign
+        # dir's .gitignore, which is what keeps the lock file out of the commit.
+        if superstudy:
+            write_member_footprint(superstudy, study, label)
+        # The campaign's single-writer guarantee, spanning the whole
+        # read-modify-write of the shard.
+        with utils.flocked(campaign_mod.flock_path(study, label)):
+            rows = campaign_mod.read_state(study, label)
+            # The bundle is fixed at init, so a dataset is selected whole or not at
+            # all — re-adding refuses. To run more apps on this data, start a new
+            # campaign (a new config epoch): bundle growth is deliberately
+            # unsupported (#116).
+            if any(r["source_dataset"] == source_dataset for r in rows):
+                sys.exit(
+                    f"{source_dataset} is already selected into campaign {label!r}.\n"
+                    f"The app bundle is fixed at campaign init — to run more apps "
+                    f"on this data, create a new campaign."
+                )
+            check_dependencies(source_dataset, apps)
+
+            added = [
+                {
+                    "source_dataset": source_dataset,
+                    "app_config": name,
+                    "depends_on": upstream,
+                    **identity,
+                }
+                for name, upstream in apps
+            ]
+            campaign_mod.write_state(study, label, rows + added)
         save.message = (
             f"mechababs add-dataset {source_dataset} "
             f"({identity['processing_level']}-level; "
             f"{', '.join(row['app_config'] for row in added)})"
         )
 
-    # The superstudy's own write, and deliberately a second commit rather than one
-    # spanning both: the member's cells and the super's membership live in different
-    # datasets, so each records its own change where a reader of that dataset alone
-    # will find it. The member is saved first, so the gitlink the super registers
-    # already points at the member state this catalog row describes.
-    if superstudy:
-        member_rel = Path(study).relative_to(Path(superstudy)).as_posix()
-        with (
-            utils.flocked(campaign_mod.flock_path(superstudy, label)),
-            utils.campaign_save_scope(
-                superstudy, campaign_mod.campaign_dir(superstudy, label)
-            ) as save,
-        ):
+        # Set last, so the super's commit lands after the member's and its
+        # freshly-registered gitlink points at the state this catalog row describes.
+        if super_save is not None:
+            member_rel = Path(study).relative_to(Path(superstudy)).as_posix()
             members = campaign_mod.read_members(superstudy, label)
             members.append(
                 {
@@ -311,8 +340,9 @@ def add(sourcedata, member_arg=None):
                 }
             )
             campaign_mod.write_members(superstudy, label, members)
-            save.message = (
+            super_save.message = (
                 f"mechababs add-dataset {member_rel}/{source_dataset} "
                 f"(member selected into campaign {label!r})"
             )
+
     return added

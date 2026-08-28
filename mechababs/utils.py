@@ -73,8 +73,18 @@ class PendingSave:
 
 
 @contextmanager
-def campaign_save_scope(root, path):
-    """Clean in, one commit out: whatever the block writes at ``path``, committed.
+def campaign_save_scope(root, paths):
+    """Clean in, one commit out: whatever the block writes at ``paths``, committed.
+
+    ``paths`` is one path or several, and the caller **declares everything it
+    changed** — the same declare-your-outputs contract as the run wrapper. Nothing
+    outside the declaration is evaluated, in either the check or the save.
+
+    A declared path that is a subdataset is **gitlink-registered, never recursed**
+    (``eval_submodule_state="commit"``): the super's record of a member is which
+    commit it points at, and descending into the member's worktree would both cost
+    a walk and pull that member's own uncommitted work into a commit at this level.
+    Stray content inside a subdataset is the once-per-tick shallow check's to catch.
 
     **Clean in.** ``path`` must be clean *before* the block writes, so the commit is
     attributable — everything in it is this block's work, and no pre-existing edit is
@@ -97,9 +107,13 @@ def campaign_save_scope(root, path):
     ``since=``-based; here the scope is one directory, so both can be path-scoped.)
     """
     ds = Dataset(str(root))
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    paths = [str(p) for p in paths]
     dirty = ds.status(
-        path=str(path),
+        path=paths,
         untracked="all",
+        eval_subdataset_state="commit",
         result_renderer="disabled",
         on_failure="ignore",
         return_type="list",
@@ -107,18 +121,18 @@ def campaign_save_scope(root, path):
     dirty = [r for r in dirty if r.get("state") != "clean"]
     if dirty:
         sys.exit(
-            f"refusing to write into {path}: it is not clean, and the commit "
-            f"would absorb changes mechababs did not make.\n"
+            f"refusing to write into {', '.join(paths)}: it is not clean, and the "
+            f"commit would absorb changes mechababs did not make.\n"
             + "\n".join(f"  {r.get('state')}: {r.get('path')}" for r in dirty)
         )
 
     pending = PendingSave()
     yield pending
     if not pending.message:
-        raise RuntimeError(f"campaign_save_scope({path}) exited with no message set")
+        raise RuntimeError(f"campaign_save_scope({paths}) exited with no message set")
 
     results = ds.save(
-        path=str(path),
+        path=paths,
         message=pending.message,
         result_renderer="disabled",
         on_failure="ignore",
@@ -127,7 +141,7 @@ def campaign_save_scope(root, path):
     failed = [r for r in results if r.get("status") not in ("ok", "notneeded")]
     if failed:
         sys.exit(
-            f"failed to commit {path} into {root}\n"
+            f"failed to commit {', '.join(paths)} into {root}\n"
             + "\n".join(
                 f"  {r.get('status')}: {r.get('path')} ({describe_result(r)})"
                 for r in failed

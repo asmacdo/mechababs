@@ -7,6 +7,7 @@ shard. The one step that reaches outside the process (the `datalad save`) is stu
 that it is *asked for*, path-scoped, is asserted.
 """
 
+import importlib
 from contextlib import contextmanager
 
 import pytest
@@ -552,3 +553,44 @@ def test_a_url_for_a_member_already_there_is_refused(superstudy, saves):
             "https://github.com/OpenNeuroStudies/study-ds000001",
         )
     assert "already exists" in str(excinfo.value)
+
+
+def test_the_super_declares_the_member_as_one_of_its_outputs(superstudy, saves):
+    """A newly cloned member is a new subdataset at the super, and an already-present
+    one still moves its gitlink by committing the footprint. Either way the super has
+    to record it, so every level ends clean rather than leaving it for publish time."""
+    root, member = superstudy
+
+    add_dataset.add("sourcedata/ds000001", "study-ds000001")
+
+    super_call = next(call for call in saves if call[0] == root)
+    declared = super_call[2]
+    assert member in declared
+    assert campaign_mod.campaign_dir(root, "nprep") in declared
+
+
+def test_the_supers_clean_check_runs_before_the_member_changes(superstudy, saves):
+    """The scopes nest: opened the other way round, the super would see its own
+    intended change (the member's advanced gitlink) as pre-existing dirt."""
+    root, member = superstudy
+    order = []
+
+    @contextmanager
+    def recording_scope(scope_root, paths):
+        order.append(("enter", scope_root))
+        pending = add_dataset.utils.PendingSave()
+        yield pending
+        order.append(("exit", scope_root))
+
+    add_dataset.utils.campaign_save_scope = recording_scope
+    try:
+        add_dataset.add("sourcedata/ds000001", "study-ds000001")
+    finally:
+        importlib.reload(add_dataset)
+
+    assert order == [
+        ("enter", root),  # the super checks clean while the member still is
+        ("enter", member),
+        ("exit", member),  # the member commits first
+        ("exit", root),  # then the super records the gitlink it now points at
+    ]
