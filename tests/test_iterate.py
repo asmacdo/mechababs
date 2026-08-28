@@ -10,7 +10,6 @@ sets `merged`), because the tick re-reads it between cells — so a stub that on
 recorded the call would make the multi-cell cases lie.
 """
 
-import importlib
 from pathlib import Path
 
 import pytest
@@ -493,6 +492,9 @@ def superstudy(tmp_path, monkeypatch):
         "save_paths",
         lambda root_, paths, message: recorded.append((root_, str(paths), message)),
     )
+    monkeypatch.setattr(
+        iterate_mod.utils, "require_clean_gitlink", lambda root_, member: None
+    )
     return root, members, recorded
 
 
@@ -595,37 +597,38 @@ def test_study_is_refused_for_a_study_configured_campaign(study, tick, monkeypat
     assert "no members to select between" in str(excinfo.value)
 
 
-def test_the_super_is_checked_clean_before_any_member_is_touched(superstudy, tick):
-    """Same contract as the per-study check, one level up: anything uncommitted at
-    the super did not come from mechababs, and the follow-up commits would absorb
-    it. It has to run before the actions, not around them."""
-    root, _members, _saves = superstudy
+def test_each_member_is_checked_before_it_is_touched_and_scoped_to_itself(
+    superstudy, tick, monkeypatch
+):
+    """The member's own tree is covered twice already (`tick`, then the transition's
+    `datalad run`), so what is left for the super is whether its gitlink still
+    matches the member's HEAD. Scoped to the one member, the check costs the same in
+    a superstudy of a thousand as in one of two."""
+    root, members, _saves = superstudy
     order = []
 
-    def watching_clean(path, what=None):
-        order.append(("clean", Path(path).name))
-
-    iterate_mod.require_clean_shallow = watching_clean
+    monkeypatch.setattr(
+        iterate_mod.utils,
+        "require_clean_gitlink",
+        lambda root_, member: order.append(("gitlink", member)),
+    )
     real_tick = iterate_mod.tick
+    monkeypatch.setattr(
+        iterate_mod,
+        "tick",
+        lambda study_arg, *a, **kw: (
+            order.append(("tick", Path(study_arg).name)),
+            real_tick(study_arg, *a, **kw),
+        )[1],
+    )
 
-    def watching_tick(study_arg, *a, **kw):
-        order.append(("tick", Path(study_arg).name))
-        return real_tick(study_arg, *a, **kw)
+    iterate_mod.run_iterate(str(root))
 
-    iterate_mod.tick = watching_tick
-    try:
-        iterate_mod.run_iterate(str(root))
-    finally:
-        importlib.reload(iterate_mod)
-
-    # the super's check first, before any member is ticked; each member then keeps
-    # its own per-study check inside `tick`
-    assert order[0] == ("clean", "my-super")
-    assert order[1:] == [
+    assert order == [
+        ("gitlink", "study-dsA"),
         ("tick", "study-dsA"),
-        ("clean", "study-dsA"),
+        ("gitlink", "study-dsB"),
         ("tick", "study-dsB"),
-        ("clean", "study-dsB"),
     ]
 
 

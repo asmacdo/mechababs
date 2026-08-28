@@ -302,15 +302,16 @@ def run_iterate(
     members = member_studies(root, label, study)
     note(f"superstudy tick over {len(members)} member(s) in {root}")
 
-    # Clean in, at the super, BEFORE any member is touched. Same contract as the
-    # per-study check inside `tick`, one level up: anything uncommitted here did not
-    # come from mechababs, and the follow-up commits below would absorb it. Cheap —
-    # a gitlink compare, no descent into member worktrees.
-    require_clean_shallow(root, what="a superstudy iterate tick")
-
     advanced = 0
     for name in members:
         member = Path(root) / name
+        # Clean in, before this member is touched — and scoped to it. The member's
+        # own tree is already covered twice over (`tick` checks it, and the
+        # transition's `datalad run` checks it again), so what is left for the super
+        # is the one thing only the super can see: whether its gitlink still matches
+        # the member's HEAD. A whole-super status would answer the same question at a
+        # cost linear in members; this one is flat.
+        utils.require_clean_gitlink(root, name)
         moved = tick(member, label, batch=batch, derivative=derivative, dry_run=dry_run)
         advanced += moved
         # Then record. A study-only campaign needs none of this: the transition's own

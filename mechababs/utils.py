@@ -175,7 +175,7 @@ def save_paths(root, paths, message):
         )
 
 
-def shallow_status(root):
+def shallow_status(root, *paths):
     """Porcelain status of ``root`` WITHOUT descending into submodule worktrees.
 
     ``--ignore-submodules=dirty`` is the whole point: git still compares each
@@ -183,14 +183,42 @@ def shallow_status(root):
     per submodule) but does not walk its working tree. That walk is what makes a
     status over a study with real source data expensive, and it is never what this
     check is looking for.
+
+    ``paths`` narrows it to a pathspec, which is what keeps the check flat at a
+    superstudy. Unscoped, the cost is linear in members — git stats every member
+    directory whether or not their gitlinks are compared (measured: 23 ms over 200
+    members, 1.7 ms over one; ``--ignore-submodules=all`` saves nothing, so the
+    cost is the directory scan, not the comparison). Scoped to a single member it
+    is 2.7 ms no matter how large the superstudy is.
     """
-    out = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain", "--ignore-submodules=dirty"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+    cmd = ["git", "-C", str(root), "status", "--porcelain", "--ignore-submodules=dirty"]
+    if paths:
+        cmd += ["--", *(str(p) for p in paths)]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
     return [line for line in out.splitlines() if line.strip()]
+
+
+def require_clean_gitlink(root, member):
+    """Refuse unless ``root``'s recorded pointer to ``member`` is up to date.
+
+    The superstudy's whole stake in a member it is about to advance. The member's
+    own tree is not this check's business — ``tick`` checks it there, and the
+    transition's ``datalad run`` checks it again. What only the super can see is
+    whether its gitlink still matches the member's HEAD, and a stale one matters
+    because the follow-up save would then commit somebody else's advance as ours.
+
+    Scoped to the one member, so it costs the same in a superstudy of a thousand
+    as in one of two.
+    """
+    rel = Path(member).relative_to(root) if Path(member).is_absolute() else Path(member)
+    dirty = shallow_status(root, rel)
+    if dirty:
+        sys.exit(
+            f"{rel} has moved since {root} last recorded it, and mechababs did "
+            f"not move it.\n" + "\n".join(f"  {line}" for line in dirty) + "\n"
+            "Commit or reset it at the superstudy, then run again — otherwise "
+            "this tick would record that advance as its own."
+        )
 
 
 def require_clean_shallow(root, *, what="this operation"):
