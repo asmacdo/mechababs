@@ -56,6 +56,11 @@ STATE_FILENAME = "sourcedata+derivatives.tsv"
 # lock left in the tree would otherwise dirty the study every `iterate`. Named for
 # the file lock it is, NOT `UV_LOCK_FILENAME`: that is uv.lock, three lines down.
 FLOCK_FILENAME = "." + STATE_FILENAME + ".lock"
+# The superstudy's counterpart to the statefile, and the whole of the asymmetry:
+# a study's campaign dir carries per-cell STATE, a superstudy's carries MEMBERSHIP.
+# Per-cell detail shards to the members and the rollup is computed on demand, so
+# there is no master copy here to drift out of agreement with what it summarizes.
+MEMBERS_FILENAME = "studies+sourcedata.tsv"
 APPS_DIRNAME = "bids-app-configs"
 CLUSTERS_DIRNAME = "clusters"
 INCLUSIONS_DIRNAME = "inclusions"
@@ -87,6 +92,16 @@ TOPOLOGY_COLUMNS = ["depends_on"]
 DERIVED_COLUMNS = ["babs", "merged"]
 STATE_COLUMNS = IDENTITY_COLUMNS + TOPOLOGY_COLUMNS + DERIVED_COLUMNS
 
+# The superstudy's membership catalog: which (study, source dataset) pairs this
+# campaign runs on, plus the ONE piece of state committed at the super. `lifecycle`
+# is deliberately coarse (pending/active/complete) and written only at material
+# transitions -- a member starts, a member's last cell merges -- never per tick. It
+# exists for readers who have git but not the cluster; per-cell truth stays in the
+# member shards, so nothing here can disagree with them at a finer grain than it
+# claims to describe.
+MEMBER_COLUMNS = ["study", "source_dataset", "lifecycle"]
+LIFECYCLE_PENDING = "pending"
+
 
 def campaigns_dir(root):
     return Path(root) / MECHABABS_DIR / CAMPAIGNS_DIRNAME
@@ -108,6 +123,32 @@ def state_path(study, label):
     superstudy computes its rollup from them.
     """
     return campaign_dir(study, label) / STATE_FILENAME
+
+
+def members_path(superstudy, label):
+    """``superstudy``, not ``root``: a membership catalog exists only at a super.
+
+    The mirror image of :func:`state_path`. A campaign dir has one or the other,
+    never both, and which one it has *is* the record of the level it was
+    configured at.
+    """
+    return campaign_dir(superstudy, label) / MEMBERS_FILENAME
+
+
+def initial_members_header():
+    """The header line of a fresh membership catalog — no rows; add-dataset writes those."""
+    return "\t".join(MEMBER_COLUMNS) + "\n"
+
+
+def is_superstudy_campaign(root, label):
+    """True if ``label`` at ``root`` is configured at superstudy level.
+
+    Read from the layout rather than a config key: the campaign dir carries a
+    membership catalog or a statefile, and that file's presence is the fact. A
+    marker that could contradict the layout would just be a second source of
+    truth for the same question.
+    """
+    return members_path(root, label).is_file()
 
 
 def require_statefile(study, label):

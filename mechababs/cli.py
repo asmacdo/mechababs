@@ -38,10 +38,21 @@ def cmd_campaign_init(args):
     that does not take the env-match guard. It creates the environment the guard
     will check from here on.
 
-    The study is the current directory, not a flag: study-first commands operate on
-    where you are, and this one has no ledger or config to point elsewhere with.
+    Alone among the verbs it names its target rather than taking the cwd: ``-d``
+    mirrors datalad's, and ``--superstudy NAME`` names a superstudy to create or
+    adopt. Every other verb runs from the root of the dataset that owns the
+    campaign, which is what makes "operate a campaign only from the level it was
+    configured" checkable rather than conventional.
+
+    The superstudy and the campaign are named separately because they are not the
+    same thing and do not share a lifetime: one superstudy accumulates many
+    campaigns, each its own label and config epoch.
     """
-    study = study_mod.require_study_root(".")
+    if args.superstudy:
+        root = campaign_init.create_superstudy(args.superstudy)
+    else:
+        root = study_mod.require_study_root(args.dataset or ".")
+    study = root
     # `--apps a.yaml,b.yaml` (as the quickstart shows) and a repeated `--apps` both
     # work, and compose — the bundle is ordered as written either way.
     apps = [
@@ -55,6 +66,7 @@ def cmd_campaign_init(args):
         limit=args.limit,
         babs_spec=args.babs,
         mechababs_spec=args.mechababs,
+        superstudy=bool(args.superstudy),
     )
     rel = campaign.relative_to(study)
     print(f"\ncampaign {args.label!r} created at {rel}", file=sys.stderr)
@@ -174,6 +186,27 @@ def main():
         "label",
         help="the campaign's identity (its directory name, and "
         "what MECHABABS_CAMPAIGN selects)",
+    )
+    # Both name the target, so argparse refuses them together rather than the
+    # command choosing a winner. -d is the study side and mirrors datalad's;
+    # --superstudy is the superstudy side and may name one that does not exist yet.
+    target = pci.add_mutually_exclusive_group()
+    target.add_argument(
+        "-d",
+        "--dataset",
+        default=None,
+        metavar="PATH",
+        help="the study to create the campaign in, named the way datalad's -d "
+        "is (default: the current directory)",
+    )
+    target.add_argument(
+        "--superstudy",
+        default=None,
+        metavar="NAME",
+        help="create the campaign at a superstudy of this name, creating the "
+        "superstudy if it is not there yet and adopting it if it is. A "
+        "superstudy holds many campaigns over time, so it is named separately "
+        "from the campaign label.",
     )
     pci.add_argument(
         "--apps",
