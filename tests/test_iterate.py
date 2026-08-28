@@ -10,6 +10,7 @@ sets `merged`), because the tick re-reads it between cells — so a stub that on
 recorded the call would make the multi-cell cases lie.
 """
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -484,11 +485,19 @@ def superstudy(tmp_path, monkeypatch):
         "require_selected_campaign",
         lambda path=".", **kw: (root, LABEL, campaign_mod.campaign_dir(root, LABEL)),
     )
-    return root, members
+    # The fixture tree is plain directories, so the super's own datalad calls are
+    # recorded rather than run. What they record is the point of the tests below.
+    recorded = []
+    monkeypatch.setattr(
+        iterate_mod.utils,
+        "save_paths",
+        lambda root_, paths, message: recorded.append((root_, str(paths), message)),
+    )
+    return root, members, recorded
 
 
 def test_a_superstudy_tick_advances_every_member(superstudy, tick):
-    root, members = superstudy
+    root, members, _saves = superstudy
 
     iterate_mod.run_iterate(str(root))
 
@@ -498,7 +507,7 @@ def test_a_superstudy_tick_advances_every_member(superstudy, tick):
 def test_members_advance_in_catalog_order(superstudy, tick):
     """Catalog order is the ordering interface at the super, the way row order is
     within a shard."""
-    root, members = superstudy
+    root, members, _saves = superstudy
     campaign_mod.write_members(
         root,
         LABEL,
@@ -523,7 +532,7 @@ def test_members_advance_in_catalog_order(superstudy, tick):
 
 def test_a_member_selected_twice_is_advanced_once(superstudy, tick):
     """Several source datasets in one member give several catalog rows, one member."""
-    root, _ = superstudy
+    root, _, _saves = superstudy
     campaign_mod.write_members(
         root,
         LABEL,
@@ -547,7 +556,7 @@ def test_a_member_selected_twice_is_advanced_once(superstudy, tick):
 
 
 def test_study_narrows_to_one_member(superstudy, tick):
-    root, _ = superstudy
+    root, _, _saves = superstudy
 
     iterate_mod.run_iterate(str(root), study="study-dsB")
 
@@ -557,7 +566,7 @@ def test_study_narrows_to_one_member(superstudy, tick):
 def test_a_study_that_is_not_a_member_is_a_typo_not_an_empty_tick(superstudy, tick):
     """Matched against the catalog, not the filesystem: a directory that exists but
     was never selected into this campaign is an error, not a silent no-op."""
-    root, _ = superstudy
+    root, _, _saves = superstudy
     (root / "study-dsC").mkdir()
 
     with pytest.raises(SystemExit) as excinfo:
@@ -568,7 +577,7 @@ def test_a_study_that_is_not_a_member_is_a_typo_not_an_empty_tick(superstudy, ti
 def test_batch_bounds_each_member_not_the_whole_tick(superstudy, tick):
     """A batch caps one shard's transitions; spanning members would make how much of
     a member advances depend on which members preceded it."""
-    root, _ = superstudy
+    root, _, _saves = superstudy
 
     iterate_mod.run_iterate(str(root), batch=1)
 
@@ -584,3 +593,72 @@ def test_study_is_refused_for_a_study_configured_campaign(study, tick, monkeypat
     with pytest.raises(SystemExit) as excinfo:
         iterate_mod.run_iterate(str(study), study="study-dsA")
     assert "no members to select between" in str(excinfo.value)
+
+
+def test_the_super_is_checked_clean_before_any_member_is_touched(superstudy, tick):
+    """Same contract as the per-study check, one level up: anything uncommitted at
+    the super did not come from mechababs, and the follow-up commits would absorb
+    it. It has to run before the actions, not around them."""
+    root, _members, _saves = superstudy
+    order = []
+
+    def watching_clean(path, what=None):
+        order.append(("clean", Path(path).name))
+
+    iterate_mod.require_clean_shallow = watching_clean
+    real_tick = iterate_mod.tick
+
+    def watching_tick(study_arg, *a, **kw):
+        order.append(("tick", Path(study_arg).name))
+        return real_tick(study_arg, *a, **kw)
+
+    iterate_mod.tick = watching_tick
+    try:
+        iterate_mod.run_iterate(str(root))
+    finally:
+        importlib.reload(iterate_mod)
+
+    # the super's check first, before any member is ticked; each member then keeps
+    # its own per-study check inside `tick`
+    assert order[0] == ("clean", "my-super")
+    assert order[1:] == [
+        ("tick", "study-dsA"),
+        ("clean", "study-dsA"),
+        ("tick", "study-dsB"),
+        ("clean", "study-dsB"),
+    ]
+
+
+def test_each_member_is_recorded_at_the_super_as_it_advances(superstudy, tick):
+    """A study-only campaign needs none of this — the transition's own `datalad run`
+    commits in the study, which is the operating level. With a super above, that run
+    leaves the member's gitlink advanced and only the super can register it."""
+    root, members, saves = superstudy
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [Path(path).name for _root, path, _msg in saves] == [m.name for m in members]
+    assert all(saved_root == root for saved_root, _, _ in saves)
+    assert all(LABEL in message for _, _, message in saves)
+
+
+def test_a_member_that_does_not_advance_is_not_recorded(superstudy, tick):
+    """Nothing moved, nothing to register — an empty commit at the super would say
+    a member advanced when it did not."""
+    root, _members, saves = superstudy
+    for member in _members:
+        rows = campaign_mod.read_state(member, LABEL)
+        rows[0]["merged"] = "yes"
+        campaign_mod.write_state(member, LABEL, rows)
+
+    iterate_mod.run_iterate(str(root))
+
+    assert saves == []
+
+
+def test_a_dry_run_records_nothing_at_the_super(superstudy, tick):
+    root, _members, saves = superstudy
+
+    iterate_mod.run_iterate(str(root), dry_run=True)
+
+    assert saves == []

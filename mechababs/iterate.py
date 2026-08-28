@@ -301,13 +301,29 @@ def run_iterate(
 
     members = member_studies(root, label, study)
     note(f"superstudy tick over {len(members)} member(s) in {root}")
+
+    # Clean in, at the super, BEFORE any member is touched. Same contract as the
+    # per-study check inside `tick`, one level up: anything uncommitted here did not
+    # come from mechababs, and the follow-up commits below would absorb it. Cheap —
+    # a gitlink compare, no descent into member worktrees.
+    require_clean_shallow(root, what="a superstudy iterate tick")
+
     advanced = 0
     for name in members:
-        advanced += tick(
-            Path(root) / name,
-            label,
-            batch=batch,
-            derivative=derivative,
-            dry_run=dry_run,
-        )
+        member = Path(root) / name
+        moved = tick(member, label, batch=batch, derivative=derivative, dry_run=dry_run)
+        advanced += moved
+        # Then record. A study-only campaign needs none of this: the transition's own
+        # `datalad run` commits in the study, which IS the operating level. With a
+        # super above it, that same run leaves the member's gitlink advanced and only
+        # the super can register it — so each member is recorded as it lands, rather
+        # than at the end, so an interrupted fan-out still leaves the super
+        # describing the members that did advance.
+        if moved and not dry_run:
+            utils.save_paths(
+                root,
+                member,
+                f"mechababs iterate: {name} advanced {moved} cell(s) "
+                f"in campaign {label!r}",
+            )
     return advanced

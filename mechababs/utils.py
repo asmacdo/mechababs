@@ -106,10 +106,30 @@ def campaign_save_scope(root, paths):
     ``datalad_save_scope`` below, whose clean-in is whole-dataset and whose save is
     ``since=``-based; here the scope is one directory, so both can be path-scoped.)
     """
-    ds = Dataset(str(root))
+    paths = require_clean_paths(root, paths)
+    pending = PendingSave()
+    yield pending
+    if not pending.message:
+        raise RuntimeError(f"campaign_save_scope({paths}) exited with no message set")
+    save_paths(root, paths, pending.message)
+
+
+def _declared(paths):
     if isinstance(paths, (str, Path)):
         paths = [paths]
-    paths = [str(p) for p in paths]
+    return [str(p) for p in paths]
+
+
+def require_clean_paths(root, paths):
+    """Exit unless every declared path is clean. Returns them normalised.
+
+    The clean-in half, split out because not every writer wants it wrapped *around*
+    its work. ``iterate`` at a superstudy checks the super once at the top of the
+    tick — before any member is touched — and then records each member as it
+    advances, so its check and its saves are separated by the actions they bracket.
+    """
+    ds = Dataset(str(root))
+    paths = _declared(paths)
     dirty = ds.status(
         path=paths,
         untracked="all",
@@ -125,15 +145,21 @@ def campaign_save_scope(root, paths):
             f"commit would absorb changes mechababs did not make.\n"
             + "\n".join(f"  {r.get('state')}: {r.get('path')}" for r in dirty)
         )
+    return paths
 
-    pending = PendingSave()
-    yield pending
-    if not pending.message:
-        raise RuntimeError(f"campaign_save_scope({paths}) exited with no message set")
 
+def save_paths(root, paths, message):
+    """Commit exactly the declared paths at ``root``. No clean-in check of its own.
+
+    The save half. Its caller has already established that what it commits is its
+    own work — either by a clean-in wrapped around the block
+    (``campaign_save_scope``) or by one taken before the actions being recorded.
+    """
+    ds = Dataset(str(root))
+    paths = _declared(paths)
     results = ds.save(
         path=paths,
-        message=pending.message,
+        message=message,
         result_renderer="disabled",
         on_failure="ignore",
         return_type="list",
