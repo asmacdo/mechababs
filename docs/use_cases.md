@@ -114,6 +114,12 @@ What comes together is the **results** — derivative data, portable in git/anne
 As a user, I can add a dataset to a campaign after it has started, and the reconciler picks it up on the next tick.
 This covers each shape of adding: a source dataset already in my study, another source dataset of a study the campaign already works on, and bringing a whole existing study in to point at a source dataset inside it.
 
+## Start a campaign in a superstudy that has run campaigns before
+As a user with a superstudy I have already swept once — last year's tool versions, its own config, its own record of what was produced — I can start a *new* campaign in it without disturbing any of that.
+The new campaign is a distinct label with its own pinned environment and config bundle, so the two coexist: the old campaign's record stays exactly as it was, and nothing about the earlier sweep is rewritten to accommodate the new one.
+The command that does this is the same one that creates a superstudy from nothing, so adopting what already exists is the ordinary path rather than a migration mode.
+Member studies that were part of the earlier sweep are not automatically part of the new one — a campaign's membership is chosen by selecting into it, so I decide which studies this sweep covers.
+
 ## Adopt a new tool release mid-sweep
 As a user running a large sweep, when a bug is found and fixed in a new release, I can bump the campaign's pinned version without discarding completed work: finished derivatives stay as they are, new work uses the new version, and I can selectively redo the cells the bug affected.
 
