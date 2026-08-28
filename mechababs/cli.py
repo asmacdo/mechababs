@@ -89,7 +89,7 @@ def cmd_add_dataset(args):
     Runs from the campaign root — the study — like every operating verb;
     ``--sourcedata`` is a path inside it.
     """
-    added = add_dataset_mod.add(args.sourcedata)
+    added = add_dataset_mod.add(args.sourcedata, args.study)
     cell = added[0]  # identity is the same across a dataset's cells
     size = f"{cell['n_subjects']} subjects"
     if cell["n_sessions"]:
@@ -258,6 +258,15 @@ def main():
             "install data and does not generate a subject inclusion (that happens "
             "at scaffold, where the app's eligibility rule applies)."
         ),
+    )
+    pa.add_argument(
+        "--study",
+        default=None,
+        metavar="PATH|URL",
+        help="at a superstudy, the member holding the source dataset: a member "
+        "already there, or a URL to clone one in. --sourcedata is then relative "
+        "to that member. Not for a study-configured campaign, which has no "
+        "members.",
     )
     pa.add_argument(
         "--sourcedata",

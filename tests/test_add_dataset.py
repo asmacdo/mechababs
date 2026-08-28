@@ -336,3 +336,219 @@ def test_a_refused_add_commits_nothing(study, campaign, saves):
     with pytest.raises(SystemExit):
         add_dataset.add(study / "sourcedata" / "ds000001")
     assert saves == []
+
+
+# --- at a superstudy: reaching a member -------------------------------------
+#
+# The verb still runs from the campaign root, which at a super is the superstudy.
+# Reaching a member takes a second coordinate (--study), never a different place
+# to stand — that is what keeps "operate a campaign only from the level it was
+# configured" true of add-dataset as well as of iterate.
+
+
+@pytest.fixture
+def superstudy(tmp_path, monkeypatch):
+    """A superstudy with campaign 'nprep' configured at it, and one member study."""
+    root = tmp_path / "my-super"
+    (root / ".datalad").mkdir(parents=True)
+    cdir = campaign_mod.campaign_dir(root, "nprep")
+    (cdir / campaign_mod.APPS_DIRNAME).mkdir(parents=True)
+    (campaign_mod.apps_dir(root, "nprep") / "MRIQC-24.0.2.yaml").write_text(
+        APPS["MRIQC-24.0.2.yaml"]
+    )
+    campaign_mod.config_path(root, "nprep").write_text(
+        yaml.safe_dump(
+            {
+                "label": "nprep",
+                "apps": [f"{campaign_mod.APPS_DIRNAME}/MRIQC-24.0.2.yaml"],
+                "cluster": "clusters/dartmouth.yaml",
+                "limit": None,
+            }
+        )
+    )
+    campaign_mod.members_path(root, "nprep").write_text(
+        campaign_mod.initial_members_header()
+    )
+    campaign_mod.uv_lock_path(root, "nprep").write_text("lock-v1\n")
+    venv = campaign_mod.venv_path(root, "nprep")
+    venv.mkdir()
+    campaign_mod.write_env_stamp(venv, "nprep", "lock-v1\n")
+
+    member = root / "study-ds000001"
+    (member / ".datalad").mkdir(parents=True)
+    (member / "sourcedata" / "ds000001" / ".datalad").mkdir(parents=True)
+    (member / "sourcedata" / "sourcedata+subjects.tsv").write_text(SUBJECTS_TSV)
+
+    monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
+    monkeypatch.setattr("sys.prefix", str(venv))
+    monkeypatch.chdir(root)
+    return root, member
+
+
+def test_the_member_gains_the_campaign_footprint_on_first_selection(superstudy, saves):
+    """campaign init at a super fans out to nothing — no members are chosen yet — so
+    a member receives the campaign at the moment it is first selected into it."""
+    root, member = superstudy
+
+    add_dataset.add("sourcedata/ds000001", "study-ds000001")
+
+    cdir = campaign_mod.campaign_dir(member, "nprep")
+    assert (cdir / campaign_mod.STATE_FILENAME).is_file()
+    assert (cdir / campaign_mod.APPS_DIRNAME / "MRIQC-24.0.2.yaml").is_file()
+    assert (cdir / campaign_mod.UV_LOCK_FILENAME).read_text() == "lock-v1\n"
+    # the operational venv lives at the configured level; a member is not operated from
+    assert not (cdir / campaign_mod.ENV_FILENAME).exists()
+
+
+def test_the_member_is_marked_as_belonging_to_the_superstudy(superstudy, saves):
+    root, member = superstudy
+
+    add_dataset.add("sourcedata/ds000001", "study-ds000001")
+
+    assert campaign_mod.superstudy_of(member, "nprep") == root.resolve()
+
+
+def test_the_cells_land_in_the_members_shard_not_the_super(superstudy, saves):
+    """Per-cell state shards to the members; the super carries membership only."""
+    root, member = superstudy
+
+    add_dataset.add("sourcedata/ds000001", "study-ds000001")
+
+    assert [r["source_dataset"] for r in campaign_mod.read_state(member, "nprep")] == [
+        "sourcedata/ds000001"
+    ]
+    assert not campaign_mod.state_path(root, "nprep").exists()
+
+
+def test_the_super_records_the_membership_row(superstudy, saves):
+    root, member = superstudy
+
+    add_dataset.add("sourcedata/ds000001", "study-ds000001")
+
+    assert campaign_mod.read_members(root, "nprep") == [
+        {
+            "study": "study-ds000001",
+            "source_dataset": "sourcedata/ds000001",
+            "lifecycle": campaign_mod.LIFECYCLE_PENDING,
+        }
+    ]
+
+
+def test_member_and_super_are_committed_separately(superstudy, saves):
+    """Different datasets, so each records its own change where a reader of that
+    dataset alone will find it — and the member is saved first, so the gitlink the
+    super registers already points at the state its catalog row describes."""
+    root, member = superstudy
+
+    add_dataset.add("sourcedata/ds000001", "study-ds000001")
+
+    roots = [call[0] for call in saves]
+    assert roots == [member, root]
+
+
+def test_sourcedata_is_relative_to_the_member_not_the_super(superstudy, saves):
+    root, member = superstudy
+    # the same relative path exists at the super, and must NOT be what gets selected
+    (root / "sourcedata" / "ds000001").mkdir(parents=True)
+
+    added = add_dataset.add("sourcedata/ds000001", "study-ds000001")
+
+    assert added[0]["source_dataset"] == "sourcedata/ds000001"
+    assert campaign_mod.read_state(member, "nprep")
+
+
+# --- the configured-level rule, enforced in both directions -----------------
+
+
+def test_a_super_campaign_refuses_add_dataset_without_a_member(superstudy, saves):
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.add("sourcedata/ds000001")
+    assert "--study <member>" in str(excinfo.value)
+
+
+def test_a_study_campaign_refuses_a_member_argument(study, campaign, saves):
+    campaign("MRIQC-24.0.2.yaml")
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.add("sourcedata/ds000001", "some-member")
+    assert "no member to name" in str(excinfo.value)
+
+
+def test_a_member_refuses_add_dataset_and_points_at_its_super(superstudy, saves):
+    """The reverse direction: standing in a member of a super-campaign, the verb
+    refuses and names the directory to run from."""
+    root, member = superstudy
+    add_dataset.add("sourcedata/ds000001", "study-ds000001")
+
+    import os
+
+    os.chdir(member)
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.add("sourcedata/ds000002")
+    assert "operated from its superstudy" in str(excinfo.value)
+    assert "carries no environment of its own" in str(excinfo.value)
+
+
+def test_a_member_outside_the_superstudy_is_refused(superstudy, saves, tmp_path):
+    outside = tmp_path / "elsewhere"
+    (outside / ".datalad").mkdir(parents=True)
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.add("sourcedata/ds000001", str(outside))
+    assert "not inside this superstudy" in str(excinfo.value)
+
+
+def test_a_member_that_is_not_a_study_is_refused(superstudy, saves):
+    root, _ = superstudy
+    (root / "not-a-study").mkdir()
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.add("sourcedata/ds000001", "not-a-study")
+    assert "not a member study" in str(excinfo.value)
+
+
+# --- --study as a URL -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "arg,is_url",
+    [
+        ("https://github.com/OpenNeuroStudies/study-ds000001", True),
+        ("git@github.com:OpenNeuroStudies/study-ds000001.git", True),
+        ("study-ds000001", False),
+        ("./study-ds000001", False),
+        ("/abs/study-ds000001", False),
+    ],
+)
+def test_url_detection(arg, is_url):
+    assert bool(add_dataset.looks_like_url(arg)) is is_url
+
+
+def test_a_url_member_is_cloned_in_then_selected(superstudy, saves, monkeypatch):
+    """The one case where a selection verb brings something in: a member study is
+    the container for source data, not the data. Source content is still not fetched."""
+    root, member = superstudy
+    cloned = {}
+
+    def fake_clone(self, source, path, **kw):
+        cloned["source"] = source
+        dest = root / path
+        (dest / ".datalad").mkdir(parents=True)
+        (dest / "sourcedata" / "ds000001" / ".datalad").mkdir(parents=True)
+        (dest / "sourcedata" / "sourcedata+subjects.tsv").write_text(SUBJECTS_TSV)
+
+    monkeypatch.setattr(add_dataset.Dataset, "clone", fake_clone, raising=False)
+
+    add_dataset.add(
+        "sourcedata/ds000001",
+        "https://github.com/OpenNeuroStudies/study-ds000002",
+    )
+
+    assert cloned["source"] == "https://github.com/OpenNeuroStudies/study-ds000002"
+    assert campaign_mod.read_state(root / "study-ds000002", "nprep")
+
+
+def test_a_url_for_a_member_already_there_is_refused(superstudy, saves):
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.add(
+            "sourcedata/ds000001",
+            "https://github.com/OpenNeuroStudies/study-ds000001",
+        )
+    assert "already exists" in str(excinfo.value)

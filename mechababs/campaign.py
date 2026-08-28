@@ -44,6 +44,8 @@ import os
 import sys
 from pathlib import Path
 
+import yaml
+
 from mechababs import study as study_mod
 
 MECHABABS_DIR = ".mechababs"
@@ -102,6 +104,12 @@ STATE_COLUMNS = IDENTITY_COLUMNS + TOPOLOGY_COLUMNS + DERIVED_COLUMNS
 MEMBER_COLUMNS = ["study", "source_dataset", "lifecycle"]
 LIFECYCLE_PENDING = "pending"
 
+# The member's half of the superstudy relationship, written into its campaign.yaml
+# when its footprint is created. It holds the relative path back up to the super, so
+# it both marks the mode and says where to go -- a refusal can name the directory to
+# run from instead of telling the user one exists somewhere.
+SUPERSTUDY_KEY = "superstudy"
+
 
 def campaigns_dir(root):
     return Path(root) / MECHABABS_DIR / CAMPAIGNS_DIRNAME
@@ -149,6 +157,39 @@ def is_superstudy_campaign(root, label):
     truth for the same question.
     """
     return members_path(root, label).is_file()
+
+
+def read_members(superstudy, label):
+    """The catalog's rows, in file order."""
+    with open(members_path(superstudy, label), newline="") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
+def write_members(superstudy, label, rows):
+    """Rewrite the catalog with ``MEMBER_COLUMNS`` and ``rows``, in order."""
+    with open(members_path(superstudy, label), "w", newline="") as f:
+        w = csv.DictWriter(
+            f, fieldnames=MEMBER_COLUMNS, delimiter="\t", lineterminator="\n"
+        )
+        w.writeheader()
+        for row in rows:
+            w.writerow({c: row.get(c, "") for c in MEMBER_COLUMNS})
+
+
+def superstudy_of(study, label):
+    """The super this member's campaign belongs to, or ``None`` if it is its own.
+
+    Read from the member's own campaign config and nothing else: a verb asks
+    "does the campaign I am standing in belong to a level above me", never
+    "is there something above me that might claim this". Scanning parents would
+    make an unrelated dataset higher up able to change what a study does.
+    """
+    path = config_path(study, label)
+    if not path.is_file():
+        return None
+    config = yaml.safe_load(path.read_text()) or {}
+    rel = config.get(SUPERSTUDY_KEY)
+    return (Path(study) / rel).resolve() if rel else None
 
 
 def require_statefile(study, label):
@@ -394,16 +435,34 @@ def require_env_match(root, label):
     return campaign
 
 
-def require_selected_campaign(path="."):
-    """The three preconditions every *operating* verb shares, in one call.
+def require_selected_campaign(path=".", *, allow_member=False):
+    """The preconditions every *operating* verb shares, in one call.
 
     At a study root (``require_study_root``), with a campaign selected
-    (``selected_label``), running the environment that campaign records
-    (``require_env_match``). Returns ``(root, label, campaign_dir)``.
+    (``selected_label``), operated from the level it was configured at, and
+    running the environment that campaign records (``require_env_match``).
+    Returns ``(root, label, campaign_dir)``.
+
+    The level check comes **before** the env-match guard on purpose. A member of a
+    super-campaign has no venv of its own — the operational environment lives at
+    the configured level — so the env guard reached first would fail with "source
+    the campaign's env.sh" naming a file that will never exist there. The honest
+    error is that this campaign is operated from its superstudy.
+
+    ``allow_member`` is the escape for a verb that offers one (``iterate --force``,
+    advancing a detached member): the user then owns the reconciliation.
 
     ``campaign init`` is the one command that does not take this: it runs before
     the environment exists — it is what creates it.
     """
     root = study_mod.require_study_root(path)
     label = selected_label()
+    above = superstudy_of(root, label)
+    if above and not allow_member:
+        sys.exit(
+            f"campaign {label!r} is operated from its superstudy, not from here.\n"
+            f"  superstudy: {above}\n"
+            f"A campaign is operated only from the level it was configured at, so "
+            f"this member carries no environment of its own."
+        )
     return root, label, require_env_match(root, label)
