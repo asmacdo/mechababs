@@ -24,9 +24,11 @@ Jobs need a modern `git` (≥ 2.25, for `sparse-checkout`) and git-annex on PATH
 
 The campaign venv and RIA stores are large — put them on fast scratch, never home/`/tmp`.
 
-- Put the campaign on scratch. Validating a cluster puts the scenario's throwaway
-  campaign beside it, so that lands on scratch too; `test-cluster --workdir` overrides
-  where. (`MECHABABS_E2E_WORKDIR` is only for driving the scenario from a checkout.)
+- Put the campaign on scratch. Validating a cluster is a separate space:
+  `test-cluster --scratch-path` says where its throwaway study, the container dataset
+  beside it, and its caches go — put that on scratch too.
+  (`MECHABABS_E2E_WORKDIR` is the same location, for driving the scenario from a
+  checkout instead.)
 - No persistent scratch (Unity)? `ws_allocate mechababs 30`, then `WS=$(ws_find mechababs)` for the live path.
 - Unity `$HOME` is quota'd and `/tmp` is `noexec` — redirect caches onto the workspace:
 

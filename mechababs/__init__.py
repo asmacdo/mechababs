@@ -1,9 +1,10 @@
 """mechababs — automation glue for running BIDS apps across datasets via BABS.
 
-This package is the home for the operate-side CLI (``configure`` /
-``add-dataset`` / ``iterate``) and its ``state.py`` ledger accessor. The
-environment half of the campaign bootstrap lives in the root ``bootstrap.sh``;
-the remaining top-level scripts migrate in here over time.
+A campaign lives inside a study: ``mechababs campaign init`` writes its config,
+pins its environment, and creates its statefile there, and the operating verbs
+(``add-dataset`` / ``iterate`` / ``status`` / ``retire-derivative``) advance it
+from that study. ``cli`` is the user-facing entrypoint; ``inner`` carries the
+action verbs ``iterate`` dispatches under ``datalad run``.
 """
 
 try:

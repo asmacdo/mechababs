@@ -16,11 +16,17 @@ script_preamble: |
 job_compute_space: "/tmp"
 
 # The image is CentOS 7 (glibc 2.17), so the campaign environment needs the same
-# version caps a real old-glibc cluster needs — the newest wheels of these eight
+# version caps a real old-glibc cluster needs — the newest wheels of these nine
 # target a newer glibc, and without the caps uv falls back to source builds gcc 4.8
 # cannot compile. Live here rather than commented, so the container rung exercises
 # the same code path a real site does (docs/overview.md: dev exercises prod).
+#
+# numpy is the newest arrival: 2.2.6 is the last release shipping a manylinux2014
+# (glibc 2.17) wheel — 2.3.0 moved to manylinux_2_28 — and numpy's own build
+# refuses gcc < 9.3 outright, so an uncapped resolution dies in meson rather than
+# in the compiler.
 env_constraints:
+  - numpy<=2.2.6
   - greenlet<=3.2.5
   - h5py<=3.14.0
   - pandas<=2.3.2

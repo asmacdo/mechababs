@@ -289,10 +289,11 @@ def _status_row(table, app):
 def _stage_campaign_init(study, cluster_config, app_configs, mechababs_pin, babs_pin):
     """`campaign init` builds the campaign footprint and its environment.
 
-    The mechababs pin is handed in explicitly so the campaign records the code under
-    test rather than whatever the driver install happens to be — the same value a
-    dev run and a future `test-cluster` both supply, differing only in what it points
-    at.
+    Either way the campaign records the code under test. `--mechababs` is passed when
+    the caller named one (a dev run, whose checkout is a mount path `campaign init`
+    could not have inferred) and omitted otherwise, which is how `test-cluster` runs:
+    init then self-pins the mechababs executing it, exactly as a user's own
+    `campaign init` does.
     """
     _run(
         [
@@ -304,8 +305,7 @@ def _stage_campaign_init(study, cluster_config, app_configs, mechababs_pin, babs
             f"{app_configs / f'{ANCHOR}.yaml'},{app_configs / f'{CHAIN}.yaml'}",
             "--cluster",
             str(cluster_config),
-            "--mechababs",
-            mechababs_pin,
+            *(["--mechababs", mechababs_pin] if mechababs_pin else []),
             *(["--babs", babs_pin] if babs_pin else []),
             "--limit",
             "1",
@@ -829,8 +829,7 @@ def test_campaign_init_refuses_outside_a_study(
             str(app_configs / f"{ANCHOR}.yaml"),
             "--cluster",
             str(cluster_config),
-            "--mechababs",
-            mechababs_pin,
+            *(["--mechababs", mechababs_pin] if mechababs_pin else []),
         ],
         cwd=tmp_path,
         check=False,

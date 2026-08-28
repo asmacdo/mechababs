@@ -54,8 +54,8 @@ def test_the_scenario_is_declared_as_package_data():
     )
 
 
-def test_the_dev_wrapper_scripts_are_excluded_from_the_distribution():
-    """The wrapper scripts drive the suite from a checkout, so they must not ship.
+def test_the_dev_wrapper_script_is_excluded_from_the_distribution():
+    """The wrapper drives the suite from a checkout, so it must not ship.
 
     This needs an explicit exclude: setuptools_scm's file finder plus the default
     include-package-data would otherwise ship every git-tracked file under the package,
@@ -96,15 +96,21 @@ class _NoOptions:
             return None
 
 
-@pytest.mark.parametrize("fixture_name", ["mechababs_pin", "cluster_config"])
-def test_the_scenario_refuses_to_run_without_its_provisioning_input(fixture_name):
-    """Both required options must raise, not skip.
+def test_the_scenario_refuses_to_run_without_the_config_under_test():
+    """The one required option must raise, not skip.
 
     pytest exits 0 when every test skips, so a skip here would let `test-cluster`
     report success having validated nothing — the worst outcome for a validation
-    command. That guarantee is the reason these are `UsageError`s, so it gets a test.
+    command. That guarantee is the reason this is a `UsageError`, so it gets a test.
     """
     conftest = _scenario_conftest()
-    body = _fixture_body(getattr(conftest, fixture_name))
+    body = _fixture_body(conftest.cluster_config)
     with pytest.raises(pytest.UsageError, match="required"):
         body(_NoOptions())
+
+
+def test_an_unset_mechababs_pin_means_let_campaign_init_self_pin():
+    """Unset is a real mode, not a missing input: `campaign init` then pins whichever
+    mechababs is running it, which under `test-cluster` is the code under test."""
+    conftest = _scenario_conftest()
+    assert _fixture_body(conftest.mechababs_pin)(_NoOptions()) is None
