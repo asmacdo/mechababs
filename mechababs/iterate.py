@@ -43,6 +43,7 @@ from pathlib import Path
 from mechababs import babs_status, dispatch
 from mechababs import campaign as campaign_mod
 from mechababs import scaffold as scaffold_mod
+from mechababs import study as study_mod
 from mechababs import utils
 from mechababs.utils import require_clean_shallow
 
@@ -288,6 +289,11 @@ def run_iterate(
     the tick is per member and each is bounded by its own ``--batch``: the batch is a
     cap on one shard's transitions, so applying it across members would make how much
     of a member advances depend on which members came before it in the catalog.
+
+    Only **installed** members are advanced. A member the user has pushed and
+    uninstalled is skipped with a note rather than reinstalled, including when
+    ``study`` names it directly — reclaiming space is a decision a tick must not
+    quietly reverse.
     """
     root, label, _ = campaign_mod.require_selected_campaign(root, allow_member=force)
 
@@ -313,6 +319,15 @@ def run_iterate(
     advanced = 0
     for name in members:
         member = Path(root) / name
+        # A member that has left the cluster is left alone — never reinstalled to
+        # advance it. The user's uninstall IS the signal: a study whose derivatives
+        # are pushed and whose content is dropped has nothing here to advance, and
+        # reinstalling to find that out would undo the space they just reclaimed.
+        # Reinstall it later and its shard drives it, state derived as always from
+        # ground truth, so no "done" marker is needed for this to be safe.
+        if not study_mod.is_study_root(member):
+            note(f"{name}: not installed — left alone")
+            continue
         # Clean in, before this member is touched — and scoped to it. The member's
         # own tree is already covered twice over (`tick` checks it, and the
         # transition's `datalad run` checks it again), so what is left for the super

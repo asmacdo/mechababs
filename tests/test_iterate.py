@@ -459,6 +459,9 @@ def superstudy(tmp_path, monkeypatch):
     for name in ("study-dsA", "study-dsB"):
         member = root / name
         campaign_mod.campaign_dir(member, LABEL).mkdir(parents=True)
+        # Installed — the tick advances only members that are actually here, so a
+        # fixture member has to look present the way `study.is_study_root` reads it.
+        (member / ".datalad").mkdir()
         campaign_mod.state_path(member, LABEL).write_text(campaign_mod.initial_header())
         write(member, [cell(ANCHOR)])
         members.append(member)
@@ -655,6 +658,37 @@ def test_the_super_is_checked_once_before_any_member_is_touched(
 
     assert order[0] == ("shallow", "my-super")
     assert order.count(("shallow", "my-super")) == 1
+
+
+def test_an_uninstalled_member_is_left_alone(superstudy, tick):
+    """A member the user pushed and uninstalled is skipped, never reinstalled to
+    advance it: reclaiming space is a decision a tick must not quietly reverse."""
+    root, members, _saves = superstudy
+    (members[0] / ".datalad").rmdir()
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [call["study"] for call in tick] == [str(members[1])]
+
+
+def test_an_uninstalled_member_is_left_alone_even_when_named(superstudy, tick):
+    """Naming it with --study does not override this — it is still not here."""
+    root, members, _saves = superstudy
+    (members[0] / ".datalad").rmdir()
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    assert tick == []
+
+
+def test_an_uninstalled_member_is_not_recorded_at_the_super(superstudy, tick):
+    """Nothing advanced, so there is no gitlink to register."""
+    root, members, saves = superstudy
+    (members[0] / ".datalad").rmdir()
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    assert saves == []
 
 
 def test_each_member_is_recorded_at_the_super_as_it_advances(superstudy, tick):
