@@ -117,7 +117,7 @@ def tick(monkeypatch, study):
 
     monkeypatch.setattr(iterate_mod.babs_status, "read_status", fake_status)
 
-    def fake_clean(root, *, what="this operation"):
+    def fake_clean(root, *, what="this operation", ignore=()):
         calls.cleans += 1
 
     monkeypatch.setattr(iterate_mod, "require_clean_shallow", fake_clean)

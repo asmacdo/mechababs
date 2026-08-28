@@ -311,13 +311,14 @@ def run_iterate(
     members = member_studies(root, label, study)
     note(f"superstudy tick over {len(members)} member(s) in {root}")
 
-    # Clean in at the super, once, before any member is touched. The per-member
-    # check below cannot stand in for this one: it is scoped to a member, so dirt in
-    # the super's OWN tree — an edited catalog, a stray file — is invisible to it.
-    # Once per tick is the right frequency (a ref-read per member submodule, no
-    # descent into their worktrees), and it is the same contract `tick` applies one
-    # level down: anything uncommitted here did not come from mechababs.
-    require_clean_shallow(root, what="a superstudy iterate tick")
+    # Clean in at the super, once, before any member is touched — but only the
+    # super's OWN tree: its campaign dir, its catalog, anything stray at its root.
+    # The members are excluded because each is asked about separately, immediately
+    # before it is advanced, so nothing is checked twice and one member's drift stops
+    # that member rather than the whole fan-out. What is left here is the dirt only
+    # this level can see, and the same contract `tick` applies one level down:
+    # anything uncommitted is not mechababs' and must not be committed as ours.
+    require_clean_shallow(root, what="a superstudy iterate tick", ignore=members)
 
     advanced = 0
     remaining = batch
@@ -343,11 +344,11 @@ def run_iterate(
             note(f"{name}: not installed — left alone")
             continue
         # Clean in, before this member is touched — and scoped to it. The member's
-        # own tree is already covered twice over (`tick` checks it, and the
-        # transition's `datalad run` checks it again), so what is left for the super
-        # is the one thing only the super can see: whether its gitlink still matches
-        # the member's HEAD. A whole-super status would answer the same question at a
-        # cost linear in members; this one is flat.
+        # own tree is covered by `tick`, and again before each transition it
+        # dispatches, so what is left for the super is the one thing only the super
+        # can see: whether its gitlink still matches the member's HEAD. A whole-super
+        # status would answer this for every member at a cost linear in members, and
+        # would answer it too early to be worth much; this one is flat and current.
         utils.require_clean_gitlink(root, name)
         moved = tick(
             member, label, batch=remaining, derivative=derivative, dry_run=dry_run

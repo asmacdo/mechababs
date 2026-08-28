@@ -202,13 +202,20 @@ def require_clean_gitlink(root, member):
     """Refuse unless ``root``'s recorded pointer to ``member`` is up to date.
 
     The superstudy's whole stake in a member it is about to advance. The member's
-    own tree is not this check's business — ``tick`` checks it there, and the
-    transition's ``datalad run`` checks it again. What only the super can see is
-    whether its gitlink still matches the member's HEAD, and a stale one matters
-    because the follow-up save would then commit somebody else's advance as ours.
+    own tree is not this check's business — ``tick`` checks it there, and again
+    before each transition it dispatches. What only the super can see is whether its
+    gitlink still matches the member's HEAD, and a stale one matters because the
+    follow-up save would then commit somebody else's advance as ours.
 
-    Scoped to the one member, so it costs the same in a superstudy of a thousand
-    as in one of two.
+    This is the **only** check of a member's gitlink: the super's own once-per-tick
+    check ignores the members precisely so each is asked about once, here, right
+    before it is touched. It costs the same in a superstudy of a thousand as in one
+    of two.
+
+    A stale gitlink **stops the tick** rather than skipping the member. A member
+    moving underneath us is a bug or an intervention, not a condition to reconcile
+    past — unlike a failed cell, which is a known outcome the reconciler notes and
+    works around.
     """
     rel = Path(member).relative_to(root) if Path(member).is_absolute() else Path(member)
     dirty = shallow_status(root, rel)
@@ -221,21 +228,29 @@ def require_clean_gitlink(root, member):
         )
 
 
-def require_clean_shallow(root, *, what="this operation"):
+def require_clean_shallow(root, *, what="this operation", ignore=()):
     """Refuse unless ``root`` is clean at its own level. Cheap enough for a tick.
 
-    The backstop for `datalad run --explicit`. Explicit mode captures ONLY the
-    declared outputs, which is what keeps a run from deep-walking `sourcedata/raw`
-    — but it also means a stray side-write next to them is silently left behind
-    rather than swept into the commit. So the tree is checked once, loudly, before
-    dispatching: anything already uncommitted here did not come from mechababs, and
-    a run that starts on top of it produces a record that does not describe the
-    tree it ran in.
+    The backstop for `datalad run --explicit`, and it is the *only* one: explicit
+    mode does not check the dataset at all (verified — plain `datalad run` refuses a
+    dirty dataset, `--explicit` runs and commits just its declared outputs, leaving
+    the stray file behind). That is the trade explicit mode makes to avoid
+    deep-walking `sourcedata/raw`, so a stray side-write is silently left rather than
+    swept into the commit. Hence this, loudly, before dispatching: anything already
+    uncommitted here did not come from mechababs, and a run recorded on top of it
+    would not describe the tree it ran in.
+
+    ``ignore`` names paths whose state is somebody else's to check — at a superstudy,
+    the members, each checked by ``require_clean_gitlink`` immediately before it is
+    advanced. Excluded by git pathspec rather than by filtering the output, so a path
+    is never matched by string-comparing against git's own quoting. What is left is
+    the level's *own* tree: its campaign dir, its catalog, anything stray at its root.
 
     Deliberately shallow (see ``shallow_status``): a dirty submodule *worktree* is
     not this check's business, a moved submodule *pointer* is.
     """
-    dirty = shallow_status(root)
+    paths = [".", *(f":(exclude){p}" for p in ignore)] if ignore else ()
+    dirty = shallow_status(root, *paths)
     if dirty:
         raise RuntimeError(
             f"{root} is not clean — refusing {what}.\n"
