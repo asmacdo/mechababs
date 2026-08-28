@@ -132,3 +132,56 @@ def test_require_statefile_names_the_study_superstudy_asymmetry(tmp_path):
 def test_require_statefile_says_no_campaign_when_there_is_none(tmp_path):
     with pytest.raises(SystemExit, match="no campaign"):
         campaign_mod.require_statefile(tmp_path, "nprep")
+
+
+# --- the configured-level rule, in the shared precondition ------------------
+
+
+def test_a_member_of_a_super_campaign_refuses_before_the_env_guard(
+    tmp_path, monkeypatch
+):
+    """The level check comes first on purpose: a member carries no venv of its own,
+    so the env guard reached first would name an env.sh that will never exist."""
+    import pytest
+
+    from mechababs import campaign as c
+
+    member = tmp_path / "study-ds000001"
+    c.campaign_dir(member, "nprep").mkdir(parents=True)
+    c.config_path(member, "nprep").write_text("label: nprep\nsuperstudy: ..\n")
+    (member / ".datalad").mkdir()
+    monkeypatch.setenv(c.CAMPAIGN_ENV_VAR, "nprep")
+
+    with pytest.raises(SystemExit) as excinfo:
+        c.require_selected_campaign(str(member))
+    message = str(excinfo.value)
+    assert "operated from its superstudy" in message
+    assert "env.sh" not in message
+
+
+def test_allow_member_is_the_escape_for_a_verb_that_offers_one(tmp_path, monkeypatch):
+    """iterate --force advances a detached member; the user owns reconciling it."""
+    import pytest
+
+    from mechababs import campaign as c
+
+    member = tmp_path / "study-ds000001"
+    c.campaign_dir(member, "nprep").mkdir(parents=True)
+    c.config_path(member, "nprep").write_text("label: nprep\nsuperstudy: ..\n")
+    (member / ".datalad").mkdir()
+    monkeypatch.setenv(c.CAMPAIGN_ENV_VAR, "nprep")
+
+    # gets past the level check, and on to the env guard — a different refusal
+    with pytest.raises(SystemExit) as excinfo:
+        c.require_selected_campaign(str(member), allow_member=True)
+    assert "operated from its superstudy" not in str(excinfo.value)
+
+
+def test_a_study_campaign_has_no_superstudy(tmp_path):
+    from mechababs import campaign as c
+
+    study = tmp_path / "study-ds000001"
+    c.campaign_dir(study, "nprep").mkdir(parents=True)
+    c.config_path(study, "nprep").write_text("label: nprep\n")
+
+    assert c.superstudy_of(study, "nprep") is None

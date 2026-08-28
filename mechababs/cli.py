@@ -114,7 +114,12 @@ def cmd_iterate(args):
     """
     try:
         iterate_mod.run_iterate(
-            ".", batch=args.batch, derivative=args.derivative, dry_run=args.dry_run
+            ".",
+            batch=args.batch,
+            derivative=args.derivative,
+            study=args.study,
+            dry_run=args.dry_run,
+            force=args.force,
         )
     except RuntimeError as e:
         sys.exit(str(e))
@@ -305,10 +310,23 @@ def main():
         help="only this app config's cells, by its filename stem (e.g. MRIQC-24.0.2)",
     )
     pi.add_argument(
+        "--study",
+        default=None,
+        metavar="MEMBER",
+        help="at a superstudy, advance only this member (composable with "
+        "--derivative). Where you stand gives the level; this narrows within it.",
+    )
+    pi.add_argument(
         "--dry-run",
         action="store_true",
         help="route every cell for real and print the transitions it would "
         "dispatch, without dispatching them",
+    )
+    pi.add_argument(
+        "--force",
+        action="store_true",
+        help="advance a member study whose campaign is operated from its "
+        "superstudy. You then own reconciling it with the super.",
     )
     pi.set_defaults(func=cmd_iterate)
 

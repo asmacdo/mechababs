@@ -441,3 +441,146 @@ def test_dry_run_routes_for_real_and_dispatches_nothing(study, tick):
 def test_dry_run_says_it_shows_only_this_ticks_transitions(study, tick, capsys):
     iterate_mod.tick(study, LABEL, dry_run=True)
     assert "DRY-RUN" in capsys.readouterr().err
+
+
+# --- at a superstudy: fanning out to members --------------------------------
+#
+# `tick` was always parameterized on the study, so the level adds a fan-out rather
+# than a second reconciler. What these pin is the fan-out's shape: catalog order,
+# per-member batching, and the narrowing that does NOT change the level.
+
+
+@pytest.fixture
+def superstudy(tmp_path, monkeypatch):
+    """A superstudy whose campaign covers two members, each with a one-cell shard."""
+    root = tmp_path / "my-super"
+    campaign_mod.campaign_dir(root, LABEL).mkdir(parents=True)
+    members = []
+    for name in ("study-dsA", "study-dsB"):
+        member = root / name
+        campaign_mod.campaign_dir(member, LABEL).mkdir(parents=True)
+        campaign_mod.state_path(member, LABEL).write_text(campaign_mod.initial_header())
+        write(member, [cell(ANCHOR)])
+        members.append(member)
+    campaign_mod.write_members(
+        root,
+        LABEL,
+        [
+            {
+                "study": "study-dsA",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+            {
+                "study": "study-dsB",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+        ],
+    )
+
+    monkeypatch.setattr(
+        campaign_mod,
+        "require_selected_campaign",
+        lambda path=".", **kw: (root, LABEL, campaign_mod.campaign_dir(root, LABEL)),
+    )
+    return root, members
+
+
+def test_a_superstudy_tick_advances_every_member(superstudy, tick):
+    root, members = superstudy
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [call["study"] for call in tick] == [str(m) for m in members]
+
+
+def test_members_advance_in_catalog_order(superstudy, tick):
+    """Catalog order is the ordering interface at the super, the way row order is
+    within a shard."""
+    root, members = superstudy
+    campaign_mod.write_members(
+        root,
+        LABEL,
+        [
+            {
+                "study": "study-dsB",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+            {
+                "study": "study-dsA",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+        ],
+    )
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [Path(call["study"]).name for call in tick] == ["study-dsB", "study-dsA"]
+
+
+def test_a_member_selected_twice_is_advanced_once(superstudy, tick):
+    """Several source datasets in one member give several catalog rows, one member."""
+    root, _ = superstudy
+    campaign_mod.write_members(
+        root,
+        LABEL,
+        [
+            {
+                "study": "study-dsA",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+            {
+                "study": "study-dsA",
+                "source_dataset": "sourcedata/other",
+                "lifecycle": "pending",
+            },
+        ],
+    )
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [Path(call["study"]).name for call in tick] == ["study-dsA"]
+
+
+def test_study_narrows_to_one_member(superstudy, tick):
+    root, _ = superstudy
+
+    iterate_mod.run_iterate(str(root), study="study-dsB")
+
+    assert [Path(call["study"]).name for call in tick] == ["study-dsB"]
+
+
+def test_a_study_that_is_not_a_member_is_a_typo_not_an_empty_tick(superstudy, tick):
+    """Matched against the catalog, not the filesystem: a directory that exists but
+    was never selected into this campaign is an error, not a silent no-op."""
+    root, _ = superstudy
+    (root / "study-dsC").mkdir()
+
+    with pytest.raises(SystemExit) as excinfo:
+        iterate_mod.run_iterate(str(root), study="study-dsC")
+    assert "not a member" in str(excinfo.value)
+
+
+def test_batch_bounds_each_member_not_the_whole_tick(superstudy, tick):
+    """A batch caps one shard's transitions; spanning members would make how much of
+    a member advances depend on which members preceded it."""
+    root, _ = superstudy
+
+    iterate_mod.run_iterate(str(root), batch=1)
+
+    assert len(tick) == 2  # one cell advanced in each member
+
+
+def test_study_is_refused_for_a_study_configured_campaign(study, tick, monkeypatch):
+    monkeypatch.setattr(
+        campaign_mod,
+        "require_selected_campaign",
+        lambda path=".", **kw: (study, LABEL, campaign_mod.campaign_dir(study, LABEL)),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        iterate_mod.run_iterate(str(study), study="study-dsA")
+    assert "no members to select between" in str(excinfo.value)

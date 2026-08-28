@@ -249,17 +249,65 @@ def tick(study, label, *, batch=None, derivative=None, dry_run=False):
         return advanced
 
 
-def run_iterate(root=".", *, batch=None, derivative=None, dry_run=False):
-    """Resolve where we are standing, then tick.
+def member_studies(superstudy, label, target=None):
+    """The member studies to advance, in catalog order, de-duplicated.
+
+    Catalog order is the ordering interface at the super, the way row order is
+    within a shard: several source datasets in one member give several catalog
+    rows, and the member is advanced once. ``target`` narrows to one member and is
+    matched against the catalog rather than the filesystem, so naming a directory
+    that exists but was never selected into this campaign is an error rather than
+    a silent no-op.
+    """
+    rows = campaign_mod.read_members(superstudy, label)
+    names = list(dict.fromkeys(r["study"] for r in rows if r.get("study")))
+    if target is None:
+        return names
+    wanted = Path(target).name
+    if wanted not in names:
+        sys.exit(
+            f"{target} is not a member of campaign {label!r}.\n"
+            f"Members: {', '.join(names) if names else '(none selected yet)'}"
+        )
+    return [wanted]
+
+
+def run_iterate(
+    root=".", *, batch=None, derivative=None, study=None, dry_run=False, force=False
+):
+    """Resolve where we are standing, then tick — once, or once per member.
 
     The **configured-level check lives here**, on the user-driven path, and not on
     ``mechababs-inner``: advancing a campaign is gated on standing at the level it was
     configured, while reproducing a recorded run (a ``datalad rerun`` of an inner verb)
-    must keep working wherever it lands.
+    must keep working wherever it lands. ``require_selected_campaign`` is that check —
+    a study root, a campaign selected by ``MECHABABS_CAMPAIGN``, this process running
+    that campaign's own venv, and the campaign not belonging to a level above.
 
-    For the lone-study spine that check is ``require_selected_campaign``: a study root,
-    a campaign selected by ``MECHABABS_CAMPAIGN``, and this process running that
-    campaign's own venv. The superstudy-mode refusal is the superstudy chunk's.
+    Where you stand gives the *level*; ``study`` narrows *within* it. At a superstudy
+    the tick is per member and each is bounded by its own ``--batch``: the batch is a
+    cap on one shard's transitions, so applying it across members would make how much
+    of a member advances depend on which members came before it in the catalog.
     """
-    study, label, _ = campaign_mod.require_selected_campaign(root)
-    return tick(study, label, batch=batch, derivative=derivative, dry_run=dry_run)
+    root, label, _ = campaign_mod.require_selected_campaign(root, allow_member=force)
+
+    if not campaign_mod.is_superstudy_campaign(root, label):
+        if study:
+            sys.exit(
+                f"campaign {label!r} here is configured at a study, so there are "
+                f"no members to select between.\n--study narrows a superstudy tick."
+            )
+        return tick(root, label, batch=batch, derivative=derivative, dry_run=dry_run)
+
+    members = member_studies(root, label, study)
+    note(f"superstudy tick over {len(members)} member(s) in {root}")
+    advanced = 0
+    for name in members:
+        advanced += tick(
+            Path(root) / name,
+            label,
+            batch=batch,
+            derivative=derivative,
+            dry_run=dry_run,
+        )
+    return advanced
