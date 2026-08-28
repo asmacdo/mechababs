@@ -632,6 +632,31 @@ def test_each_member_is_checked_before_it_is_touched_and_scoped_to_itself(
     ]
 
 
+def test_the_super_is_checked_once_before_any_member_is_touched(
+    superstudy, tick, monkeypatch
+):
+    """The per-member check is scoped to a member, so it cannot see dirt in the
+    super's own tree. That is what this one is for, and once per tick is enough."""
+    root, _members, _saves = superstudy
+    order = []
+
+    monkeypatch.setattr(
+        iterate_mod,
+        "require_clean_shallow",
+        lambda root_, **kw: order.append(("shallow", Path(root_).name)),
+    )
+    monkeypatch.setattr(
+        iterate_mod.utils,
+        "require_clean_gitlink",
+        lambda root_, member: order.append(("gitlink", member)),
+    )
+
+    iterate_mod.run_iterate(str(root))
+
+    assert order[0] == ("shallow", "my-super")
+    assert order.count(("shallow", "my-super")) == 1
+
+
 def test_each_member_is_recorded_at_the_super_as_it_advances(superstudy, tick):
     """A study-only campaign needs none of this — the transition's own `datalad run`
     commits in the study, which is the operating level. With a super above, that run

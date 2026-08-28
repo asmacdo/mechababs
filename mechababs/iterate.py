@@ -302,6 +302,14 @@ def run_iterate(
     members = member_studies(root, label, study)
     note(f"superstudy tick over {len(members)} member(s) in {root}")
 
+    # Clean in at the super, once, before any member is touched. The per-member
+    # check below cannot stand in for this one: it is scoped to a member, so dirt in
+    # the super's OWN tree — an edited catalog, a stray file — is invisible to it.
+    # Once per tick is the right frequency (a ref-read per member submodule, no
+    # descent into their worktrees), and it is the same contract `tick` applies one
+    # level down: anything uncommitted here did not come from mechababs.
+    require_clean_shallow(root, what="a superstudy iterate tick")
+
     advanced = 0
     for name in members:
         member = Path(root) / name
