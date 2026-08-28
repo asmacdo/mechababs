@@ -286,9 +286,12 @@ def run_iterate(
     that campaign's own venv, and the campaign not belonging to a level above.
 
     Where you stand gives the *level*; ``study`` narrows *within* it. At a superstudy
-    the tick is per member and each is bounded by its own ``--batch``: the batch is a
-    cap on one shard's transitions, so applying it across members would make how much
-    of a member advances depend on which members came before it in the catalog.
+    the tick is per member, and ``batch`` caps the **whole tick** rather than each
+    member: the budget is spent in catalog order and the fan-out stops when it runs
+    out. That is what makes catalog order a priority interface rather than only an
+    ordering — ``--batch 5`` advances the five most important transitions in the
+    superstudy, wherever they live — and it keeps ``--batch N`` meaning one thing at
+    either level: at most N cells advance, per tick, full stop.
 
     Only **installed** members are advanced. A member the user has pushed and
     uninstalled is skipped with a note rather than reinstalled, including when
@@ -317,7 +320,18 @@ def run_iterate(
     require_clean_shallow(root, what="a superstudy iterate tick")
 
     advanced = 0
-    for name in members:
+    remaining = batch
+    for i, name in enumerate(members):
+        # The batch is the tick's budget, not each member's, and it is spent in
+        # catalog order — so the catalog decides who gets the budget, not just who
+        # goes first. Checked before the member is even looked at: a tick with
+        # nothing left to spend must not touch the filesystem to discover that.
+        if remaining is not None and remaining <= 0:
+            note(
+                f"--batch {batch} reached — {len(members) - i} member(s) left for "
+                f"the next tick"
+            )
+            break
         member = Path(root) / name
         # A member that has left the cluster is left alone — never reinstalled to
         # advance it. The user's uninstall IS the signal: a study whose derivatives
@@ -335,8 +349,12 @@ def run_iterate(
         # the member's HEAD. A whole-super status would answer the same question at a
         # cost linear in members; this one is flat.
         utils.require_clean_gitlink(root, name)
-        moved = tick(member, label, batch=batch, derivative=derivative, dry_run=dry_run)
+        moved = tick(
+            member, label, batch=remaining, derivative=derivative, dry_run=dry_run
+        )
         advanced += moved
+        if remaining is not None:
+            remaining -= moved
         # Then record. A study-only campaign needs none of this: the transition's own
         # `datalad run` commits in the study, which IS the operating level. With a
         # super above it, that same run leaves the member's gitlink advanced and only

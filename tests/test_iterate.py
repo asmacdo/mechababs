@@ -579,14 +579,41 @@ def test_a_study_that_is_not_a_member_is_a_typo_not_an_empty_tick(superstudy, ti
     assert "not a member" in str(excinfo.value)
 
 
-def test_batch_bounds_each_member_not_the_whole_tick(superstudy, tick):
-    """A batch caps one shard's transitions; spanning members would make how much of
-    a member advances depend on which members preceded it."""
-    root, _, _saves = superstudy
+def test_batch_bounds_the_whole_tick_not_each_member(superstudy, tick):
+    """`--batch N` means one thing at either level: at most N cells advance. At a
+    superstudy the budget is spent in catalog order, which is what makes the catalog
+    a priority interface — it decides who gets the budget, not only who goes first."""
+    root, members, _saves = superstudy
 
     iterate_mod.run_iterate(str(root), batch=1)
 
-    assert len(tick) == 2  # one cell advanced in each member
+    assert [call["study"] for call in tick] == [str(members[0])]
+
+
+def test_a_spent_batch_stops_the_fan_out_before_the_next_member_is_touched(
+    superstudy, tick, monkeypatch
+):
+    """A tick with nothing left to spend must not touch the filesystem to find out."""
+    root, _members, _saves = superstudy
+    checked = []
+    monkeypatch.setattr(
+        iterate_mod.utils,
+        "require_clean_gitlink",
+        lambda root_, member: checked.append(member),
+    )
+
+    iterate_mod.run_iterate(str(root), batch=1)
+
+    assert checked == ["study-dsA"]
+
+
+def test_an_unspent_batch_carries_on_to_the_next_member(superstudy, tick):
+    """The budget is the tick's, so what one member does not spend the next can."""
+    root, members, _saves = superstudy
+
+    iterate_mod.run_iterate(str(root), batch=2)
+
+    assert [call["study"] for call in tick] == [str(m) for m in members]
 
 
 def test_study_is_refused_for_a_study_configured_campaign(study, tick, monkeypatch):
