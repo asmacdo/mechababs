@@ -400,12 +400,26 @@ def require_env_match(root, label):
     venv), and running from this campaign's venv after the committed lock moved
     (or before a bumped lock was built). The fix for the second is
     ``mechababs campaign update-env``, which the message names.
+
+    **The environment is resolved at the level the campaign is operated from, not
+    at ``root``.** For a study-configured campaign the two are the same directory.
+    For a member of a super-campaign they are not: the member holds the cells and
+    is where the work runs, but by construction it has no venv of its own
+    (``write_member_footprint`` gives it none — the operational environment lives
+    at the configured level). Resolving against ``root`` there would demand a venv
+    the design guarantees is absent, which is exactly what the fan-out hits when it
+    dispatches an inner verb with the member as cwd.
     """
     campaign = campaign_dir(root, label)
     if not config_path(root, label).is_file():
         sys.exit(f"no campaign {label!r} here (looked for {config_path(root, label)})")
 
-    venv = venv_path(root, label).resolve()
+    # Where the environment lives. The member's own copy of the lock is a record of
+    # the epoch it was given; the lock that *built* the running venv is the one the
+    # stamp below has to match, and it sits at the operated level.
+    operated_at = superstudy_of(root, label) or Path(root)
+
+    venv = venv_path(operated_at, label).resolve()
     prefix = Path(sys.prefix).resolve()
     if prefix != venv:
         sys.exit(
@@ -413,10 +427,10 @@ def require_env_match(root, label):
             f"  expected: {venv}\n"
             f"  running:  {prefix}\n"
             f"Source the campaign's env.sh:\n"
-            f"  source {env_path(root, label)}"
+            f"  source {env_path(operated_at, label)}"
         )
 
-    lock = uv_lock_path(root, label)
+    lock = uv_lock_path(operated_at, label)
     if not lock.is_file():
         sys.exit(f"campaign {label!r} has no {UV_LOCK_FILENAME} ({lock})")
     committed = lock_digest(lock.read_text())

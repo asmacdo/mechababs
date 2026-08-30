@@ -185,3 +185,65 @@ def test_a_study_campaign_has_no_superstudy(tmp_path):
     c.config_path(study, "nprep").write_text("label: nprep\n")
 
     assert c.superstudy_of(study, "nprep") is None
+
+
+def make_member(superstudy, label="nprep", lock_text="lock-v1\n"):
+    """A member of a super-campaign, shaped as ``write_member_footprint`` leaves it.
+
+    The whole point: config (carrying the superstudy marker) and a copy of the lock,
+    but deliberately **no venv and no env.sh** — a member of a super-campaign is not
+    operated from, so its environment is the superstudy's.
+    """
+    member = superstudy / "study-ds000001"
+    cdir = campaign_mod.campaign_dir(member, label)
+    cdir.mkdir(parents=True)
+    campaign_mod.config_path(member, label).write_text(
+        f"label: {label}\n{campaign_mod.SUPERSTUDY_KEY}: ..\n"
+    )
+    campaign_mod.uv_lock_path(member, label).write_text(lock_text)
+    return member
+
+
+def test_env_match_at_a_member_resolves_the_venv_at_its_superstudy(
+    tmp_path, monkeypatch
+):
+    """The fan-out dispatches inner verbs with the MEMBER as cwd, while the running
+    interpreter is the superstudy's venv — the member has none by construction.
+    Resolving the environment at the member demanded a venv that cannot exist, and
+    no superstudy transition could scaffold."""
+    make_campaign(tmp_path)
+    member = make_member(tmp_path)
+    pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
+
+    assert campaign_mod.require_env_match(member, "nprep") == campaign_mod.campaign_dir(
+        member, "nprep"
+    )
+
+
+def test_env_match_at_a_member_names_the_superstudys_env_sh_when_it_refuses(
+    tmp_path, monkeypatch
+):
+    """A member has no env.sh, so pointing at one there would send the user to a
+    file that will never exist."""
+    make_campaign(tmp_path)
+    member = make_member(tmp_path)
+    pretend_running_in(monkeypatch, tmp_path / "elsewhere")
+
+    with pytest.raises(SystemExit) as e:
+        campaign_mod.require_env_match(member, "nprep")
+    assert str(campaign_mod.env_path(tmp_path, "nprep")) in str(e.value)
+
+
+def test_env_match_at_a_member_still_checks_the_lock_that_built_the_venv(
+    tmp_path, monkeypatch
+):
+    """Resolving at the operated level must not weaken the drift check: a bumped
+    superstudy lock is still caught from inside a member."""
+    make_campaign(tmp_path, lock_text="lock-v1\n")
+    member = make_member(tmp_path, lock_text="lock-v1\n")
+    campaign_mod.uv_lock_path(tmp_path, "nprep").write_text("lock-v2\n")
+    pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
+
+    with pytest.raises(SystemExit) as e:
+        campaign_mod.require_env_match(member, "nprep")
+    assert "campaign update-env" in str(e.value)
