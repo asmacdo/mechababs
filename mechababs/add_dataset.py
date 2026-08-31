@@ -296,8 +296,12 @@ def add(sourcedata, member_arg=None):
         if superstudy:
             write_member_footprint(superstudy, study, label)
         # The campaign's single-writer guarantee, spanning the whole
-        # read-modify-write of the shard.
-        with utils.flocked(campaign_mod.flock_path(study, label)):
+        # read-modify-write of the shard. Taken at `root` — the level the campaign
+        # is operated from — and not at the member: this writes the member's shard
+        # AND the super's catalog, so a member-keyed lock would leave two
+        # concurrent `--study` selections serialized on nothing while they both
+        # rewrite the catalog.
+        with utils.flocked(campaign_mod.flock_path(root, label)):
             rows = campaign_mod.read_state(study, label)
             # The bundle is fixed at init, so a dataset is selected whole or not at
             # all — re-adding refuses. To run more apps on this data, start a new

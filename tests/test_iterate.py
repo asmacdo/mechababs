@@ -73,6 +73,10 @@ class _Tick(list):
     cleans = 0
     locks = 0
 
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.lock_paths = []
+
 
 @pytest.fixture
 def tick(monkeypatch, study):
@@ -126,6 +130,7 @@ def tick(monkeypatch, study):
 
     def counting_flock(lock):
         calls.locks += 1
+        calls.lock_paths.append(Path(lock))
         return real_flocked(lock)
 
     monkeypatch.setattr(iterate_mod.utils, "flocked", counting_flock)
@@ -359,15 +364,29 @@ def test_a_derivative_that_matches_nothing_is_a_typo_not_an_empty_tick(study, ti
 # --------------------------------------------------------------------------
 
 
-def test_the_flock_is_taken_exactly_once_around_the_whole_tick(study, tick):
+def test_the_flock_is_taken_exactly_once_around_the_whole_tick(
+    study, tick, monkeypatch
+):
     """One lock, held across every cell: the campaign is the single-writer unit. It
     must not be taken per cell (and never inside a verb this tick dispatches — an
-    flock is per open-file-description, so that would deadlock against this one)."""
-    write(study, [cell(ANCHOR), cell(CHAIN)])
+    flock is per open-file-description, so that would deadlock against this one).
 
-    iterate_mod.tick(study, LABEL)
+    Driven through `run_iterate`, which is where the lock is taken: a fan-out calls
+    `tick` once per member, so a lock inside `tick` would be released between them.
+    """
+    write(study, [cell(ANCHOR), cell(CHAIN)])
+    monkeypatch.setattr(
+        campaign_mod,
+        "require_selected_campaign",
+        lambda path=".", **kw: campaign_mod.Selected(
+            study, LABEL, campaign_mod.campaign_dir(study, LABEL), study
+        ),
+    )
+
+    iterate_mod.run_iterate(str(study))
 
     assert tick.locks == 1, f"the flock was taken {tick.locks} times"
+    assert tick.lock_paths == [campaign_mod.flock_path(study, LABEL)]
     assert campaign_mod.flock_path(study, LABEL).exists()
 
 
@@ -629,6 +648,26 @@ def test_study_is_refused_for_a_study_configured_campaign(study, tick, monkeypat
     with pytest.raises(SystemExit) as excinfo:
         iterate_mod.run_iterate(str(study), study="study-dsA")
     assert "no members to select between" in str(excinfo.value)
+
+
+def test_one_lock_at_the_super_covers_the_whole_fan_out(superstudy, tick):
+    """The single writer is the campaign, and the campaign is operated at the super.
+
+    A per-member lock would be released between members — leaving the gaps it exists
+    to close — and would cover none of the super's own writes (the gitlink and the
+    catalog row), which are precisely what a second concurrent tick would collide
+    with.
+    """
+    root, members, _ = superstudy
+
+    iterate_mod.run_iterate(str(root))
+
+    assert tick.locks == 1, f"the flock was taken {tick.locks} times for 2 members"
+    assert tick.lock_paths == [campaign_mod.flock_path(root, LABEL)]
+    for member in members:
+        assert not campaign_mod.flock_path(member, LABEL).exists(), (
+            f"{member.name} was locked as if it were its own single-writer unit"
+        )
 
 
 def test_each_member_is_checked_before_it_is_touched_and_scoped_to_itself(
