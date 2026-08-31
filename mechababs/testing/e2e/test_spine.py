@@ -41,6 +41,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from conftest import BUMP_PACKAGE, bump_declaration
 from mechababs import babs_status
 from mechababs import campaign as campaign_mod
 from mechababs import status as status_mod
@@ -678,6 +679,108 @@ def _stage_merge(study):
     _assert_clean(study, "the refused re-merge")
 
 
+def _stage_update_env_bumps_the_environment(study):
+    """The mid-campaign bump, for real: edit the declaration, converge, keep going.
+
+    This is the one path where a campaign's environment changes under a running
+    campaign, and it is the reason `update-env` exists. Everything about it is
+    hand-edit-then-converge: there is no bump flag, so the scenario edits
+    `pyproject.toml` in the text the way a user does, and `update-env` re-resolves
+    whatever it now says.
+
+    Placed after merge, where a campaign has real history to disturb: a merged cell
+    behind it and an unstarted one ahead. That ordering is what makes the last two
+    assertions worth anything — the environment moves *between* two cells' lifetimes,
+    which is exactly the heterogeneity the design accepts and records.
+
+    Needs no scheduler: this is uv and git.
+    """
+    campaign = campaign_mod.campaign_dir(study, LABEL)
+    lock = campaign_mod.uv_lock_path(study, LABEL)
+    env_sh = campaign_mod.env_path(study, LABEL)
+
+    def importable(package):
+        return (
+            _run(
+                ["bash", "-c", f'. "{env_sh}" && python -c "import {package}"'],
+                study,
+                check=False,
+            ).returncode
+            == 0
+        )
+
+    before_lock = lock.read_text()
+    assert not importable(BUMP_PACKAGE), (
+        f"{BUMP_PACKAGE} is already in the campaign venv, so this stage would "
+        "prove nothing about the sync"
+    )
+
+    bump_declaration(campaign)
+    # The declaration is DIRTY now, and deliberately so: hand-edit-then-converge is
+    # the documented bump, so update-env has to accept a dirty pyproject rather than
+    # refuse it the way every other writing verb refuses a dirty scope.
+    assert _git(study, "status", "--porcelain").strip(), "the hand-edit changed nothing"
+
+    _in_campaign(study, LABEL, "campaign", "update-env")
+
+    # 1. The lock moved, and now names the package the declaration asked for.
+    assert lock.read_text() != before_lock, "update-env did not re-resolve the lock"
+    assert f'name = "{BUMP_PACKAGE}"' in lock.read_text(), (
+        f"the re-resolved lock does not carry {BUMP_PACKAGE}"
+    )
+    # 2. The venv really gained it — the sync ran, not just the resolve.
+    assert importable(BUMP_PACKAGE), (
+        f"the lock names {BUMP_PACKAGE} but the campaign venv cannot import it: "
+        "update-env resolved without installing"
+    )
+    # 3. Exactly the two environment files, in one commit. The user's edit and the
+    #    resolution it produced belong together, and nothing else is swept in.
+    changed = sorted(_git(study, "show", "--name-only", "--format=", "HEAD").split())
+    assert changed == sorted(
+        [
+            str(campaign_mod.pyproject_path(study, LABEL).relative_to(study)),
+            str(lock.relative_to(study)),
+        ]
+    ), (
+        f"update-env committed something other than the declaration and its lock:\n{changed}"
+    )
+    subject = _git(study, "log", "-1", "--format=%s").strip()
+    assert subject.startswith("mechababs campaign update-env"), subject
+    # A plain save, NOT a `datalad run`: `uv lock` resolves against the live world,
+    # so a re-executable record of it would be a promise the command cannot keep.
+    assert not subject.startswith("[DATALAD RUNCMD]"), (
+        f"update-env recorded itself as a re-executable run: {subject}"
+    )
+    _assert_clean(study, "update-env")
+
+    # 4. The outer guard accepts the converged environment. It runs `uv sync --check`
+    #    against the venv it just built, so this is the first proof that the two
+    #    halves of the bump agree — a lock that moved without its venv would refuse
+    #    every verb from here on.
+    tick = _iterate(study, "--dry-run")
+    assert tick.returncode == 0, tick.stderr
+    assert "does not match" not in tick.stderr, tick.stderr
+
+    # 5. And an inner verb still dispatches under the new lock. Re-dispatching merge
+    #    on the merged anchor is the safe way to ask: if the study-local env check
+    #    refused, it would fail there; instead it reaches the cell-state guard and
+    #    fails for the *cell's* reason, which is the answer we want.
+    if shutil.which("sbatch"):
+        anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
+        again = _dispatch(study, "merge", SOURCEDATA, anchor_app, check=False)
+        assert again.returncode != 0
+        assert "already merged" in again.stderr, (
+            "the inner verb did not reach its cell-state guard under the bumped "
+            f"lock:\n{again.stderr}"
+        )
+        _assert_clean(study, "the inner verb dispatched under the bumped lock")
+
+    # The stage that follows drives the chain cell's whole life with real ticks, and
+    # now does so under THIS lock — so the campaign ends deliberately heterogeneous,
+    # one cell produced before the bump and one after, which is the honest record the
+    # design is after rather than a defect.
+
+
 def _stage_iterate_drives_the_chain_cell(study):
     """The reconciler, end to end: one cell's whole life, driven by ticks alone.
 
@@ -808,6 +911,7 @@ def test_spine(
     _stage_dependent_cell_waits_for_its_producer(study)
     _stage_submit(study)
     _stage_merge(study)
+    _stage_update_env_bumps_the_environment(study)
     _stage_iterate_drives_the_chain_cell(study)
 
 

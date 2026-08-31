@@ -26,3 +26,19 @@ def stamp_dataset_id(path, dataset_id="11111111-2222-3333-4444-555555555555"):
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(f'[datalad "dataset"]\n\tid = {dataset_id}\n')
     return dataset_id
+
+
+def pretend_uv_check(monkeypatch, ok=True, detail=""):
+    """Answer the delegated ``uv sync --check`` without a real uv or a real venv.
+
+    The freshness half of the guard is a subprocess now, so a unit test that is
+    *about* something else (add-dataset's commit shape, a scaffold transition) has to
+    say what uv would have said. Stubbed at ``venv_matches_lock`` rather than at
+    ``subprocess.run``, so a test that does not care about the invocation is not
+    coupled to its argv; the tests that DO care stub the subprocess instead.
+    """
+    from mechababs import campaign as campaign_mod
+
+    monkeypatch.setattr(
+        campaign_mod, "venv_matches_lock", lambda campaign: (ok, detail)
+    )

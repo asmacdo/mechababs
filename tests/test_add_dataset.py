@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from mechababs import add_dataset
-from conftest import stamp_dataset_id
+from conftest import pretend_uv_check, stamp_dataset_id
 from mechababs import campaign as campaign_mod
 
 SUBJECTS_TSV = (
@@ -77,7 +77,7 @@ def campaign(study, monkeypatch):
         campaign_mod.uv_lock_path(study, "nprep").write_text("lock-v1\n")  # uv.lock
         venv = campaign_mod.venv_path(study, "nprep")
         venv.mkdir()
-        campaign_mod.write_env_stamp(venv, "nprep", "lock-v1\n")
+        pretend_uv_check(monkeypatch)
         monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
         monkeypatch.setattr("sys.prefix", str(venv))
         monkeypatch.chdir(study)  # operating verbs run from the campaign root
@@ -377,7 +377,7 @@ def superstudy(tmp_path, monkeypatch):
     campaign_mod.uv_lock_path(root, "nprep").write_text("lock-v1\n")
     venv = campaign_mod.venv_path(root, "nprep")
     venv.mkdir()
-    campaign_mod.write_env_stamp(venv, "nprep", "lock-v1\n")
+    pretend_uv_check(monkeypatch)
 
     member = root / "study-ds000001"
     (member / ".datalad").mkdir(parents=True)

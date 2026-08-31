@@ -52,6 +52,12 @@ CAMPAIGN_EXTRAS = [
     "con-duct",  # usage/resource logs alongside every run
     "visidata",  # interactive TSV viewer for the statefile
     "pytest",  # runs the packaged e2e scenario behind `mechababs test-cluster`
+    # The environment checks its own freshness with `uv sync --check`, so the venv
+    # has to contain the uv that checks it: resolved sys.prefix-relative like babs,
+    # never from PATH. Being IN the lock is what makes it self-contained even
+    # detached -- any venv built from that lock can validate itself, which is what a
+    # `datalad rerun` in a standalone-cloned study depends on.
+    "uv",
 ]
 
 # A label names a directory and is exported as an env var, so keep it boring.
@@ -356,8 +362,28 @@ def render_pyproject(
 UV_BUILD_FAILURE_RE = re.compile(r"Failed to build [`'\"]([A-Za-z0-9._-]+)")
 
 
-def missing_wheel_message(package, campaign, cluster_file):
-    """What to tell a user whose site cannot install ``package``."""
+# How to retry, once the cap is in the cluster config. The diagnosis is the same for
+# both verbs -- the site cannot install this package -- but the way back differs, and
+# giving `update-env` init's tail would tell a user to delete a campaign that is
+# running work. `{campaign}` is filled in per failure.
+INIT_RETRY = (
+    "\nThen remove the half-built campaign and run `mechababs campaign init` "
+    "again — init does not re-run over an existing campaign:\n"
+    "\n    rm -rf {campaign}\n"
+)
+UPDATE_ENV_RETRY = (
+    "\nThen run `mechababs campaign update-env` again. Nothing needs removing: "
+    "update-env converges an existing campaign, and the environment it failed to "
+    "build is the one it will retry.\n"
+)
+
+
+def missing_wheel_message(package, campaign, cluster_file, retry=INIT_RETRY):
+    """What to tell a user whose site cannot install ``package``.
+
+    ``retry`` is the way back, which is the caller's to say: the diagnosis is shared
+    but the remedy is not.
+    """
     return (
         f"\ncould not build the campaign environment: uv had no installable wheel for "
         f"{package!r} on this system and building it from source failed (above).\n"
@@ -367,14 +393,20 @@ def missing_wheel_message(package, campaign, cluster_file):
         f"\n    # {cluster_file}\n"
         f"    env_constraints:\n"
         f"      - {package}<=<the last version with a wheel for this system>\n"
-        f"\nThen remove the half-built campaign and run `mechababs campaign init` "
-        f"again — init does not re-run over an existing campaign:\n"
-        f"\n    rm -rf {campaign}\n"
-    )
+    ) + retry.format(campaign=campaign)
 
 
-def run_uv(*args, campaign, cluster_file):
+def run_uv(*args, campaign, cluster_file, uv=None, retry=INIT_RETRY):
     """Run a ``uv`` command, and translate a source-build failure into a named one.
+
+    ``uv`` is which binary to run; ``None`` means PATH's, the only answer available at
+    init time, when the campaign venv it would otherwise come from does not exist
+    yet. ``campaign update-env`` passes the venv's own once there is one. Resolved
+    here rather than as a default argument, so the module-level ``UV`` stays the one
+    place PATH resolution is named (and stays monkeypatchable).
+
+    ``retry`` is how a missing-wheel failure tells the user to come back, which
+    differs by verb — see :data:`INIT_RETRY` and :data:`UPDATE_ENV_RETRY`.
 
     A package with no wheel for this system does not announce itself as one: uv falls
     back to the sdist, and what reaches the user is the build backend's compiler error
@@ -388,7 +420,7 @@ def run_uv(*args, campaign, cluster_file):
     is streamed (a resolve is slow; silence would be worse) and kept, and uv's own
     ``Failed to build `<name>` `` line is what names the package afterwards.
     """
-    cmd = [UV, *[str(a) for a in args]]
+    cmd = [uv or UV, *[str(a) for a in args]]
     print("+ " + " ".join(cmd), file=sys.stderr)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -404,15 +436,18 @@ def run_uv(*args, campaign, cluster_file):
         # Not a build failure at all (an unreachable pin, no network, a bad
         # specifier). Say so plainly rather than dressing it as a platform problem.
         sys.exit(f"\n{' '.join(cmd)} failed (exit {proc.returncode})")
-    sys.exit(missing_wheel_message(failed[0], campaign, cluster_file))
+    sys.exit(missing_wheel_message(failed[0], campaign, cluster_file, retry))
 
 
-def build_env(campaign, label, cluster_file):
-    """Resolve the campaign's lock and build its venv from it; stamp the venv.
+def build_env(campaign, cluster_file):
+    """Resolve the campaign's lock and build its venv from it.
 
     ``uv lock`` pins every dependency (the git refs to commits) and ``uv sync``
     installs exactly that — so the environment and the committed lock agree by
-    construction, which is what the env-match guard later checks.
+    construction, which is what the env-match guard later re-checks with
+    ``uv sync --check``. Nothing is recorded about the venv beyond the venv itself:
+    the lock says what should be installed, the environment is what is, and uv
+    compares them on demand.
 
     ``cluster_file`` names the config a failure should send the user to edit; both uv
     steps can hit a source build (lock builds an sdist it cannot read metadata from,
@@ -421,11 +456,7 @@ def build_env(campaign, label, cluster_file):
     uv = dict(campaign=campaign, cluster_file=cluster_file)
     run_uv("lock", "--project", str(campaign), **uv)
     run_uv("sync", "--project", str(campaign), "--frozen", **uv)
-    venv = campaign / campaign_mod.VENV_DIRNAME
-    campaign_mod.write_env_stamp(
-        venv, label, (campaign / campaign_mod.UV_LOCK_FILENAME).read_text()
-    )
-    return venv
+    return campaign / campaign_mod.VENV_DIRNAME
 
 
 ENV_SH_TEMPLATE = """\
@@ -614,7 +645,7 @@ def init(
         )
 
         write_env_sh(campaign, label)
-        build_env(campaign, label, staged_cluster)
+        build_env(campaign, staged_cluster)
 
         save.message = (
             f"mechababs campaign init {label} "

@@ -44,12 +44,16 @@ def configs(tmp_path):
     return src
 
 
-def pretend_build_env(campaign, label, cluster_file=None):
-    """What `build_env` leaves behind, without running uv: a stamped venv + a lock."""
+def pretend_build_env(campaign, cluster_file=None):
+    """What `build_env` leaves behind, without running uv: a venv and a lock.
+
+    Nothing else — there is no third artifact to fake. mechababs records nothing
+    about an environment, so "was this venv built from this lock" is a question only
+    uv answers, from the two files themselves.
+    """
     venv = campaign / campaign_mod.VENV_DIRNAME
     venv.mkdir()
     (campaign / campaign_mod.UV_LOCK_FILENAME).write_text("# resolved\n")
-    campaign_mod.write_env_stamp(venv, label, "# resolved\n")
     return venv
 
 
@@ -62,9 +66,9 @@ def stub_env(monkeypatch):
     """
     calls = {}
 
-    def fake_build_env(campaign, label, cluster_file):
+    def fake_build_env(campaign, cluster_file):
         calls["build_env"] = (campaign, cluster_file)
-        return pretend_build_env(campaign, label)
+        return pretend_build_env(campaign)
 
     @contextmanager
     def fake_save_scope(root, path):
@@ -660,15 +664,18 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
 
     lock = (campaign / campaign_mod.UV_LOCK_FILENAME).read_text()
     assert 'name = "babs"' in lock and 'name = "mechababs"' in lock
-    # the venv is where env.sh will look, and stamped with the lock that built it
+    # the venv is where env.sh will look ...
     venv = campaign / campaign_mod.VENV_DIRNAME
     assert (venv / "bin" / "mechababs").exists()
-    assert campaign_mod.read_env_stamp(venv)["lock_sha256"] == campaign_mod.lock_digest(
-        lock
-    )
-    # ... so the env-match guard passes against it
+    # ... and it carries the uv that checks it, resolved from the venv rather than
+    # PATH, so the guard is self-contained wherever the campaign is later cloned
+    assert (venv / "bin" / "uv").exists()
+    # ... so both halves of the env-match guard pass against a freshly built campaign,
+    # with no stamp and nothing else recorded about the environment
     monkeypatch.setattr("sys.prefix", str(venv))
     campaign_mod.require_env_match(study, "nprep")
+    # and the study-local check the inner verbs carry passes on the same venv
+    campaign_mod.require_study_lock_match(study, "nprep")
 
 
 # --- the superstudy level ---------------------------------------------------
@@ -826,3 +833,28 @@ def test_cli_defaults_the_dataset_to_the_current_directory(monkeypatch, tmp_path
 
     assert seen["root"] == study.resolve()
     assert seen["kw"]["superstudy"] is False
+
+
+def test_the_retry_advice_is_the_calling_verbs(fake_uv, tmp_path):
+    """Same diagnosis, different way back. `init` cannot re-run over an existing
+    campaign, so it says to remove the half-built one; `update-env` converges an
+    existing campaign, and telling its user to `rm -rf` would delete a campaign
+    holding real derivatives and history.
+    """
+    fake_uv(UV_BUILD_FAILURE)
+    campaign = tmp_path / "study" / ".mechababs" / "campaigns" / "nprep"
+    uv = dict(campaign=campaign, cluster_file=campaign / "clusters" / "sherlock.yaml")
+
+    with pytest.raises(SystemExit) as init_failure:
+        campaign_init.run_uv("sync", **uv)
+    with pytest.raises(SystemExit) as update_failure:
+        campaign_init.run_uv("sync", **uv, retry=campaign_init.UPDATE_ENV_RETRY)
+
+    assert f"rm -rf {campaign}" in str(init_failure.value)
+    assert "campaign init" in str(init_failure.value)
+
+    assert "rm -rf" not in str(update_failure.value)
+    assert "campaign update-env" in str(update_failure.value)
+    # the diagnosis half is shared, not duplicated
+    for message in (str(init_failure.value), str(update_failure.value)):
+        assert "pandas" in message and "env_constraints" in message

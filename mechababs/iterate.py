@@ -274,9 +274,7 @@ def member_studies(superstudy, label, target=None):
     return [wanted]
 
 
-def run_iterate(
-    root=".", *, batch=None, derivative=None, study=None, dry_run=False, force=False
-):
+def run_iterate(root=".", *, batch=None, derivative=None, study=None, dry_run=False):
     """Resolve where we are standing, then tick — once, or once per member.
 
     The **configured-level check lives here**, on the user-driven path, and not on
@@ -299,7 +297,7 @@ def run_iterate(
     ``study`` names it directly — reclaiming space is a decision a tick must not
     quietly reverse.
     """
-    selected = campaign_mod.require_selected_campaign(root, allow_member=force)
+    selected = campaign_mod.require_selected_campaign(root)
     root, label = selected.root, selected.label
 
     # The single writer, in exactly one place — and at the level the campaign is
@@ -312,12 +310,6 @@ def run_iterate(
     # Not in `dispatch` and not in the verbs: an flock is per open-file-description,
     # so a lock taken inside a verb this tick dispatches would deadlock against the
     # one held here.
-    #
-    # `--force` on a member resolves to the super's lock too, which is what should
-    # happen: forcing means the user owns the reconciliation, not that they stop
-    # excluding a concurrent fan-out. The super's campaign dir is guaranteed present
-    # by then — require_env_match has already matched this process against the venv
-    # and the lock that live there.
     with utils.flocked(campaign_mod.flock_path(selected.operated_at, label)):
         if not campaign_mod.is_superstudy_campaign(root, label):
             if study:
