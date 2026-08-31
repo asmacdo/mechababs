@@ -230,6 +230,40 @@ def test_uv_project_environment_names_which_venv_is_checked(tmp_path):
     assert check(project, project / ".venv").returncode != 0
 
 
+def test_uv_project_environment_beats_an_activated_virtual_env(tmp_path):
+    """Why the guard names the environment instead of taking uv's `--active`.
+
+    A process knows its own `sys.prefix` for certain; what a shell happens to have
+    exported is a different, weaker claim. If VIRTUAL_ENV could redirect the check,
+    a stale activation would decide which environment a run is validated against —
+    the guard would vouch for a venv that is not the one about to do the work.
+    """
+    git_package(tmp_path / "pkg")
+    project = uv_project(tmp_path / "campaign", tmp_path / "pkg")
+    lock(project)
+
+    good = tmp_path / "good"
+    sync(project, good)
+    stale = tmp_path / "stale"
+    run(UV, "venv", stale)
+
+    result = run(
+        UV,
+        "sync",
+        "--check",
+        "--frozen",
+        "--offline",
+        "--project",
+        project,
+        env={"UV_PROJECT_ENVIRONMENT": str(good), "VIRTUAL_ENV": str(stale)},
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"VIRTUAL_ENV redirected the check away from the named environment\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+
+
 # --- what `uv lock` does, and does not, chase -------------------------------
 
 
