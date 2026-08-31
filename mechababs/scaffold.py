@@ -349,6 +349,12 @@ def scaffold(study, label, source_dataset, app_config):
     # path. babs keeps its own resolved copy inside the derivative, so a tempfile
     # here loses nothing and keeps the run's declared outputs to the four the
     # transition actually owns.
+    #
+    # The venv goes into every job script, so it has to name the level the campaign
+    # is operated from: a member of a super-campaign is given no environment of its
+    # own, and a member-level path would leave each job activating nothing and
+    # failing at its first command.
+    operated_at = campaign_mod.superstudy_of(study, label) or study
     with tempfile.TemporaryDirectory() as tmp:
         babs_config = compose.write_babs_config(
             Path(tmp) / "babs-config.yaml",
@@ -356,7 +362,7 @@ def scaffold(study, label, source_dataset, app_config):
             cluster_config_data,
             source_dataset_url(study, source_dataset),
             input_origins=input_origins,
-            campaign_venv=campaign_mod.venv_path(study, label),
+            campaign_venv=campaign_mod.venv_path(operated_at, label),
         )
         cmd = babs_init_command(study, row, app_config_data, inclusion, babs_config)
         print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr)
