@@ -550,7 +550,7 @@ class Selected(NamedTuple):
     operated_at: Path
 
 
-def require_selected_campaign(path=".", *, allow_member=False):
+def require_selected_campaign(path="."):
     """The preconditions every *operating* verb shares, in one call.
 
     At a study root (``require_study_root``), with a campaign selected
@@ -564,19 +564,28 @@ def require_selected_campaign(path=".", *, allow_member=False):
     the campaign's env.sh" naming a file that will never exist there. The honest
     error is that this campaign is operated from its superstudy.
 
-    ``allow_member`` is the escape for a verb that offers one (``iterate --force``,
-    advancing a detached member): the user then owns the reconciliation.
+    There is no escape hatch. A member is not operated from, full stop: the one
+    case an override would have served — advancing a member detached from its
+    superstudy — cannot work today, because the environment guard requires a venv
+    stamped by ``campaign init`` and nothing can produce one at a member. An
+    override that always refuses a step later is worse than no override.
 
     ``campaign init`` is the one command that does not take this: it runs before
     the environment exists — it is what creates it.
     """
     root = study_mod.require_study_root(path)
     label = selected_label()
-    above = superstudy_of(root, label)
-    if above and not allow_member:
+    # Asked of the marker's PRESENCE, not of whether the super can be found. A
+    # campaign configured at a superstudy stays one when the super is out of reach:
+    # a member cloned on its own would otherwise advance cells that the super's
+    # catalog never hears about, which is the divergence this rule exists to
+    # prevent, and the unreachability is exactly when nothing can notice.
+    owner = recorded_superstudy_id(root, label)
+    if owner:
+        where = superstudy_of(root, label)
         sys.exit(
             f"campaign {label!r} is operated from its superstudy, not from here.\n"
-            f"  superstudy: {above}\n"
+            f"  superstudy: {where if where else f'not found here (datalad-id {owner})'}\n"
             f"A campaign is operated only from the level it was configured at, so "
             f"this member carries no environment of its own."
         )

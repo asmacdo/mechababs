@@ -247,9 +247,44 @@ def test_a_member_of_a_super_campaign_refuses_before_the_env_guard(
     assert "env.sh" not in message
 
 
-def test_allow_member_is_the_escape_for_a_verb_that_offers_one(tmp_path, monkeypatch):
-    """iterate --force advances a detached member; the user owns reconciling it."""
-    import pytest
+def test_a_detached_member_still_refuses_to_be_operated_from(tmp_path, monkeypatch):
+    """Losing sight of the superstudy does not turn a member into a lone study.
+
+    The campaign was configured at a superstudy and its marker still says so; that
+    the super is out of reach changes only where it *is*, not what the campaign is.
+    Advancing here would produce cells the super's catalog never hears about — and
+    unreachability is precisely when nothing would notice. So the level check asks
+    the marker's PRESENCE, while `operated_level` asks its RESOLUTION.
+    """
+    from mechababs import campaign as c
+
+    member = tmp_path / "elsewhere" / "study-ds000001"
+    c.campaign_dir(member, "nprep").mkdir(parents=True)
+    # A marker naming a superstudy that is nowhere above this clone.
+    c.config_path(member, "nprep").write_text(
+        "label: nprep\nsuperstudy: 99999999-8888-7777-6666-555555555555\n"
+    )
+    (member / ".datalad").mkdir()
+    monkeypatch.setenv(c.CAMPAIGN_ENV_VAR, "nprep")
+
+    assert c.superstudy_of(member, "nprep") is None, "the super must be unfindable"
+
+    with pytest.raises(SystemExit) as excinfo:
+        c.require_selected_campaign(str(member))
+    message = str(excinfo.value)
+    assert "operated from its superstudy" in message
+    # It cannot name a directory, so it names the id rather than going quiet.
+    assert "99999999-8888-7777-6666-555555555555" in message
+
+
+def test_a_member_is_never_operated_from_and_there_is_no_override(
+    tmp_path, monkeypatch
+):
+    """The refusal is unconditional. An override existed for one case — advancing a
+    member detached from its superstudy — and that case cannot work: the env guard
+    wants a venv stamped by `campaign init`, and nothing can produce one at a
+    member. An override that always refuses one step later is worse than none."""
+    import inspect
 
     from mechababs import campaign as c
 
@@ -261,10 +296,11 @@ def test_allow_member_is_the_escape_for_a_verb_that_offers_one(tmp_path, monkeyp
     (member / ".datalad").mkdir()
     monkeypatch.setenv(c.CAMPAIGN_ENV_VAR, "nprep")
 
-    # gets past the level check, and on to the env guard — a different refusal
-    with pytest.raises(SystemExit) as excinfo:
-        c.require_selected_campaign(str(member), allow_member=True)
-    assert "operated from its superstudy" not in str(excinfo.value)
+    with pytest.raises(SystemExit, match="operated from its superstudy"):
+        c.require_selected_campaign(str(member))
+    assert (
+        "allow_member" not in inspect.signature(c.require_selected_campaign).parameters
+    )
 
 
 def test_a_study_campaign_has_no_superstudy(tmp_path):
