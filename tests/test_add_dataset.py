@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 from mechababs import add_dataset
+from conftest import stamp_dataset_id
 from mechababs import campaign as campaign_mod
 
 SUBJECTS_TSV = (
@@ -352,6 +353,9 @@ def superstudy(tmp_path, monkeypatch):
     """A superstudy with campaign 'nprep' configured at it, and one member study."""
     root = tmp_path / "my-super"
     (root / ".datalad").mkdir(parents=True)
+    # A superstudy needs a datalad-id: it is what a member's marker records, so that
+    # the relationship survives the member being cloned somewhere else.
+    stamp_dataset_id(root)
     cdir = campaign_mod.campaign_dir(root, "nprep")
     (cdir / campaign_mod.APPS_DIRNAME).mkdir(parents=True)
     (campaign_mod.apps_dir(root, "nprep") / "MRIQC-24.0.2.yaml").write_text(
@@ -594,3 +598,48 @@ def test_the_supers_clean_check_runs_before_the_member_changes(superstudy, saves
         ("exit", member),  # the member commits first
         ("exit", root),  # then the super records the gitlink it now points at
     ]
+
+
+def test_a_members_footprint_from_another_superstudy_is_refused_not_adopted(
+    superstudy, tmp_path
+):
+    """Reuse is right for OUR footprint and wrong for anybody else's.
+
+    Cells get composed from this campaign's app bundle and written into whatever
+    campaign dir is already there; `scaffold` then reads the app config back from
+    the member. So adopting a stranger's footprint runs configs nobody chose for
+    this campaign, and says nothing while it does it. Labels are short user-chosen
+    words and a study accumulates campaigns by design, so the collision is ordinary.
+    """
+    root, member = superstudy[0], superstudy[1]
+
+    # The member arrives already carrying a 'nprep' campaign owned by someone else —
+    # as it would if cloned from a study published with its .mechababs/ committed.
+    other = tmp_path / "someone-elses-super"
+    other.mkdir()
+    other_id = stamp_dataset_id(other, "99999999-8888-7777-6666-555555555555")
+    campaign_mod.campaign_dir(member, "nprep").mkdir(parents=True, exist_ok=True)
+    campaign_mod.config_path(member, "nprep").write_text(
+        f"label: nprep\n{campaign_mod.SUPERSTUDY_KEY}: {other_id}\n"
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.write_member_footprint(root, member, "nprep")
+    message = str(excinfo.value)
+    assert "belongs to" in message
+    # It cannot point at the owner (not on this filesystem), so it names the id
+    # rather than misreporting the member as having a campaign of its own.
+    assert other_id in message
+
+
+def test_a_members_own_standalone_campaign_is_refused_too(superstudy):
+    """The other door: not a rival superstudy, just a study that ran this label on
+    its own. Same consequence, so the same refusal — and it names it accurately."""
+    root, member = superstudy[0], superstudy[1]
+
+    campaign_mod.campaign_dir(member, "nprep").mkdir(parents=True, exist_ok=True)
+    campaign_mod.config_path(member, "nprep").write_text("label: nprep\n")
+
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.write_member_footprint(root, member, "nprep")
+    assert "a campaign of its own" in str(excinfo.value)

@@ -41,6 +41,7 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -78,6 +79,11 @@ STAMP_FILENAME = ".mechababs-env.json"
 
 CAMPAIGN_ENV_VAR = "MECHABABS_CAMPAIGN"
 
+# Where datalad commits a dataset's identity, and the key it uses. Read directly
+# (see `dataset_id`) so the answer does not depend on the dataset being initialized.
+MECHABABS_DATALAD_CONFIG = Path(".datalad") / "config"
+DATALAD_ID_KEY = "datalad.dataset.id"
+
 # The statefile is TALL: one row per (source dataset x app config) cell.
 #   identity  — inputs, written at add-dataset, never overwritten
 #   topology  — derived from the app config
@@ -106,9 +112,11 @@ MEMBER_COLUMNS = ["study", "source_dataset", "lifecycle"]
 LIFECYCLE_PENDING = "pending"
 
 # The member's half of the superstudy relationship, written into its campaign.yaml
-# when its footprint is created. It holds the relative path back up to the super, so
-# it both marks the mode and says where to go -- a refusal can name the directory to
-# run from instead of telling the user one exists somewhere.
+# when its footprint is created. Its value is the super's DATALAD-ID: an identity,
+# not a location. A relative path re-resolves wherever the member currently sits, so
+# it says "one level up" and adopts whatever is there -- which made a member cloned
+# elsewhere both claim the wrong owner and resolve its environment to a stranger.
+# `superstudy_of` turns the id back into a place when the super is actually present.
 SUPERSTUDY_KEY = "superstudy"
 
 
@@ -177,20 +185,77 @@ def write_members(superstudy, label, rows):
             w.writerow({c: row.get(c, "") for c in MEMBER_COLUMNS})
 
 
-def superstudy_of(study, label):
-    """The super this member's campaign belongs to, or ``None`` if it is its own.
+def dataset_id(path):
+    """``path``'s datalad-id, or ``None`` if it has none.
 
-    Read from the member's own campaign config and nothing else: a verb asks
-    "does the campaign I am standing in belong to a level above me", never
-    "is there something above me that might claim this". Scanning parents would
-    make an unrelated dataset higher up able to change what a study does.
+    The id is stable across every commit and survives both cloning and relocating,
+    which is what makes it an identity rather than a location.
+
+    Read out of ``.datalad/config`` with git's own parser rather than through
+    ``Dataset(path).id``, which needs a real git repository: the id is committed
+    configuration, so reading the file answers the question directly and keeps the
+    check honest where a dataset is present but not initialized.
+    """
+    config = Path(path) / MECHABABS_DATALAD_CONFIG
+    if not config.is_file():
+        return None
+    out = subprocess.run(
+        ["git", "config", "--file", str(config), "--get", DATALAD_ID_KEY],
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.strip() or None
+
+
+def recorded_superstudy_id(study, label):
+    """The datalad-id of the super this member's campaign belongs to, or ``None``.
+
+    **Who owns it**, which is a different question from **where that owner is**
+    (:func:`superstudy_of`). Ownership is answerable from the member alone, so it
+    stays answerable when the owner is nowhere nearby — a member cloned out of one
+    superstudy and into another still says whose campaign it carries, even though
+    the original is not on this filesystem at all.
     """
     path = config_path(study, label)
     if not path.is_file():
         return None
     config = yaml.safe_load(path.read_text()) or {}
-    rel = config.get(SUPERSTUDY_KEY)
-    return (Path(study) / rel).resolve() if rel else None
+    return config.get(SUPERSTUDY_KEY) or None
+
+
+def superstudy_of(study, label):
+    """The super this member's campaign belongs to, or ``None`` if it is its own.
+
+    The marker records the super's **datalad-id**, and this resolves it to a place
+    by walking up from the member until a dataset carries that id.
+
+    An id and not a path, because a path is relative and re-resolves wherever the
+    member currently sits — so a member cloned somewhere else keeps pointing at
+    "one level up" and silently adopts whatever is there. Two things went wrong
+    that way: a member cloned into a *different* superstudy passed an ownership
+    check it should have failed, and a member cloned **standalone** resolved its
+    environment to an arbitrary parent directory, which broke re-executing its own
+    recorded commands — the property `write_member_footprint` copies the lock down
+    to provide.
+
+    The walk is not the parent-scanning the design forbids. That would be asking
+    "is there something above me that might claim this", letting an unrelated
+    dataset higher up change what a study does. Here the member has already
+    asserted *which* dataset its campaign belongs to; the walk only finds where
+    that dataset currently lives, and any other ancestor is ignored.
+
+    **Unresolvable means detached**, deliberately: a member that cannot find the
+    super it names is on its own, whatever the reason, and operating on its own
+    contents is what it is equipped for. The failure that follows is then an honest
+    "no environment here" rather than an environment resolved at the wrong level.
+    """
+    recorded = recorded_superstudy_id(study, label)
+    if not recorded:
+        return None
+    for candidate in Path(study).resolve().parents:
+        if dataset_id(candidate) == recorded:
+            return candidate
+    return None
 
 
 def operated_level(study, label):

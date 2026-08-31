@@ -27,7 +27,6 @@ pinned inside that cell's ``datalad run``.
 """
 
 import contextlib
-import os
 import re
 import shutil
 import sys
@@ -186,10 +185,53 @@ def write_member_footprint(superstudy, member, label):
     without the superstudy.
 
     No ``env.sh`` and no venv: the operational environment lives at the configured
-    level, and a member of a super-campaign is not operated from.
+    level, and a member of a super-campaign is not operated from. Its lock is copied
+    down anyway, so a venv can be rebuilt from it for detached use.
+
+    A footprint already at this label is **reused only if it is ours**. Labels are
+    short user-chosen words (``tryout``, ``nprep``) and a study accumulates campaigns
+    by design, so a member can arrive already carrying one: its own standalone
+    campaign, or a different superstudy's. Adopting either would compose cells from
+    *our* app bundle and write them into *that* campaign's statefile, which scaffold
+    then reads back from the member — running configs nobody chose for this campaign,
+    silently. Both doors lead here (selecting a member that is already present, and
+    cloning one in with ``--study <URL>`` from a study published with its
+    ``.mechababs/`` committed), so one check covers both.
     """
     dest = campaign_mod.campaign_dir(member, label)
     if (dest / campaign_mod.CONFIG_FILENAME).is_file():
+        # Compared as ids, not by resolving the owner to a directory: a foreign
+        # owner is often not on this filesystem at all (the member was cloned out
+        # of it), and "I cannot find it" must not read as "it has none".
+        owner = campaign_mod.recorded_superstudy_id(member, label)
+        ours = campaign_mod.dataset_id(superstudy)
+        if owner != ours:
+            where = campaign_mod.superstudy_of(member, label)
+            whose = (
+                "a campaign of its own"
+                if owner is None
+                else f"the superstudy at {where}"
+                if where
+                else f"another superstudy (datalad-id {owner})"
+            )
+            sys.exit(
+                f"{Path(member).name} already carries a campaign called {label!r}, "
+                f"and it belongs to {whose}.\n"
+                f"  this superstudy: {Path(superstudy).resolve()}\n"
+                f"  that campaign:   {campaign_mod.campaign_dir(member, label)}\n"
+                f"That is a different campaign that happens to share a name, and a "
+                f"study holds one campaign per label — so there is no room for "
+                f"both, and adopting it would run its app configs under this "
+                f"campaign's name.\n"
+                f"The member is left exactly as it is, and nothing here undoes it: "
+                f"if --study just cloned it, it is already registered and committed "
+                f"in this superstudy.\n"
+                f"Nothing needs re-cloning — re-run with a different label and "
+                f"`--study {Path(member).name}` to select it as it stands. If you "
+                f"want it gone instead, remove the member yourself (it is a "
+                f"committed subdataset here, so `git reset --hard` would leave the "
+                f"directory untracked and dirty this superstudy)."
+            )
         return dest
     src = campaign_mod.campaign_dir(superstudy, label)
     dest.mkdir(parents=True, exist_ok=True)
@@ -205,9 +247,19 @@ def write_member_footprint(superstudy, member, label):
         if (src / dirname).is_dir():
             shutil.copytree(src / dirname, dest / dirname)
 
-    # The config, plus the marker that says which level operates this campaign.
+    # The config, plus the marker that says which level operates this campaign. The
+    # super's datalad-id, not a path back up to it: an id survives the member being
+    # cloned or the super being moved, and a path does not -- it re-resolves against
+    # wherever the member now sits and points at a stranger.
     config = yaml.safe_load((src / campaign_mod.CONFIG_FILENAME).read_text()) or {}
-    config[campaign_mod.SUPERSTUDY_KEY] = os.path.relpath(superstudy, member)
+    owner_id = campaign_mod.dataset_id(superstudy)
+    if owner_id is None:
+        sys.exit(
+            f"the superstudy at {superstudy} has no datalad-id, so a member cannot "
+            f"record which campaign it belongs to.\n"
+            f"A superstudy must be a datalad dataset (`datalad create`)."
+        )
+    config[campaign_mod.SUPERSTUDY_KEY] = owner_id
     (dest / campaign_mod.CONFIG_FILENAME).write_text(
         yaml.safe_dump(config, sort_keys=False)
     )

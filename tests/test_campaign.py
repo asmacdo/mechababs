@@ -5,10 +5,12 @@ produce it, so both drift directions (wrong venv entirely; right venv, moved loc
 are tested explicitly.
 """
 
+import shutil
 import sys
 
 import pytest
 
+from conftest import stamp_dataset_id
 from mechababs import campaign as campaign_mod
 
 
@@ -153,13 +155,69 @@ def test_operated_level_is_the_super_for_a_member_and_itself_for_a_study(tmp_pat
 
     member = tmp_path / "study-ds000001"
     c.campaign_dir(member, "nprep").mkdir(parents=True)
-    c.config_path(member, "nprep").write_text("label: nprep\nsuperstudy: ..\n")
+    c.config_path(member, "nprep").write_text(
+        f"label: nprep\nsuperstudy: {stamp_dataset_id(tmp_path)}\n"
+    )
     assert c.operated_level(member, "nprep") == tmp_path.resolve()
 
     lone = tmp_path / "study-ds000002"
     c.campaign_dir(lone, "nprep").mkdir(parents=True)
     c.config_path(lone, "nprep").write_text("label: nprep\n")
     assert c.operated_level(lone, "nprep") == lone
+
+
+def test_a_member_cloned_standalone_reads_as_detached(tmp_path):
+    """A member cloned away from its superstudy operates on its own contents.
+
+    This is what `write_member_footprint` copies the lock down FOR — "the member
+    reproduces its own derivatives from its own contents, without the superstudy" —
+    and it is reached through `require_env_match`, which `mechababs-inner` calls. So
+    resolving the level wrongly here does not merely inconvenience: it breaks
+    `datalad rerun` of the study's own recorded commands, which is the whole
+    re-executability claim.
+
+    A relative marker could not express this. `..` resolves against wherever the
+    clone now sits, so the member silently adopted an unrelated parent directory as
+    the place its environment lives.
+    """
+    from mechababs import campaign as c
+
+    super_root = tmp_path / "my-super"
+    member = super_root / "study-ds000001"
+    c.campaign_dir(member, "nprep").mkdir(parents=True)
+    c.config_path(member, "nprep").write_text(
+        f"label: nprep\nsuperstudy: {stamp_dataset_id(super_root)}\n"
+    )
+    assert c.operated_level(member, "nprep") == super_root.resolve()
+
+    # The same member, cloned somewhere with an unrelated directory above it.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    shutil.copytree(member, elsewhere / "study-ds000001")
+    standalone = elsewhere / "study-ds000001"
+    assert c.operated_level(standalone, "nprep") == standalone
+    assert c.superstudy_of(standalone, "nprep") is None
+
+
+def test_a_member_cloned_into_a_different_superstudy_is_not_adopted(tmp_path):
+    """Presence above is not ownership. The other super is a real superstudy with a
+    real campaign dir — only the id distinguishes it from ours, which is why a path
+    marker (always `..`) could never answer this."""
+    from mechababs import campaign as c
+
+    ours = tmp_path / "ours"
+    member = ours / "study-ds000001"
+    c.campaign_dir(member, "nprep").mkdir(parents=True)
+    c.config_path(member, "nprep").write_text(
+        f"label: nprep\nsuperstudy: {stamp_dataset_id(ours)}\n"
+    )
+
+    theirs = tmp_path / "theirs"
+    theirs.mkdir()
+    stamp_dataset_id(theirs, "99999999-8888-7777-6666-555555555555")
+    shutil.copytree(member, theirs / "study-ds000001")
+
+    assert c.superstudy_of(theirs / "study-ds000001", "nprep") is None
 
 
 # --- the configured-level rule, in the shared precondition ------------------
@@ -176,7 +234,9 @@ def test_a_member_of_a_super_campaign_refuses_before_the_env_guard(
 
     member = tmp_path / "study-ds000001"
     c.campaign_dir(member, "nprep").mkdir(parents=True)
-    c.config_path(member, "nprep").write_text("label: nprep\nsuperstudy: ..\n")
+    c.config_path(member, "nprep").write_text(
+        f"label: nprep\nsuperstudy: {stamp_dataset_id(tmp_path)}\n"
+    )
     (member / ".datalad").mkdir()
     monkeypatch.setenv(c.CAMPAIGN_ENV_VAR, "nprep")
 
@@ -195,7 +255,9 @@ def test_allow_member_is_the_escape_for_a_verb_that_offers_one(tmp_path, monkeyp
 
     member = tmp_path / "study-ds000001"
     c.campaign_dir(member, "nprep").mkdir(parents=True)
-    c.config_path(member, "nprep").write_text("label: nprep\nsuperstudy: ..\n")
+    c.config_path(member, "nprep").write_text(
+        f"label: nprep\nsuperstudy: {stamp_dataset_id(tmp_path)}\n"
+    )
     (member / ".datalad").mkdir()
     monkeypatch.setenv(c.CAMPAIGN_ENV_VAR, "nprep")
 
@@ -226,7 +288,7 @@ def make_member(superstudy, label="nprep", lock_text="lock-v1\n"):
     cdir = campaign_mod.campaign_dir(member, label)
     cdir.mkdir(parents=True)
     campaign_mod.config_path(member, label).write_text(
-        f"label: {label}\n{campaign_mod.SUPERSTUDY_KEY}: ..\n"
+        f"label: {label}\n{campaign_mod.SUPERSTUDY_KEY}: {stamp_dataset_id(superstudy)}\n"
     )
     campaign_mod.uv_lock_path(member, label).write_text(lock_text)
     return member

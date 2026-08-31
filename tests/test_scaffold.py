@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from conftest import stamp_dataset_id
 from mechababs import campaign as campaign_mod
 from mechababs import scaffold
 
@@ -296,7 +297,10 @@ def test_a_members_job_scripts_name_the_superstudys_venv(study, babs_calls):
     placeholder, so the substitution is exercised nowhere else.
     """
     config = campaign_mod.config_path(study, LABEL)
-    config.write_text(config.read_text() + f"{campaign_mod.SUPERSTUDY_KEY}: ..\n")
+    config.write_text(
+        config.read_text()
+        + f"{campaign_mod.SUPERSTUDY_KEY}: {stamp_dataset_id(study.parent)}\n"
+    )
 
     scaffold.scaffold(study, LABEL, SOURCEDATA, ANCHOR)
 
