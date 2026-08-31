@@ -379,8 +379,14 @@ def missing_wheel_message(package, campaign, cluster_file):
     )
 
 
-def run_uv(*args, campaign, cluster_file):
+def run_uv(*args, campaign, cluster_file, uv=None):
     """Run a ``uv`` command, and translate a source-build failure into a named one.
+
+    ``uv`` is which binary to run; ``None`` means PATH's, the only answer available at
+    init time, when the campaign venv it would otherwise come from does not exist
+    yet. ``campaign update-env`` passes the venv's own once there is one. Resolved
+    here rather than as a default argument, so the module-level ``UV`` stays the one
+    place PATH resolution is named (and stays monkeypatchable).
 
     A package with no wheel for this system does not announce itself as one: uv falls
     back to the sdist, and what reaches the user is the build backend's compiler error
@@ -394,7 +400,7 @@ def run_uv(*args, campaign, cluster_file):
     is streamed (a resolve is slow; silence would be worse) and kept, and uv's own
     ``Failed to build `<name>` `` line is what names the package afterwards.
     """
-    cmd = [UV, *[str(a) for a in args]]
+    cmd = [uv or UV, *[str(a) for a in args]]
     print("+ " + " ".join(cmd), file=sys.stderr)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

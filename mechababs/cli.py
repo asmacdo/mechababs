@@ -19,6 +19,7 @@ from mechababs import iterate as iterate_mod
 from mechababs import retire as retire_mod
 from mechababs import status as status_mod
 from mechababs import study as study_mod
+from mechababs import update_env as update_env_mod
 from mechababs import validate as validate_mod
 
 
@@ -76,6 +77,18 @@ def cmd_campaign_init(args):
     print(f"  source {rel}/{campaign_mod.ENV_FILENAME}", file=sys.stderr)
     print("  mechababs add-dataset --sourcedata sourcedata/<id>", file=sys.stderr)
     return 0
+
+
+def cmd_campaign_update_env(args):
+    """Converge the selected campaign's environment on its declaration.
+
+    The second command exempt from the env-match guard, and for the mirror-image
+    reason to ``campaign init``'s: init runs before the environment exists, this runs
+    when it is absent or wrong. Both still take the configured-level context, so a
+    member is reached with ``--study`` from the superstudy rather than by standing in
+    it.
+    """
+    return update_env_mod.run_update_env(".", upgrade=args.upgrade, member=args.study)
 
 
 def cmd_add_dataset(args):
@@ -250,6 +263,42 @@ def main():
         "running this command, pinned by its resolved commit)",
     )
     pci.set_defaults(func=cmd_campaign_init)
+
+    pue = camp_sub.add_parser(
+        "update-env",
+        help="converge this campaign's environment on its declaration",
+        description=(
+            "Re-resolve the campaign's pyproject.toml into its uv.lock, install "
+            "exactly that into the campaign venv, and commit both if either moved. "
+            "What it does follows from the declaration: untouched, the lock does not "
+            "move and the venv is simply rebuilt from it (a fresh clone, a wiped "
+            "site, a historical checkout during rerun-reproduction); edited, the "
+            "change re-resolves and installs — the deliberate mid-campaign bump. To "
+            "bump, edit .mechababs/campaigns/<label>/pyproject.toml by hand (the "
+            "pins are `rev` lines under [tool.uv.sources]) and run this. Committed "
+            "as a plain save rather than a `datalad run`: `uv lock` resolves against "
+            "the live world, so recording it as re-executable would be a false "
+            "promise — the lock is the reproducible artifact."
+        ),
+    )
+    pue.add_argument(
+        "--upgrade",
+        action="append",
+        default=[],
+        metavar="PKG",
+        help="re-resolve PKG to the newest thing its declaration allows, without "
+        "editing the declaration: the case with nothing to hand-edit, a pin "
+        "tracking a branch whose tip moved. Repeatable. Touches only the lock.",
+    )
+    pue.add_argument(
+        "--study",
+        default=None,
+        metavar="MEMBER",
+        help="at a superstudy, also copy the resulting lock into this member's "
+        "footprint — the acknowledgment that its remaining work moves onto the "
+        "new environment. The lock only; the member's configs are never touched.",
+    )
+    pue.set_defaults(func=cmd_campaign_update_env)
 
     pa = sub.add_parser(
         "add-dataset",
