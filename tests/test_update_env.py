@@ -340,3 +340,61 @@ def test_update_env_runs_without_the_env_match_guard(study, uv_calls, saves):
     update_env.run_update_env(study)
 
     assert uv_calls
+
+
+# --- the single writer ------------------------------------------------------
+
+
+def test_the_campaign_flock_is_held_across_the_whole_update(study, saves, monkeypatch):
+    """The campaign is the single-writer unit, and this rewrites its lock — the very
+    file `iterate` dispatches work against. So a tick must not read it mid-rewrite,
+    and two update-envs must not resolve into it at once.
+
+    Held across everything, not just the save: the window that matters opens at
+    `uv lock` (which rewrites uv.lock in place) and closes after the commit.
+    """
+    held = []
+    real_flocked = update_env.utils.flocked
+
+    @contextmanager
+    def watching_flock(lock):
+        with real_flocked(lock):
+            held.append(Path(lock))
+            yield
+            held.append("released")
+
+    monkeypatch.setattr(update_env.utils, "flocked", watching_flock)
+
+    def fake_run_uv(*args, campaign, cluster_file, uv=None, retry=None):
+        assert held and held[-1] != "released", f"uv ran unlocked: {args[0]}"
+
+    monkeypatch.setattr(campaign_init, "run_uv", fake_run_uv)
+
+    update_env.run_update_env(study)
+
+    assert held[0] == campaign_mod.flock_path(study, "nprep")
+    assert held[-1] == "released"
+    assert len([h for h in held if h != "released"]) == 1, "taken exactly once"
+
+
+def test_the_flock_is_taken_at_the_operated_level(
+    superstudy, uv_calls, saves, monkeypatch
+):
+    """At the superstudy, not the member — the same level `iterate`'s fan-out locks,
+    which is what makes the two mutually exclusive. A member-keyed lock would let a
+    tick advance the member while its lock copy is being rewritten."""
+    taken = []
+    real_flocked = update_env.utils.flocked
+
+    @contextmanager
+    def recording_flock(lock):
+        taken.append(Path(lock))
+        with real_flocked(lock):
+            yield
+
+    monkeypatch.setattr(update_env.utils, "flocked", recording_flock)
+    root, _ = superstudy
+
+    update_env.run_update_env(root, member="study-ds000001")
+
+    assert taken == [campaign_mod.flock_path(root, "nprep")]
