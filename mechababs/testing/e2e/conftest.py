@@ -59,6 +59,35 @@ SIMBIDS_IMAGE = "images/bids/bids-simbids--0.0.3.sif"
 # main, in no release yet). Drop this default back to None once a release carries it.
 DEFAULT_BABS = "https://github.com/PennLINC/babs.git@main"
 
+# What a scenario adds to a campaign's declaration to make its environment move.
+# Deliberately dull: pure Python, no dependencies of its own, a universal wheel, and
+# nothing in a campaign's tree pulls it in — so "is it importable from the campaign
+# venv" is an unambiguous answer to "did the sync really run", and the resolve it
+# provokes costs a second rather than a rebuild of the world.
+BUMP_PACKAGE = "inflection"
+
+
+def bump_declaration(campaign, package=BUMP_PACKAGE):
+    """Hand-edit a campaign's ``pyproject.toml`` the way the docs say to bump one.
+
+    There is no bump flag, by design: `update-env` re-resolves whatever the
+    declaration now says, and the declaration is the user's own file. So a scenario
+    that exercises the bump path has to edit that file the way a user does, in the
+    text — anything else would test a code path no user takes.
+
+    Refuses if the package is already declared, so a scenario cannot quietly assert
+    nothing: the whole point is that the environment moves.
+    """
+    path = Path(campaign) / "pyproject.toml"
+    text = path.read_text()
+    assert f'"{package}"' not in text, (
+        f"{package} is already declared in {path} — this bump would move nothing"
+    )
+    marker = "dependencies = [\n"
+    assert marker in text, f"no dependency list to edit in {path}:\n{text}"
+    path.write_text(text.replace(marker, f'{marker}    "{package}",\n', 1))
+    return package
+
 
 def pytest_addoption(parser):
     parser.addoption(

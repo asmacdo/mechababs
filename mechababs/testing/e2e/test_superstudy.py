@@ -37,6 +37,7 @@ from pathlib import Path
 
 import yaml
 
+from conftest import BUMP_PACKAGE, bump_declaration
 from mechababs import babs_status
 from mechababs import campaign as campaign_mod
 
@@ -577,6 +578,116 @@ def _stage_a_second_member_and_narrowing(superstudy, study_template):
     _assert_every_level_clean(superstudy, "the narrowed tick", MEMBER, MEMBER_2)
 
 
+def _stage_a_drifted_member_is_refused_until_acknowledged(superstudy):
+    """The drift sequence, end to end: bump at the super, refuse, acknowledge, resume.
+
+    The design's sharpest claim about members, and the one that is only true if three
+    separate pieces line up. There is ONE venv, at the super, so a member cannot sit
+    on an old environment — what a member *can* have is a lock copy that no longer
+    describes the tools about to advance it. Advancing it in that state would write
+    run records into a study whose own committed history names other tools, which is
+    provenance falsification one level below where the outer guard can see it.
+
+    So a drifted member is **refused, never auto-refreshed**. Nothing here reconciles
+    the member for you: moving its remaining work onto a new environment is a human
+    act, and `update-env --study` is the act. The refusal is not iterate's — iterate
+    does no lock comparison at all — it is the dispatched inner verb checking the
+    running venv against the study it is standing in, which is the same check that
+    lets a detached rerun validate itself.
+
+    Needs a scheduler: the member's advanceable cell is the chain one, whose gate
+    only opened because the anchor really merged.
+    """
+    if _skip_without_scheduler("_stage_a_drifted_member_is_refused_until_acknowledged"):
+        return
+
+    member = superstudy / MEMBER
+    canonical = campaign_mod.uv_lock_path(superstudy, LABEL)
+    copy = campaign_mod.uv_lock_path(member, LABEL)
+    assert copy.read_text() == canonical.read_text(), (
+        "the member is not at the canonical lock before the bump, so this stage "
+        "would not be testing drift"
+    )
+
+    # --- the bump, at the super, where the environment lives -------------------
+    bump_declaration(campaign_mod.campaign_dir(superstudy, LABEL))
+    _at_super(superstudy, "campaign", "update-env")
+
+    assert f'name = "{BUMP_PACKAGE}"' in canonical.read_text(), (
+        "update-env did not re-resolve the canonical lock"
+    )
+    assert copy.read_text() != canonical.read_text(), (
+        "the member's lock copy moved on its own — it is a record the member "
+        "commits for itself, never something a super-level command syncs down"
+    )
+    _assert_every_level_clean(superstudy, "the canonical bump", MEMBER, MEMBER_2)
+
+    # --- the refusal ------------------------------------------------------------
+    member_before = _git(member, "rev-parse", "HEAD").strip()
+    refused = _at_super(
+        superstudy, "iterate", "--study", MEMBER, "--batch", "1", check=False
+    )
+    assert refused.returncode != 0, (
+        "a member whose lock copy is behind the canonical one was advanced"
+    )
+    # The message is the interface here, so it is asserted as one: what is wrong, and
+    # the exact command that fixes it. A user reads this and types the next line.
+    assert "does not match the uv.lock committed in this study" in refused.stderr, (
+        refused.stderr
+    )
+    assert f"mechababs campaign update-env --study {MEMBER}" in refused.stderr, (
+        f"the refusal does not name the acknowledgment command:\n{refused.stderr}"
+    )
+    assert _git(member, "rev-parse", "HEAD").strip() == member_before, (
+        "the refused tick still advanced the member"
+    )
+    _assert_every_level_clean(superstudy, "the refused tick", MEMBER, MEMBER_2)
+
+    # --- the acknowledgment, typed exactly as the refusal printed it ------------
+    super_before = _git(superstudy, "rev-parse", "HEAD").strip()
+    _at_super(superstudy, "campaign", "update-env", "--study", MEMBER)
+
+    assert copy.read_text() == canonical.read_text(), (
+        "update-env --study did not bring the member onto the canonical lock"
+    )
+    # Every level stays clean, which means each committed its own half: the member
+    # its lock copy, the super the gitlink pointing at that commit. A refresh that
+    # left either for later would show up as a dirty level here.
+    assert _git(member, "rev-parse", "HEAD").strip() != member_before, (
+        "the member did not commit its refreshed lock copy"
+    )
+    assert _git(superstudy, "rev-parse", "HEAD").strip() != super_before, (
+        "the superstudy did not commit the member's advanced gitlink"
+    )
+    assert f"update-env --study {MEMBER}" in _git(member, "log", "-1", "--format=%s"), (
+        _git(member, "log", "-1", "--format=%s")
+    )
+    _assert_every_level_clean(superstudy, "the member's lock refresh", MEMBER, MEMBER_2)
+
+    # The configs are the member's own, and a lock refresh is not a config sync — a
+    # member may deliberately override them, so nothing but the lock moves. The
+    # superstudy marker is the tell: it exists only in the member's copy, so a blind
+    # copy-down of the canonical config would erase it and the member would stop
+    # knowing whose campaign it carries.
+    assert campaign_mod.recorded_superstudy_id(member, LABEL), (
+        "the member's config lost its superstudy marker — update-env --study copied "
+        "more than the lock"
+    )
+
+    # --- and the work resumes ---------------------------------------------------
+    ticked = _at_super(superstudy, "iterate", "--study", MEMBER, "--batch", "1")
+    assert (member / "derivatives" / f"{CHAIN}+{DATASET_ID}").is_dir(), (
+        f"the acknowledged member did not advance:\n{ticked.stderr}"
+    )
+    _assert_every_level_clean(superstudy, "the tick after acknowledgment", MEMBER)
+
+    # MEMBER_2 is left drifted on purpose: acknowledgment is per-member, so refreshing
+    # one must not quietly move the others onto tools they have not been given.
+    assert campaign_mod.uv_lock_path(superstudy / MEMBER_2, LABEL).read_text() != (
+        canonical.read_text()
+    ), "refreshing one member refreshed its sibling"
+
+
 def _stage_campaign_init_adopts_the_superstudy(
     superstudy, cluster_config, apps, mechababs_pin, babs_pin
 ):
@@ -651,6 +762,7 @@ def test_superstudy(
     _stage_fanout_scaffold(superstudy)
     _stage_fanout_submit_and_merge(superstudy)
     _stage_a_second_member_and_narrowing(superstudy, study_template)
+    _stage_a_drifted_member_is_refused_until_acknowledged(superstudy)
     _stage_campaign_init_adopts_the_superstudy(
         superstudy, cluster_config, apps, mechababs_pin, babs_pin
     )
