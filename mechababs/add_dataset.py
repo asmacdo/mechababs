@@ -224,7 +224,7 @@ def add(sourcedata, member_arg=None):
     coordinate rather than a different place to stand: ``member_arg`` (``--study``)
     selects the member and ``sourcedata`` re-bases onto it.
     """
-    root, label, _ = campaign_mod.require_selected_campaign()
+    root, label, _, _ = campaign_mod.require_selected_campaign()
     at_super = campaign_mod.is_superstudy_campaign(root, label)
 
     # Both directions of the configured-level rule, refused at the door.

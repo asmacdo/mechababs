@@ -298,7 +298,7 @@ def run_iterate(
     ``study`` names it directly — reclaiming space is a decision a tick must not
     quietly reverse.
     """
-    root, label, _ = campaign_mod.require_selected_campaign(root, allow_member=force)
+    root, label, _, _ = campaign_mod.require_selected_campaign(root, allow_member=force)
 
     if not campaign_mod.is_superstudy_campaign(root, label):
         if study:

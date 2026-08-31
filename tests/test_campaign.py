@@ -96,12 +96,17 @@ def test_require_selected_campaign_bundles_the_three_preconditions(
     make_campaign(tmp_path)
     monkeypatch.setenv(campaign_mod.CAMPAIGN_ENV_VAR, "nprep")
     pretend_running_in(monkeypatch, campaign_mod.venv_path(tmp_path, "nprep"))
-    root, label, campaign = campaign_mod.require_selected_campaign(tmp_path)
-    assert (root, label, campaign) == (
+    selected = campaign_mod.require_selected_campaign(tmp_path)
+    assert selected == (
         tmp_path.resolve(),
         "nprep",
         campaign_mod.campaign_dir(tmp_path, "nprep"),
+        tmp_path.resolve(),
     )
+    # A study-configured campaign is operated where it stands: the two levels are
+    # the same directory, which is what makes the distinction invisible until a
+    # superstudy separates them.
+    assert selected.operated_at == selected.root
 
 
 def test_require_selected_campaign_refuses_outside_a_study(tmp_path, monkeypatch):
@@ -132,6 +137,29 @@ def test_require_statefile_names_the_study_superstudy_asymmetry(tmp_path):
 def test_require_statefile_says_no_campaign_when_there_is_none(tmp_path):
     with pytest.raises(SystemExit, match="no campaign"):
         campaign_mod.require_statefile(tmp_path, "nprep")
+
+
+# --- the operated level, the distinction the whole layer turns on -----------
+
+
+def test_operated_level_is_the_super_for_a_member_and_itself_for_a_study(tmp_path):
+    """The two levels coincide for a study and diverge for a member.
+
+    Every environment-shaped question — the venv, env.sh, the lock that built it,
+    the single writer — is asked of this and not of the study, because a member is
+    given none of them.
+    """
+    from mechababs import campaign as c
+
+    member = tmp_path / "study-ds000001"
+    c.campaign_dir(member, "nprep").mkdir(parents=True)
+    c.config_path(member, "nprep").write_text("label: nprep\nsuperstudy: ..\n")
+    assert c.operated_level(member, "nprep") == tmp_path.resolve()
+
+    lone = tmp_path / "study-ds000002"
+    c.campaign_dir(lone, "nprep").mkdir(parents=True)
+    c.config_path(lone, "nprep").write_text("label: nprep\n")
+    assert c.operated_level(lone, "nprep") == lone
 
 
 # --- the configured-level rule, in the shared precondition ------------------

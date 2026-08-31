@@ -485,7 +485,9 @@ def superstudy(tmp_path, monkeypatch):
     monkeypatch.setattr(
         campaign_mod,
         "require_selected_campaign",
-        lambda path=".", **kw: (root, LABEL, campaign_mod.campaign_dir(root, LABEL)),
+        lambda path=".", **kw: campaign_mod.Selected(
+            root, LABEL, campaign_mod.campaign_dir(root, LABEL), root
+        ),
     )
     # The fixture tree is plain directories, so the super's own datalad calls are
     # recorded rather than run. What they record is the point of the tests below.
@@ -620,7 +622,9 @@ def test_study_is_refused_for_a_study_configured_campaign(study, tick, monkeypat
     monkeypatch.setattr(
         campaign_mod,
         "require_selected_campaign",
-        lambda path=".", **kw: (study, LABEL, campaign_mod.campaign_dir(study, LABEL)),
+        lambda path=".", **kw: campaign_mod.Selected(
+            study, LABEL, campaign_mod.campaign_dir(study, LABEL), study
+        ),
     )
     with pytest.raises(SystemExit) as excinfo:
         iterate_mod.run_iterate(str(study), study="study-dsA")

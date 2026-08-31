@@ -43,6 +43,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 
@@ -190,6 +191,25 @@ def superstudy_of(study, label):
     config = yaml.safe_load(path.read_text()) or {}
     rel = config.get(SUPERSTUDY_KEY)
     return (Path(study) / rel).resolve() if rel else None
+
+
+def operated_level(study, label):
+    """The level ``study``'s campaign is operated from — its super, or itself.
+
+    The one definition of a distinction the whole superstudy layer turns on. A
+    campaign has two levels that coincide for a study and diverge for a member: the
+    study is where the cells live and the work runs, while the level it was
+    *configured* at is where the environment lives (venv, ``env.sh``, the lock that
+    built it) and where the single writer is enforced.
+
+    Ask this whenever the answer is about the campaign's environment or its
+    serialization. Ask ``study`` itself whenever the answer is about the work — the
+    shard, the derivatives, the member's own recorded lock epoch. Getting those two
+    the wrong way round is what produced both of the blockers this layer's first
+    real run hit, and neither was reachable from a unit test: a test of a guard is
+    written against the same assumption the guard makes.
+    """
+    return superstudy_of(study, label) or Path(study)
 
 
 def require_statefile(study, label):
@@ -417,7 +437,7 @@ def require_env_match(root, label):
     # Where the environment lives. The member's own copy of the lock is a record of
     # the epoch it was given; the lock that *built* the running venv is the one the
     # stamp below has to match, and it sits at the operated level.
-    operated_at = superstudy_of(root, label) or Path(root)
+    operated_at = operated_level(root, label)
 
     venv = venv_path(operated_at, label).resolve()
     prefix = Path(sys.prefix).resolve()
@@ -449,13 +469,29 @@ def require_env_match(root, label):
     return campaign
 
 
+class Selected(NamedTuple):
+    """What an operating verb has established about where it is standing.
+
+    ``root`` is where the verb stands and the work happens; ``operated_at`` is the
+    level the campaign was configured at, which is the same directory unless
+    ``root`` is a member of a super-campaign. Both are carried because both are
+    needed and deriving one from the other at each site is what let the level go
+    wrong twice — see ``operated_level``.
+    """
+
+    root: Path
+    label: str
+    campaign_dir: Path
+    operated_at: Path
+
+
 def require_selected_campaign(path=".", *, allow_member=False):
     """The preconditions every *operating* verb shares, in one call.
 
     At a study root (``require_study_root``), with a campaign selected
     (``selected_label``), operated from the level it was configured at, and
     running the environment that campaign records (``require_env_match``).
-    Returns ``(root, label, campaign_dir)``.
+    Returns a ``Selected``.
 
     The level check comes **before** the env-match guard on purpose. A member of a
     super-campaign has no venv of its own — the operational environment lives at
@@ -479,4 +515,6 @@ def require_selected_campaign(path=".", *, allow_member=False):
             f"A campaign is operated only from the level it was configured at, so "
             f"this member carries no environment of its own."
         )
-    return root, label, require_env_match(root, label)
+    return Selected(
+        Path(root), label, require_env_match(root, label), operated_level(root, label)
+    )

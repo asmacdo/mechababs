@@ -354,7 +354,7 @@ def scaffold(study, label, source_dataset, app_config):
     # is operated from: a member of a super-campaign is given no environment of its
     # own, and a member-level path would leave each job activating nothing and
     # failing at its first command.
-    operated_at = campaign_mod.superstudy_of(study, label) or study
+    operated_at = campaign_mod.operated_level(study, label)
     with tempfile.TemporaryDirectory() as tmp:
         babs_config = compose.write_babs_config(
             Path(tmp) / "babs-config.yaml",
