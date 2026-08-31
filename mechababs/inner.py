@@ -11,14 +11,22 @@ exists so the two CLIs can have different manners:
   from. A bare `datalad rerun` onto current HEAD re-executes the recorded command
   against a cell that has since been scaffolded, and the desired outcome there is
   a loud failure, not a second derivative.
-- **no configured-level check.** That check ("operate a campaign only from where it
-  was configured") lives on `iterate`, deliberately: user-driven advancing is
-  gated, while reproducing a recorded run is not.
+- **no configured-level check, and no location check.** Both live on the outer
+  commands, deliberately: user-driven advancing is gated, while reproducing a
+  recorded run is not, and *which directory* a venv sits in is a selection question
+  that selection already answered.
+
+What an inner verb does check about its environment is one thing, and it checks it
+against the **study it is standing in**: that the running venv is what this study's
+own committed lock describes (`require_study_lock_match`). A recorded command has a
+second entry path that never passes through an outer command — `datalad rerun`
+executes it directly — so it validates its own environment wherever it is replayed.
+That one check is also the member-drift gate: on the dispatched path the outer guard
+has already proved the venv matches the *canonical* lock, so a failure here means
+the member's copy is behind.
 
 The campaign is a required flag rather than the `MECHABABS_CAMPAIGN` env var, so a
-recorded command names what it operated on instead of inheriting it. The env-match
-guard still applies: a run recorded as this campaign's has to be executed by this
-campaign's environment.
+recorded command names what it operated on instead of inheriting it.
 """
 
 import argparse
@@ -33,10 +41,15 @@ from mechababs import submit as submit_mod
 
 
 def _require_context(args):
-    """The three preconditions every verb shares: a study, its shard, its env."""
+    """The three preconditions every verb shares: a study, its shard, its env.
+
+    The env one is the study-local lock check, NOT the outer guard: an inner verb
+    may legitimately run in a venv the operator built themselves, anywhere the study
+    was cloned to, so long as that venv is what the study's own lock describes.
+    """
     study = study_mod.require_study_root(".")
     campaign_mod.require_statefile(study, args.campaign)
-    campaign_mod.require_env_match(study, args.campaign)
+    campaign_mod.require_study_lock_match(study, args.campaign)
     return study
 
 

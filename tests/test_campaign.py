@@ -1,13 +1,15 @@
-"""Unit tests for campaign selection and the env-match guard.
+"""Unit tests for campaign selection and the two environment checks.
 
-The guard is what keeps a run from being recorded against tools that did not
-produce it, so both of its refusals — wrong venv entirely, and a venv uv says
-disagrees with the lock — are tested explicitly.
+The outer guard (`require_env_match`) is what keeps a run from being recorded
+against tools that did not produce it, so both of its refusals — wrong venv
+entirely, and a venv uv says disagrees with the lock — are tested explicitly. The
+inner verbs' check (`require_study_lock_match`) is the study-local half, and the
+member hint it grows is tested against the superstudy marker that gates it.
 
 Freshness is a `uv sync --check` subprocess now, so these stub it two ways: at
 `venv_matches_lock` when the test is about what the guard *does* with the answer,
-and at `subprocess.run` when it is about the invocation itself. Nothing here runs
-a real uv.
+and at `subprocess.run` when it is about the invocation itself. Nothing here needs a
+real uv — the `uv_build`-marked contract tests are what pin uv's actual behavior.
 """
 
 import shutil
@@ -507,3 +509,115 @@ def test_env_match_at_a_member_still_refuses_when_uv_says_the_venv_drifted(
     with pytest.raises(SystemExit) as e:
         campaign_mod.require_env_match(member, "nprep")
     assert "campaign update-env" in str(e.value)
+
+
+# --- the inner verbs' check: this venv vs THIS STUDY's lock -----------------
+
+
+def test_the_study_lock_check_passes_when_uv_says_the_venv_matches(
+    tmp_path, monkeypatch
+):
+    make_campaign(tmp_path)
+    pretend_uv_check(monkeypatch)
+    assert campaign_mod.require_study_lock_match(
+        tmp_path, "nprep"
+    ) == campaign_mod.campaign_dir(tmp_path, "nprep")
+
+
+def test_the_study_lock_check_asks_about_the_study_it_stands_in_not_the_super(
+    tmp_path, monkeypatch
+):
+    """The counterpart of the guard test above, and the member-drift gate itself.
+
+    On the dispatched path the outer guard has already proved venv = canonical lock,
+    so aiming this at the member is what makes a lagging copy fail — aimed at the
+    super it would agree with the check that just ran and gate nothing.
+    """
+    make_campaign(tmp_path)
+    member = make_member(tmp_path)
+    asked = {}
+    monkeypatch.setattr(
+        campaign_mod,
+        "venv_matches_lock",
+        lambda campaign: (asked.setdefault("campaign", campaign), (True, ""))[1],
+    )
+
+    campaign_mod.require_study_lock_match(member, "nprep")
+    assert asked["campaign"] == campaign_mod.campaign_dir(member, "nprep")
+
+
+def test_the_study_lock_check_does_not_care_which_venv_directory_it_is(
+    tmp_path, monkeypatch
+):
+    """No location check, deliberately: a rerun in a cloned study runs a venv the
+    re-runner built, at a path mechababs has never heard of. Two venvs built from
+    one lock hold the same tools, so the lock answers everything that matters."""
+    make_campaign(tmp_path)
+    pretend_uv_check(monkeypatch)
+    pretend_running_in(monkeypatch, tmp_path / "somewhere" / "else" / ".venv")
+
+    assert campaign_mod.require_study_lock_match(tmp_path, "nprep")
+
+
+def test_a_lone_study_whose_venv_drifted_is_told_to_rebuild_from_its_own_lock(
+    tmp_path, monkeypatch
+):
+    make_campaign(tmp_path)
+    pretend_uv_check(monkeypatch, ok=False, detail="Would install: babs==0.5.5")
+
+    with pytest.raises(SystemExit) as e:
+        campaign_mod.require_study_lock_match(tmp_path, "nprep")
+    message = str(e.value)
+    assert "uv sync --frozen" in message
+    # a lone study has no superstudy to be told to go to
+    assert "--study" not in message
+    assert "Would install: babs==0.5.5" in message
+
+
+def test_a_drifted_member_is_told_to_acknowledge_it_at_the_superstudy(
+    tmp_path, monkeypatch
+):
+    """The refuse-don't-refresh rule, in the one message that has to carry it.
+
+    A member behind the canonical lock is refused, never auto-refreshed: advancing
+    it would write run records into a study whose committed lock names other tools.
+    Moving its remaining work onto the new environment is a human act, and the
+    message names the command that records it — at the superstudy, since that is
+    where the environment lives.
+    """
+    make_campaign(tmp_path)
+    member = make_member(tmp_path)
+    pretend_uv_check(monkeypatch, ok=False, detail="Would install: babs==0.5.5")
+
+    with pytest.raises(SystemExit) as e:
+        campaign_mod.require_study_lock_match(member, "nprep")
+    message = str(e.value)
+    assert "mechababs campaign update-env --study study-ds000001" in message
+    # never "we refreshed it for you", and never the lone-study advice
+    assert "uv sync --frozen" not in message
+
+
+def test_the_member_hint_appears_only_for_a_member(tmp_path, monkeypatch):
+    """Gated on the superstudy marker, not on the failure: a lone study told to run
+    `update-env --study` would be sent to a level that does not exist."""
+    make_campaign(tmp_path)
+    lone = tmp_path / "study-ds000002"
+    campaign_mod.campaign_dir(lone, "nprep").mkdir(parents=True)
+    campaign_mod.config_path(lone, "nprep").write_text("label: nprep\n")
+    campaign_mod.uv_lock_path(lone, "nprep").write_text("lock-v1\n")
+    pretend_uv_check(monkeypatch, ok=False)
+
+    with pytest.raises(SystemExit) as e:
+        campaign_mod.require_study_lock_match(lone, "nprep")
+    assert "superstudy" not in str(e.value)
+
+
+def test_the_study_lock_check_refuses_a_study_carrying_no_lock(tmp_path):
+    """Every study carries the lock of the campaign working in it — that copy is what
+    a rerun rebuilds from, so its absence is a broken footprint, not a drift."""
+    make_campaign(tmp_path)
+    member = make_member(tmp_path)
+    campaign_mod.uv_lock_path(member, "nprep").unlink()
+
+    with pytest.raises(SystemExit, match="uv.lock"):
+        campaign_mod.require_study_lock_match(member, "nprep")

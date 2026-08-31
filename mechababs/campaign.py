@@ -574,6 +574,87 @@ def require_env_match(root, label):
     return campaign
 
 
+def _member_selector(study, label):
+    """How ``--study`` would name this member, for a message that has to be typable.
+
+    The selector is a path **relative to the superstudy** (``resolve_member``), which
+    is not the member's bare name when a superstudy nests its members. Falls back to
+    the name when the super cannot be located — the hint is then still the right
+    shape, and a hint is all it is.
+    """
+    above = superstudy_of(study, label)
+    if above:
+        return Path(study).resolve().relative_to(above).as_posix()
+    return Path(study).name
+
+
+def require_study_lock_match(study, label):
+    """The inner verbs' one environment check: this venv vs **this study's** lock.
+
+    Not ``require_env_match``. An inner verb has a second entry path that never
+    passes through an outer command — ``datalad rerun`` executes the recorded
+    command directly — so it must validate its own environment wherever it is
+    replayed, and it must do so against the study it is operating in. Hence no
+    location check: which *directory* the venv sits in is a selection question, and
+    selection belongs to the outer commands. Two campaigns with identical locks are
+    provenance-identical tools, so the lock distinguishes every case that matters.
+
+    One check, serving three:
+
+    - **reproduction.** A re-runner builds any venv from the study's committed lock
+      and reruns; the check passes, and attribution is honest by construction. The
+      member footprint is a complete uv project (``pyproject.toml`` *and*
+      ``uv.lock`` are copied down), so this works with nothing from the superstudy.
+    - **replay at the right epoch.** Rerun at the run's own commit and the lock in
+      force there is the one checked, so the answer is the epoch's, not today's.
+    - **the member-drift gate.** On the dispatched path the outer guard has already
+      proved venv = *canonical* lock, so this failing means exactly one thing: the
+      member's copy is behind. A drifted member is refused, never auto-refreshed —
+      moving its remaining work onto new tools is a human acknowledgment, which is
+      what ``campaign update-env --study`` records.
+    """
+    campaign = campaign_dir(study, label)
+    lock = uv_lock_path(study, label)
+    if not lock.is_file():
+        sys.exit(
+            f"campaign {label!r} in this study has no {UV_LOCK_FILENAME} ({lock})\n"
+            "Every study carries the lock of the campaign that works in it — it is "
+            "the study's own record of which tools ran, and what a rerun rebuilds "
+            "from."
+        )
+    ok, detail = venv_matches_lock(campaign)
+    if ok:
+        return campaign
+
+    message = (
+        f"the running environment does not match the {UV_LOCK_FILENAME} committed "
+        f"in this study for campaign {label!r}\n"
+        f"  lock:    {lock}\n"
+        f"  running: {sys.prefix}\n"
+    )
+    owner = recorded_superstudy_id(study, label)
+    if owner:
+        # A member: the venv doing the work is the superstudy's, so the mismatch is
+        # this member's lock copy lagging the canonical one, not a broken venv.
+        # Refreshing it is a deliberate act, taken at the level that owns the
+        # environment -- never a side effect of the tick that noticed.
+        message += (
+            "\nThis study is a member of a superstudy campaign, so the environment "
+            "advancing it is the superstudy's and this lock copy is behind it. "
+            "Its remaining work would then be recorded against tools its own "
+            "history does not name.\n"
+            "Move it onto the current environment, at the superstudy:\n"
+            f"  mechababs campaign update-env --study {_member_selector(study, label)}"
+        )
+    else:
+        message += (
+            "\nRebuild the environment this study's lock describes, or activate "
+            "the one that matches it:\n"
+            f"  uv sync --frozen --project {campaign}"
+        )
+    sys.exit(message + _quoted(detail))
+
+
 class Selected(NamedTuple):
     """What an operating verb has established about where it is standing.
 
