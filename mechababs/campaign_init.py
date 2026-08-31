@@ -52,6 +52,12 @@ CAMPAIGN_EXTRAS = [
     "con-duct",  # usage/resource logs alongside every run
     "visidata",  # interactive TSV viewer for the statefile
     "pytest",  # runs the packaged e2e scenario behind `mechababs test-cluster`
+    # The environment checks its own freshness with `uv sync --check`, so the venv
+    # has to contain the uv that checks it: resolved sys.prefix-relative like babs,
+    # never from PATH. Being IN the lock is what makes it self-contained even
+    # detached -- any venv built from that lock can validate itself, which is what a
+    # `datalad rerun` in a standalone-cloned study depends on.
+    "uv",
 ]
 
 # A label names a directory and is exported as an env var, so keep it boring.
@@ -407,12 +413,15 @@ def run_uv(*args, campaign, cluster_file):
     sys.exit(missing_wheel_message(failed[0], campaign, cluster_file))
 
 
-def build_env(campaign, label, cluster_file):
-    """Resolve the campaign's lock and build its venv from it; stamp the venv.
+def build_env(campaign, cluster_file):
+    """Resolve the campaign's lock and build its venv from it.
 
     ``uv lock`` pins every dependency (the git refs to commits) and ``uv sync``
     installs exactly that — so the environment and the committed lock agree by
-    construction, which is what the env-match guard later checks.
+    construction, which is what the env-match guard later re-checks with
+    ``uv sync --check``. Nothing is recorded about the venv beyond the venv itself:
+    the lock says what should be installed, the environment is what is, and uv
+    compares them on demand.
 
     ``cluster_file`` names the config a failure should send the user to edit; both uv
     steps can hit a source build (lock builds an sdist it cannot read metadata from,
@@ -421,11 +430,7 @@ def build_env(campaign, label, cluster_file):
     uv = dict(campaign=campaign, cluster_file=cluster_file)
     run_uv("lock", "--project", str(campaign), **uv)
     run_uv("sync", "--project", str(campaign), "--frozen", **uv)
-    venv = campaign / campaign_mod.VENV_DIRNAME
-    campaign_mod.write_env_stamp(
-        venv, label, (campaign / campaign_mod.UV_LOCK_FILENAME).read_text()
-    )
-    return venv
+    return campaign / campaign_mod.VENV_DIRNAME
 
 
 ENV_SH_TEMPLATE = """\
@@ -614,7 +619,7 @@ def init(
         )
 
         write_env_sh(campaign, label)
-        build_env(campaign, label, staged_cluster)
+        build_env(campaign, staged_cluster)
 
         save.message = (
             f"mechababs campaign init {label} "

@@ -35,11 +35,17 @@ history (that is how a mid-sweep version bump works), so "the venv I am running 
 and "the environment this campaign records" can drift apart in either direction.
 ``require_env_match`` refuses both directions rather than letting a run be recorded
 against tools that did not produce it.
+
+**mechababs keeps no environment metadata of its own.** That second check is
+delegated whole to ``uv sync --check``, which inspects the *installed* environment
+rather than any record of how it was built — so a hand-``pip install``ed package is
+caught, not only a moved lock. The only environment artifacts are the two standard
+ones, the lock (what should be installed) and the venv (what is), compared by the
+tool that owns them. ``uv`` is itself a campaign dependency, resolved from
+``sys.prefix`` like every other pinned binary, so the check needs nothing ambient.
 """
 
 import csv
-import hashlib
-import json
 import os
 import subprocess
 import sys
@@ -72,10 +78,6 @@ ENV_FILENAME = "env.sh"
 PYPROJECT_FILENAME = "pyproject.toml"
 UV_LOCK_FILENAME = "uv.lock"
 VENV_DIRNAME = ".venv"
-
-# Written into the venv (so it is gitignored and per-environment by construction)
-# at build time, and read by the env-match guard. See `write_env_stamp`.
-STAMP_FILENAME = ".mechababs-env.json"
 
 CAMPAIGN_ENV_VAR = "MECHABABS_CAMPAIGN"
 
@@ -430,35 +432,70 @@ def babs_bin():
     return str(Path(sys.prefix) / "bin" / "babs")
 
 
-def lock_digest(lock_text):
-    """The identity of a lock's *content* (what the env-match guard compares)."""
-    return hashlib.sha256(lock_text.encode()).hexdigest()
+def uv_bin():
+    """The pinned ``uv``: this environment's, never PATH's.
 
-
-def write_env_stamp(venv, label, lock_text):
-    """Record which lock the venv at ``venv`` was built from.
-
-    Lives inside the venv on purpose: the venv is gitignored and rebuilt, so the
-    stamp can never be committed, and it cannot outlive the environment it
-    describes. ``campaign update-env`` rewrites it when it rebuilds.
+    Same rule and same reason as :func:`babs_bin` — ``uv`` is a campaign dependency,
+    so a venv built from the campaign's lock contains the ``uv`` that checks it, and
+    the check is self-contained by construction rather than by whatever a login shell
+    happens to have. That matters most on the path with no operator watching: a
+    ``datalad rerun`` in a study cloned somewhere else, where an ambient uv may be
+    absent, older, or another project's.
     """
-    stamp = Path(venv) / STAMP_FILENAME
-    stamp.write_text(
-        json.dumps({"label": label, "lock_sha256": lock_digest(lock_text)}, indent=2)
-        + "\n"
+    return str(Path(sys.prefix) / "bin" / "uv")
+
+
+def venv_matches_lock(campaign):
+    """Ask uv whether the RUNNING environment is what ``campaign``'s lock describes.
+
+    Returns ``(ok, detail)``, where ``detail`` is uv's own output for the caller to
+    quote. The whole freshness check, delegated: mechababs records nothing about an
+    environment and compares nothing itself.
+
+    Three flags carry the design:
+
+    - ``--check`` reports rather than installs, so a guard never mutates the
+      environment it is vouching for;
+    - ``--frozen`` uses the lock as committed, so the check can neither re-resolve
+      nor rewrite it — a moved branch pin is not chased here (that is
+      ``update-env --upgrade``'s explicit act);
+    - ``--offline`` keeps it network-free, so the guard costs the same on a login
+      node, a compute node, or a laptop with no route out.
+
+    ``UV_PROJECT_ENVIRONMENT`` names the environment to check, deterministically.
+    Without it uv ignores the active interpreter (with a warning) and checks the
+    project's own ``.venv``, which for a member is not the venv doing the work; the
+    ``--active`` flag would read the ambient ``VIRTUAL_ENV`` instead, and a process
+    knows its own ``sys.prefix`` more surely than it knows what activated it.
+    """
+    proc = subprocess.run(
+        [
+            uv_bin(),
+            "sync",
+            "--check",
+            "--frozen",
+            "--offline",
+            "--project",
+            str(campaign),
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "UV_PROJECT_ENVIRONMENT": sys.prefix},
     )
-    return stamp
+    detail = (proc.stderr or proc.stdout or "").strip()
+    return proc.returncode == 0, detail
 
 
-def read_env_stamp(venv):
-    """The venv's stamp, or None if it has none (not built by mechababs)."""
-    stamp = Path(venv) / STAMP_FILENAME
-    if not stamp.is_file():
-        return None
-    try:
-        return json.loads(stamp.read_text())
-    except json.JSONDecodeError:
-        return None
+def _quoted(detail):
+    """uv's own output, indented under our explanation — or nothing if it said nothing.
+
+    Kept as a tail rather than the message: uv answers "how does this environment
+    differ from the lock", which is the evidence, while what a user needs first is
+    which of their two environments is wrong and which command fixes it.
+    """
+    if not detail:
+        return ""
+    return "\n\nuv:\n" + "\n".join(f"  {line}" for line in detail.splitlines())
 
 
 def selected_label():
@@ -480,11 +517,14 @@ def selected_label():
 def require_env_match(root, label):
     """Refuse unless this process is running the environment the campaign records.
 
-    Two failures, both of which would attribute a run to tools that did not produce
-    it: running from some *other* python (an ambient install, another campaign's
-    venv), and running from this campaign's venv after the committed lock moved
-    (or before a bumped lock was built). The fix for the second is
-    ``mechababs campaign update-env``, which the message names.
+    Two checks, both refusing something that would attribute a run to tools that did
+    not produce it. **Location**: this process is some *other* python (an ambient
+    install, another campaign's venv) — the half only mechababs can answer, because
+    only mechababs knows which campaign you meant. **Freshness**: the venv no longer
+    agrees with the committed lock, delegated to ``uv sync --check`` against the real
+    installed environment, so a bumped-but-unbuilt lock and a hand-``pip install``ed
+    package fail alike. The fix for the second is ``mechababs campaign update-env``,
+    which the message names.
 
     **The environment is resolved at the level the campaign is operated from, not
     at ``root``.** For a study-configured campaign the two are the same directory.
@@ -500,8 +540,10 @@ def require_env_match(root, label):
         sys.exit(f"no campaign {label!r} here (looked for {config_path(root, label)})")
 
     # Where the environment lives. The member's own copy of the lock is a record of
-    # the epoch it was given; the lock that *built* the running venv is the one the
-    # stamp below has to match, and it sits at the operated level.
+    # the epoch it was given; the lock the running venv must answer to here is the
+    # CANONICAL one, and it sits at the operated level. (The member's copy is checked
+    # too, but by the inner verbs — `require_study_lock_match` — which is what makes
+    # a member whose copy is behind refuse at dispatch.)
     operated_at = operated_level(root, label)
 
     venv = venv_path(operated_at, label).resolve()
@@ -518,18 +560,16 @@ def require_env_match(root, label):
     lock = uv_lock_path(operated_at, label)
     if not lock.is_file():
         sys.exit(f"campaign {label!r} has no {UV_LOCK_FILENAME} ({lock})")
-    committed = lock_digest(lock.read_text())
-    stamp = read_env_stamp(venv)
-    if stamp is None or stamp.get("lock_sha256") != committed:
+    ok, detail = venv_matches_lock(campaign_dir(operated_at, label))
+    if not ok:
         sys.exit(
             f"the venv of campaign {label!r} does not match its committed "
             f"{UV_LOCK_FILENAME}\n"
-            "The lock and the environment have drifted — either the lock was "
-            "bumped and the venv not rebuilt, or the venv was built from a lock "
-            "that is no longer committed.\n"
-            f"Rebuild it:  mechababs campaign update-env\n"
+            "The lock and the environment have drifted — the lock was bumped and "
+            "the venv not rebuilt, or the venv was changed by hand.\n"
+            f"Converge it:  mechababs campaign update-env\n"
             f"  lock:  {lock}\n"
-            f"  venv:  {venv}"
+            f"  venv:  {venv}" + _quoted(detail)
         )
     return campaign
 
@@ -550,28 +590,18 @@ class Selected(NamedTuple):
     operated_at: Path
 
 
-def require_selected_campaign(path="."):
-    """The preconditions every *operating* verb shares, in one call.
+def require_campaign_level(path="."):
+    """Where you are standing and which campaign — everything but the env guard.
 
-    At a study root (``require_study_root``), with a campaign selected
-    (``selected_label``), operated from the level it was configured at, and
-    running the environment that campaign records (``require_env_match``).
-    Returns a ``Selected``.
+    Returns ``(root, label)``. The split exists for exactly one command:
+    ``campaign update-env`` must run when the venv is absent (a fresh clone) or
+    stale (the guard just refused), which is the moment the guard cannot be
+    satisfied — so it takes the configured-level and selection context and skips the
+    environment check, the way ``campaign init`` does.
 
-    The level check comes **before** the env-match guard on purpose. A member of a
-    super-campaign has no venv of its own — the operational environment lives at
-    the configured level — so the env guard reached first would fail with "source
-    the campaign's env.sh" naming a file that will never exist there. The honest
-    error is that this campaign is operated from its superstudy.
-
-    There is no escape hatch. A member is not operated from, full stop: the one
-    case an override would have served — advancing a member detached from its
-    superstudy — cannot work today, because the environment guard requires a venv
-    stamped by ``campaign init`` and nothing can produce one at a member. An
-    override that always refuses a step later is worse than no override.
-
-    ``campaign init`` is the one command that does not take this: it runs before
-    the environment exists — it is what creates it.
+    It is **not** a relaxation of the configured-level rule: a member still refuses
+    here, so ``update-env`` is an outer command like the rest and reaches a member
+    only through ``--study``, from the superstudy.
     """
     root = study_mod.require_study_root(path)
     label = selected_label()
@@ -589,6 +619,34 @@ def require_selected_campaign(path="."):
             f"A campaign is operated only from the level it was configured at, so "
             f"this member carries no environment of its own."
         )
+    return root, label
+
+
+def require_selected_campaign(path="."):
+    """The preconditions every *operating* verb shares, in one call.
+
+    At a study root (``require_study_root``), with a campaign selected
+    (``selected_label``), operated from the level it was configured at, and
+    running the environment that campaign records (``require_env_match``).
+    Returns a ``Selected``.
+
+    The level check comes **before** the env-match guard on purpose. A member of a
+    super-campaign has no venv of its own — the operational environment lives at
+    the configured level — so the env guard reached first would fail with "source
+    the campaign's env.sh" naming a file that will never exist there. The honest
+    error is that this campaign is operated from its superstudy.
+
+    There is no escape hatch. A member is not operated from, full stop: a member
+    detached from its superstudy supports **reproduction** (``datalad rerun`` of its
+    recorded commands, which carry their own environment check) and not advancing,
+    so an override would only let a study accumulate cells its superstudy's catalog
+    never hears about.
+
+    ``campaign init`` is the one command that does not take this: it runs before
+    the environment exists — it is what creates it. ``campaign update-env`` takes
+    the level half alone (``require_campaign_level``), for the same reason.
+    """
+    root, label = require_campaign_level(path)
     return Selected(
         Path(root), label, require_env_match(root, label), operated_level(root, label)
     )
