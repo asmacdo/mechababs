@@ -100,3 +100,27 @@ def test_the_refusal_names_what_it_refused(super_and_sub):
     (root / "stray.txt").write_text("x\n")
     with pytest.raises(RuntimeError, match="dispatching scaffold"):
         utils.require_clean_shallow(root, what="dispatching scaffold")
+
+
+def test_ignore_excludes_a_moved_pointer_that_someone_else_checks(super_and_sub):
+    """At a superstudy each member's pointer is checked separately, right before that
+    member is advanced — so the level's own check ignores them, and one member's
+    drift stops that member instead of the whole fan-out."""
+    root, sub = super_and_sub
+    (sub / "seed").write_text("a real commit in the submodule\n")
+    _git(sub, "commit", "-qam", "advance the submodule")
+
+    assert utils.shallow_status(root)  # unignored, it is dirt
+    utils.require_clean_shallow(root, ignore=["sourcedata/raw"])  # ignored, it passes
+
+
+def test_ignore_does_not_blind_the_check_to_the_level_s_own_tree(super_and_sub):
+    """Ignoring the members must not amount to ignoring everything: what is left is
+    exactly the dirt only this level can see."""
+    root, sub = super_and_sub
+    (sub / "seed").write_text("a real commit in the submodule\n")
+    _git(sub, "commit", "-qam", "advance the submodule")
+    (root / "stray.txt").write_text("x\n")
+
+    with pytest.raises(RuntimeError, match="stray.txt"):
+        utils.require_clean_shallow(root, ignore=["sourcedata/raw"])

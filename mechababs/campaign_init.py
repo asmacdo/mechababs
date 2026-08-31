@@ -39,7 +39,10 @@ from pathlib import Path
 
 import yaml
 
+from datalad.api import Dataset
+
 from mechababs import campaign as campaign_mod
+from mechababs import study as study_mod
 from mechababs.utils import campaign_save_scope
 
 # Runtime tools a campaign needs beyond mechababs + babs themselves. A literal rather
@@ -469,6 +472,33 @@ def write_env_sh(campaign, label):
 # --------------------------------------------------------------------------
 
 
+def create_superstudy(path):
+    """Create the superstudy dataset at ``path``, or adopt the one already there.
+
+    The one dataset mechababs creates. A *study* is never created (``study.py``):
+    it holds real acquired data, so authoring one is another tool's job and
+    inventing an empty one would only produce a plausible-looking place to put
+    data that is not there. A superstudy holds no data of its own — it is the
+    coordinating container for member studies — so there is nothing to fabricate,
+    and requiring the user to `datalad create` it by hand first would be ceremony
+    with no decision in it.
+
+    Adoption is not a separate mode: a name that is already a dataset is used as
+    it stands, campaigns and all.
+    """
+    path = Path(path).resolve()
+    if study_mod.is_study_root(path):
+        return path
+    if path.exists() and any(path.iterdir()):
+        sys.exit(
+            f"{path} exists and is not a datalad dataset.\n"
+            "A superstudy is created empty or adopted as an existing dataset; "
+            "mechababs will not convert a directory that already holds files."
+        )
+    Dataset(path).create(cfg_proc="text2git")
+    return path
+
+
 def init(
     study,
     label,
@@ -478,11 +508,18 @@ def init(
     limit=None,
     babs_spec=None,
     mechababs_spec=None,
+    superstudy=False,
 ):
     """Create campaign ``label`` in ``study``. Returns the campaign directory.
 
     Writes only under ``.mechababs/campaigns/<label>/`` — mechababs' change to a
     study is additive, and never touches what upstream authored.
+
+    ``superstudy`` selects the level, and the only thing it changes is which
+    bookkeeping file the campaign dir gets: a membership catalog at a superstudy,
+    a statefile at a study. Everything else — the config bundle, the pinned
+    environment, the lock — is identical, which is what makes the level a
+    property of one campaign rather than of the tool.
     """
     if not LABEL_RE.match(label):
         sys.exit(
@@ -535,11 +572,19 @@ def init(
             yaml.safe_dump(config, sort_keys=False)
         )
 
-        # Header only: which source datasets a campaign acts on is an explicit
-        # selection, made by `add-dataset`, not implied by init.
-        (campaign / campaign_mod.STATE_FILENAME).write_text(
-            campaign_mod.initial_header()
-        )
+        # Header only, either way: which source datasets a campaign acts on is an
+        # explicit selection, made by `add-dataset`, not implied by init. At a
+        # superstudy no members are selected yet, so there is nothing to fan out to
+        # -- a member's own campaign footprint is written when add-dataset first
+        # selects into it.
+        if superstudy:
+            (campaign / campaign_mod.MEMBERS_FILENAME).write_text(
+                campaign_mod.initial_members_header()
+            )
+        else:
+            (campaign / campaign_mod.STATE_FILENAME).write_text(
+                campaign_mod.initial_header()
+            )
 
         if mechababs_spec:
             mechababs_req, mechababs_source = (

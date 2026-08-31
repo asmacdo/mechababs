@@ -73,8 +73,18 @@ class PendingSave:
 
 
 @contextmanager
-def campaign_save_scope(root, path):
-    """Clean in, one commit out: whatever the block writes at ``path``, committed.
+def campaign_save_scope(root, paths):
+    """Clean in, one commit out: whatever the block writes at ``paths``, committed.
+
+    ``paths`` is one path or several, and the caller **declares everything it
+    changed** — the same declare-your-outputs contract as the run wrapper. Nothing
+    outside the declaration is evaluated, in either the check or the save.
+
+    A declared path that is a subdataset is **gitlink-registered, never recursed**
+    (``eval_submodule_state="commit"``): the super's record of a member is which
+    commit it points at, and descending into the member's worktree would both cost
+    a walk and pull that member's own uncommitted work into a commit at this level.
+    Stray content inside a subdataset is the once-per-tick shallow check's to catch.
 
     **Clean in.** ``path`` must be clean *before* the block writes, so the commit is
     attributable — everything in it is this block's work, and no pre-existing edit is
@@ -96,10 +106,34 @@ def campaign_save_scope(root, path):
     ``datalad_save_scope`` below, whose clean-in is whole-dataset and whose save is
     ``since=``-based; here the scope is one directory, so both can be path-scoped.)
     """
+    paths = require_clean_paths(root, paths)
+    pending = PendingSave()
+    yield pending
+    if not pending.message:
+        raise RuntimeError(f"campaign_save_scope({paths}) exited with no message set")
+    save_paths(root, paths, pending.message)
+
+
+def _declared(paths):
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    return [str(p) for p in paths]
+
+
+def require_clean_paths(root, paths):
+    """Exit unless every declared path is clean. Returns them normalised.
+
+    The clean-in half, split out because not every writer wants it wrapped *around*
+    its work. ``iterate`` at a superstudy checks the super once at the top of the
+    tick — before any member is touched — and then records each member as it
+    advances, so its check and its saves are separated by the actions they bracket.
+    """
     ds = Dataset(str(root))
+    paths = _declared(paths)
     dirty = ds.status(
-        path=str(path),
+        path=paths,
         untracked="all",
+        eval_subdataset_state="commit",
         result_renderer="disabled",
         on_failure="ignore",
         return_type="list",
@@ -107,19 +141,25 @@ def campaign_save_scope(root, path):
     dirty = [r for r in dirty if r.get("state") != "clean"]
     if dirty:
         sys.exit(
-            f"refusing to write into {path}: it is not clean, and the commit "
-            f"would absorb changes mechababs did not make.\n"
+            f"refusing to write into {', '.join(paths)}: it is not clean, and the "
+            f"commit would absorb changes mechababs did not make.\n"
             + "\n".join(f"  {r.get('state')}: {r.get('path')}" for r in dirty)
         )
+    return paths
 
-    pending = PendingSave()
-    yield pending
-    if not pending.message:
-        raise RuntimeError(f"campaign_save_scope({path}) exited with no message set")
 
+def save_paths(root, paths, message):
+    """Commit exactly the declared paths at ``root``. No clean-in check of its own.
+
+    The save half. Its caller has already established that what it commits is its
+    own work — either by a clean-in wrapped around the block
+    (``campaign_save_scope``) or by one taken before the actions being recorded.
+    """
+    ds = Dataset(str(root))
+    paths = _declared(paths)
     results = ds.save(
-        path=str(path),
-        message=pending.message,
+        path=paths,
+        message=message,
         result_renderer="disabled",
         on_failure="ignore",
         return_type="list",
@@ -127,7 +167,7 @@ def campaign_save_scope(root, path):
     failed = [r for r in results if r.get("status") not in ("ok", "notneeded")]
     if failed:
         sys.exit(
-            f"failed to commit {path} into {root}\n"
+            f"failed to commit {', '.join(paths)} into {root}\n"
             + "\n".join(
                 f"  {r.get('status')}: {r.get('path')} ({describe_result(r)})"
                 for r in failed
@@ -135,7 +175,7 @@ def campaign_save_scope(root, path):
         )
 
 
-def shallow_status(root):
+def shallow_status(root, *paths):
     """Porcelain status of ``root`` WITHOUT descending into submodule worktrees.
 
     ``--ignore-submodules=dirty`` is the whole point: git still compares each
@@ -143,31 +183,74 @@ def shallow_status(root):
     per submodule) but does not walk its working tree. That walk is what makes a
     status over a study with real source data expensive, and it is never what this
     check is looking for.
+
+    ``paths`` narrows it to a pathspec, which is what keeps the check flat at a
+    superstudy. Unscoped, the cost is linear in members — git stats every member
+    directory whether or not their gitlinks are compared (measured: 23 ms over 200
+    members, 1.7 ms over one; ``--ignore-submodules=all`` saves nothing, so the
+    cost is the directory scan, not the comparison). Scoped to a single member it
+    is 2.7 ms no matter how large the superstudy is.
     """
-    out = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain", "--ignore-submodules=dirty"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+    cmd = ["git", "-C", str(root), "status", "--porcelain", "--ignore-submodules=dirty"]
+    if paths:
+        cmd += ["--", *(str(p) for p in paths)]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
     return [line for line in out.splitlines() if line.strip()]
 
 
-def require_clean_shallow(root, *, what="this operation"):
+def require_clean_gitlink(root, member):
+    """Refuse unless ``root``'s recorded pointer to ``member`` is up to date.
+
+    The superstudy's whole stake in a member it is about to advance. The member's
+    own tree is not this check's business — ``tick`` checks it there, and again
+    before each transition it dispatches. What only the super can see is whether its
+    gitlink still matches the member's HEAD, and a stale one matters because the
+    follow-up save would then commit somebody else's advance as ours.
+
+    This is the **only** check of a member's gitlink: the super's own once-per-tick
+    check ignores the members precisely so each is asked about once, here, right
+    before it is touched. It costs the same in a superstudy of a thousand as in one
+    of two.
+
+    A stale gitlink **stops the tick** rather than skipping the member. A member
+    moving underneath us is a bug or an intervention, not a condition to reconcile
+    past — unlike a failed cell, which is a known outcome the reconciler notes and
+    works around.
+    """
+    rel = Path(member).relative_to(root) if Path(member).is_absolute() else Path(member)
+    dirty = shallow_status(root, rel)
+    if dirty:
+        sys.exit(
+            f"{rel} has moved since {root} last recorded it, and mechababs did "
+            f"not move it.\n" + "\n".join(f"  {line}" for line in dirty) + "\n"
+            "Commit or reset it at the superstudy, then run again — otherwise "
+            "this tick would record that advance as its own."
+        )
+
+
+def require_clean_shallow(root, *, what="this operation", ignore=()):
     """Refuse unless ``root`` is clean at its own level. Cheap enough for a tick.
 
-    The backstop for `datalad run --explicit`. Explicit mode captures ONLY the
-    declared outputs, which is what keeps a run from deep-walking `sourcedata/raw`
-    — but it also means a stray side-write next to them is silently left behind
-    rather than swept into the commit. So the tree is checked once, loudly, before
-    dispatching: anything already uncommitted here did not come from mechababs, and
-    a run that starts on top of it produces a record that does not describe the
-    tree it ran in.
+    The backstop for `datalad run --explicit`, and it is the *only* one: explicit
+    mode does not check the dataset at all (verified — plain `datalad run` refuses a
+    dirty dataset, `--explicit` runs and commits just its declared outputs, leaving
+    the stray file behind). That is the trade explicit mode makes to avoid
+    deep-walking `sourcedata/raw`, so a stray side-write is silently left rather than
+    swept into the commit. Hence this, loudly, before dispatching: anything already
+    uncommitted here did not come from mechababs, and a run recorded on top of it
+    would not describe the tree it ran in.
+
+    ``ignore`` names paths whose state is somebody else's to check — at a superstudy,
+    the members, each checked by ``require_clean_gitlink`` immediately before it is
+    advanced. Excluded by git pathspec rather than by filtering the output, so a path
+    is never matched by string-comparing against git's own quoting. What is left is
+    the level's *own* tree: its campaign dir, its catalog, anything stray at its root.
 
     Deliberately shallow (see ``shallow_status``): a dirty submodule *worktree* is
     not this check's business, a moved submodule *pointer* is.
     """
-    dirty = shallow_status(root)
+    paths = [".", *(f":(exclude){p}" for p in ignore)] if ignore else ()
+    dirty = shallow_status(root, *paths)
     if dirty:
         raise RuntimeError(
             f"{root} is not clean — refusing {what}.\n"

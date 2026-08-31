@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from conftest import stamp_dataset_id
 from mechababs import campaign as campaign_mod
 from mechababs import scaffold
 
@@ -282,6 +283,30 @@ def test_the_composed_config_reaches_babs_and_carries_all_three_axes(study, babs
     )  # source axis
     assert str(campaign_mod.venv_path(study, LABEL)) in config["script_preamble"]
     assert "mechababs" not in config
+
+
+def test_a_members_job_scripts_name_the_superstudys_venv(study, babs_calls):
+    """The venv path is baked into every job script, so it has to name the level the
+    campaign is operated from.
+
+    A member of a super-campaign is given no environment of its own, so a
+    member-level path leaves each job activating a file that does not exist: on
+    Unity every task of a 16-job array died at its first command with exit 127.
+    No test caught it because the one cluster config the e2e runs
+    (`examples/clusters/test-docker.yaml`) hardcodes its PATH instead of using the
+    placeholder, so the substitution is exercised nowhere else.
+    """
+    config = campaign_mod.config_path(study, LABEL)
+    config.write_text(
+        config.read_text()
+        + f"{campaign_mod.SUPERSTUDY_KEY}: {stamp_dataset_id(study.parent)}\n"
+    )
+
+    scaffold.scaffold(study, LABEL, SOURCEDATA, ANCHOR)
+
+    preamble = babs_calls[0]["config"]["script_preamble"]
+    assert str(campaign_mod.venv_path(study.parent, LABEL)) in preamble
+    assert str(campaign_mod.venv_path(study, LABEL)) not in preamble
 
 
 def test_an_already_scaffolded_cell_is_refused(study, babs_calls):

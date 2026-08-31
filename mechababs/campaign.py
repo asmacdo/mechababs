@@ -41,8 +41,12 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
+
+import yaml
 
 from mechababs import study as study_mod
 
@@ -56,6 +60,11 @@ STATE_FILENAME = "sourcedata+derivatives.tsv"
 # lock left in the tree would otherwise dirty the study every `iterate`. Named for
 # the file lock it is, NOT `UV_LOCK_FILENAME`: that is uv.lock, three lines down.
 FLOCK_FILENAME = "." + STATE_FILENAME + ".lock"
+# The superstudy's counterpart to the statefile, and the whole of the asymmetry:
+# a study's campaign dir carries per-cell STATE, a superstudy's carries MEMBERSHIP.
+# Per-cell detail shards to the members and the rollup is computed on demand, so
+# there is no master copy here to drift out of agreement with what it summarizes.
+MEMBERS_FILENAME = "studies+sourcedata.tsv"
 APPS_DIRNAME = "bids-app-configs"
 CLUSTERS_DIRNAME = "clusters"
 INCLUSIONS_DIRNAME = "inclusions"
@@ -69,6 +78,11 @@ VENV_DIRNAME = ".venv"
 STAMP_FILENAME = ".mechababs-env.json"
 
 CAMPAIGN_ENV_VAR = "MECHABABS_CAMPAIGN"
+
+# Where datalad commits a dataset's identity, and the key it uses. Read directly
+# (see `dataset_id`) so the answer does not depend on the dataset being initialized.
+MECHABABS_DATALAD_CONFIG = Path(".datalad") / "config"
+DATALAD_ID_KEY = "datalad.dataset.id"
 
 # The statefile is TALL: one row per (source dataset x app config) cell.
 #   identity  — inputs, written at add-dataset, never overwritten
@@ -86,6 +100,24 @@ IDENTITY_COLUMNS = [
 TOPOLOGY_COLUMNS = ["depends_on"]
 DERIVED_COLUMNS = ["babs", "merged"]
 STATE_COLUMNS = IDENTITY_COLUMNS + TOPOLOGY_COLUMNS + DERIVED_COLUMNS
+
+# The superstudy's membership catalog: which (study, source dataset) pairs this
+# campaign runs on, plus the ONE piece of state committed at the super. `lifecycle`
+# is deliberately coarse (pending/active/complete) and written only at material
+# transitions -- a member starts, a member's last cell merges -- never per tick. It
+# exists for readers who have git but not the cluster; per-cell truth stays in the
+# member shards, so nothing here can disagree with them at a finer grain than it
+# claims to describe.
+MEMBER_COLUMNS = ["study", "source_dataset", "lifecycle"]
+LIFECYCLE_PENDING = "pending"
+
+# The member's half of the superstudy relationship, written into its campaign.yaml
+# when its footprint is created. Its value is the super's DATALAD-ID: an identity,
+# not a location. A relative path re-resolves wherever the member currently sits, so
+# it says "one level up" and adopts whatever is there -- which made a member cloned
+# elsewhere both claim the wrong owner and resolve its environment to a stranger.
+# `superstudy_of` turns the id back into a place when the super is actually present.
+SUPERSTUDY_KEY = "superstudy"
 
 
 def campaigns_dir(root):
@@ -108,6 +140,141 @@ def state_path(study, label):
     superstudy computes its rollup from them.
     """
     return campaign_dir(study, label) / STATE_FILENAME
+
+
+def members_path(superstudy, label):
+    """``superstudy``, not ``root``: a membership catalog exists only at a super.
+
+    The mirror image of :func:`state_path`. A campaign dir has one or the other,
+    never both, and which one it has *is* the record of the level it was
+    configured at.
+    """
+    return campaign_dir(superstudy, label) / MEMBERS_FILENAME
+
+
+def initial_members_header():
+    """The header line of a fresh membership catalog — no rows; add-dataset writes those."""
+    return "\t".join(MEMBER_COLUMNS) + "\n"
+
+
+def is_superstudy_campaign(root, label):
+    """True if ``label`` at ``root`` is configured at superstudy level.
+
+    Read from the layout rather than a config key: the campaign dir carries a
+    membership catalog or a statefile, and that file's presence is the fact. A
+    marker that could contradict the layout would just be a second source of
+    truth for the same question.
+    """
+    return members_path(root, label).is_file()
+
+
+def read_members(superstudy, label):
+    """The catalog's rows, in file order."""
+    with open(members_path(superstudy, label), newline="") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
+def write_members(superstudy, label, rows):
+    """Rewrite the catalog with ``MEMBER_COLUMNS`` and ``rows``, in order."""
+    with open(members_path(superstudy, label), "w", newline="") as f:
+        w = csv.DictWriter(
+            f, fieldnames=MEMBER_COLUMNS, delimiter="\t", lineterminator="\n"
+        )
+        w.writeheader()
+        for row in rows:
+            w.writerow({c: row.get(c, "") for c in MEMBER_COLUMNS})
+
+
+def dataset_id(path):
+    """``path``'s datalad-id, or ``None`` if it has none.
+
+    The id is stable across every commit and survives both cloning and relocating,
+    which is what makes it an identity rather than a location.
+
+    Read out of ``.datalad/config`` with git's own parser rather than through
+    ``Dataset(path).id``, which needs a real git repository: the id is committed
+    configuration, so reading the file answers the question directly and keeps the
+    check honest where a dataset is present but not initialized.
+    """
+    config = Path(path) / MECHABABS_DATALAD_CONFIG
+    if not config.is_file():
+        return None
+    out = subprocess.run(
+        ["git", "config", "--file", str(config), "--get", DATALAD_ID_KEY],
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.strip() or None
+
+
+def recorded_superstudy_id(study, label):
+    """The datalad-id of the super this member's campaign belongs to, or ``None``.
+
+    **Who owns it**, which is a different question from **where that owner is**
+    (:func:`superstudy_of`). Ownership is answerable from the member alone, so it
+    stays answerable when the owner is nowhere nearby — a member cloned out of one
+    superstudy and into another still says whose campaign it carries, even though
+    the original is not on this filesystem at all.
+    """
+    path = config_path(study, label)
+    if not path.is_file():
+        return None
+    config = yaml.safe_load(path.read_text()) or {}
+    return config.get(SUPERSTUDY_KEY) or None
+
+
+def superstudy_of(study, label):
+    """The super this member's campaign belongs to, or ``None`` if it is its own.
+
+    The marker records the super's **datalad-id**, and this resolves it to a place
+    by walking up from the member until a dataset carries that id.
+
+    An id and not a path, because a path is relative and re-resolves wherever the
+    member currently sits — so a member cloned somewhere else keeps pointing at
+    "one level up" and silently adopts whatever is there. Two things went wrong
+    that way: a member cloned into a *different* superstudy passed an ownership
+    check it should have failed, and a member cloned **standalone** resolved its
+    environment to an arbitrary parent directory, which broke re-executing its own
+    recorded commands — the property `write_member_footprint` copies the lock down
+    to provide.
+
+    The walk is not the parent-scanning the design forbids. That would be asking
+    "is there something above me that might claim this", letting an unrelated
+    dataset higher up change what a study does. Here the member has already
+    asserted *which* dataset its campaign belongs to; the walk only finds where
+    that dataset currently lives, and any other ancestor is ignored.
+
+    **Unresolvable means detached**, deliberately: a member that cannot find the
+    super it names is on its own, whatever the reason, and operating on its own
+    contents is what it is equipped for. The failure that follows is then an honest
+    "no environment here" rather than an environment resolved at the wrong level.
+    """
+    recorded = recorded_superstudy_id(study, label)
+    if not recorded:
+        return None
+    for candidate in Path(study).resolve().parents:
+        if dataset_id(candidate) == recorded:
+            return candidate
+    return None
+
+
+def operated_level(study, label):
+    """The level ``study``'s campaign is operated from — its super, or itself.
+
+    The one definition of a distinction the whole superstudy layer turns on. A
+    campaign has two levels that coincide for a study and diverge for a member: the
+    study is where the cells live and the work runs, while the level it was
+    *configured* at is where the environment lives (venv, ``env.sh``, the lock that
+    built it) and where the single writer is enforced.
+
+    Ask this whenever the answer is about the campaign's environment or its
+    serialization. Ask ``study`` itself whenever the answer is about the work — the
+    shard, the derivatives, the member's own recorded lock epoch. Getting those two
+    the wrong way round is what produced both of the blockers this layer's first
+    real run hit, and neither was reachable from a unit test: a test of a guard is
+    written against the same assumption the guard makes.
+    """
+    return superstudy_of(study, label) or Path(study)
 
 
 def require_statefile(study, label):
@@ -318,12 +485,26 @@ def require_env_match(root, label):
     venv), and running from this campaign's venv after the committed lock moved
     (or before a bumped lock was built). The fix for the second is
     ``mechababs campaign update-env``, which the message names.
+
+    **The environment is resolved at the level the campaign is operated from, not
+    at ``root``.** For a study-configured campaign the two are the same directory.
+    For a member of a super-campaign they are not: the member holds the cells and
+    is where the work runs, but by construction it has no venv of its own
+    (``write_member_footprint`` gives it none — the operational environment lives
+    at the configured level). Resolving against ``root`` there would demand a venv
+    the design guarantees is absent, which is exactly what the fan-out hits when it
+    dispatches an inner verb with the member as cwd.
     """
     campaign = campaign_dir(root, label)
     if not config_path(root, label).is_file():
         sys.exit(f"no campaign {label!r} here (looked for {config_path(root, label)})")
 
-    venv = venv_path(root, label).resolve()
+    # Where the environment lives. The member's own copy of the lock is a record of
+    # the epoch it was given; the lock that *built* the running venv is the one the
+    # stamp below has to match, and it sits at the operated level.
+    operated_at = operated_level(root, label)
+
+    venv = venv_path(operated_at, label).resolve()
     prefix = Path(sys.prefix).resolve()
     if prefix != venv:
         sys.exit(
@@ -331,10 +512,10 @@ def require_env_match(root, label):
             f"  expected: {venv}\n"
             f"  running:  {prefix}\n"
             f"Source the campaign's env.sh:\n"
-            f"  source {env_path(root, label)}"
+            f"  source {env_path(operated_at, label)}"
         )
 
-    lock = uv_lock_path(root, label)
+    lock = uv_lock_path(operated_at, label)
     if not lock.is_file():
         sys.exit(f"campaign {label!r} has no {UV_LOCK_FILENAME} ({lock})")
     committed = lock_digest(lock.read_text())
@@ -353,16 +534,52 @@ def require_env_match(root, label):
     return campaign
 
 
-def require_selected_campaign(path="."):
-    """The three preconditions every *operating* verb shares, in one call.
+class Selected(NamedTuple):
+    """What an operating verb has established about where it is standing.
+
+    ``root`` is where the verb stands and the work happens; ``operated_at`` is the
+    level the campaign was configured at, which is the same directory unless
+    ``root`` is a member of a super-campaign. Both are carried because both are
+    needed and deriving one from the other at each site is what let the level go
+    wrong twice — see ``operated_level``.
+    """
+
+    root: Path
+    label: str
+    campaign_dir: Path
+    operated_at: Path
+
+
+def require_selected_campaign(path=".", *, allow_member=False):
+    """The preconditions every *operating* verb shares, in one call.
 
     At a study root (``require_study_root``), with a campaign selected
-    (``selected_label``), running the environment that campaign records
-    (``require_env_match``). Returns ``(root, label, campaign_dir)``.
+    (``selected_label``), operated from the level it was configured at, and
+    running the environment that campaign records (``require_env_match``).
+    Returns a ``Selected``.
+
+    The level check comes **before** the env-match guard on purpose. A member of a
+    super-campaign has no venv of its own — the operational environment lives at
+    the configured level — so the env guard reached first would fail with "source
+    the campaign's env.sh" naming a file that will never exist there. The honest
+    error is that this campaign is operated from its superstudy.
+
+    ``allow_member`` is the escape for a verb that offers one (``iterate --force``,
+    advancing a detached member): the user then owns the reconciliation.
 
     ``campaign init`` is the one command that does not take this: it runs before
     the environment exists — it is what creates it.
     """
     root = study_mod.require_study_root(path)
     label = selected_label()
-    return root, label, require_env_match(root, label)
+    above = superstudy_of(root, label)
+    if above and not allow_member:
+        sys.exit(
+            f"campaign {label!r} is operated from its superstudy, not from here.\n"
+            f"  superstudy: {above}\n"
+            f"A campaign is operated only from the level it was configured at, so "
+            f"this member carries no environment of its own."
+        )
+    return Selected(
+        Path(root), label, require_env_match(root, label), operated_level(root, label)
+    )

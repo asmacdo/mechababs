@@ -12,3 +12,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
+def stamp_dataset_id(path, dataset_id="11111111-2222-3333-4444-555555555555"):
+    """Give ``path`` a datalad-id without building a real datalad dataset.
+
+    The superstudy marker records the super's id, so a fixture super needs one.
+    Writing the committed config directly keeps the unit suite as plain directories
+    — `datalad create` per fixture would dominate its runtime — and is the same file
+    `campaign.dataset_id` reads in production.
+    """
+    config = Path(path) / ".datalad" / "config"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(f'[datalad "dataset"]\n\tid = {dataset_id}\n')
+    return dataset_id

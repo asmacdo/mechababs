@@ -669,3 +669,160 @@ def test_uv_really_locks_and_builds_the_campaign_venv(study, configs, monkeypatc
     # ... so the env-match guard passes against it
     monkeypatch.setattr("sys.prefix", str(venv))
     campaign_mod.require_env_match(study, "nprep")
+
+
+# --- the superstudy level ---------------------------------------------------
+#
+# The level changes exactly one thing about a campaign: which bookkeeping file it
+# carries. Everything else — configs, pins, lock, env.sh — is identical, so these
+# tests pin the asymmetry and its absence rather than re-checking the layout.
+
+
+def test_a_superstudy_campaign_carries_membership_and_no_statefile(
+    study, configs, stub_env
+):
+    campaign = init(study, configs, superstudy=True)
+
+    assert (campaign / campaign_mod.MEMBERS_FILENAME).is_file()
+    assert not (campaign / campaign_mod.STATE_FILENAME).exists()
+    assert campaign_mod.is_superstudy_campaign(study, "nprep")
+
+
+def test_a_study_campaign_carries_a_statefile_and_no_membership(
+    study, configs, stub_env
+):
+    campaign = init(study, configs)
+
+    assert (campaign / campaign_mod.STATE_FILENAME).is_file()
+    assert not (campaign / campaign_mod.MEMBERS_FILENAME).exists()
+    assert not campaign_mod.is_superstudy_campaign(study, "nprep")
+
+
+def test_the_membership_catalog_is_header_only(study, configs, stub_env):
+    # no members are selected at init: a member's footprint is written when
+    # add-dataset first selects into it, so there is nothing to fan out to yet
+    campaign = init(study, configs, superstudy=True)
+    assert (
+        campaign / campaign_mod.MEMBERS_FILENAME
+    ).read_text() == campaign_mod.initial_members_header()
+
+
+def test_the_level_does_not_change_anything_else(study, configs, stub_env, tmp_path):
+    other = tmp_path / "study-ds000002"
+    (other / ".datalad").mkdir(parents=True)
+
+    at_study = init(study, configs, "MRIQC-24.0.2")
+    at_super = init(other, configs, "MRIQC-24.0.2", superstudy=True)
+
+    same = (
+        campaign_mod.CONFIG_FILENAME,
+        campaign_mod.PYPROJECT_FILENAME,
+        campaign_mod.ENV_FILENAME,
+    )
+    for name in same:
+        assert (at_study / name).read_text() == (at_super / name).read_text(), name
+
+
+# --- creating or adopting the superstudy dataset ----------------------------
+
+
+def test_an_absent_superstudy_is_created_as_a_dataset(tmp_path):
+    path = campaign_init.create_superstudy(tmp_path / "my-super")
+
+    assert path == (tmp_path / "my-super").resolve()
+    assert (path / ".datalad").is_dir()
+
+
+def test_an_existing_superstudy_is_adopted_untouched(tmp_path):
+    # a superstudy that has run campaigns before gains another by the same
+    # command that creates one from scratch — adoption is not a separate mode
+    existing = tmp_path / "my-super"
+    (existing / ".datalad").mkdir(parents=True)
+    (existing / ".mechababs" / "campaigns" / "last-year").mkdir(parents=True)
+
+    path = campaign_init.create_superstudy(existing)
+
+    assert path == existing.resolve()
+    assert (existing / ".mechababs" / "campaigns" / "last-year").is_dir()
+
+
+def test_a_populated_non_dataset_directory_is_refused(tmp_path):
+    # converting a directory that already holds files is a different act from
+    # creating a coordinator, and not one init should perform silently
+    occupied = tmp_path / "my-super"
+    occupied.mkdir()
+    (occupied / "notes.txt").write_text("mine\n")
+
+    with pytest.raises(SystemExit) as excinfo:
+        campaign_init.create_superstudy(occupied)
+    assert "not a datalad dataset" in str(excinfo.value)
+
+
+# --- the CLI: naming the target ---------------------------------------------
+
+
+def test_cli_refuses_superstudy_and_dataset_together(monkeypatch, capsys):
+    """Both name the target, so accepting both would leave which one wins to a
+    reading of the source rather than the help text."""
+    import sys as _sys
+
+    from mechababs import cli
+
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        [
+            "mechababs",
+            "campaign",
+            "init",
+            "nprep",
+            "-d",
+            "/some/study",
+            "--superstudy",
+            "my-super",
+            "--apps",
+            "a.yaml",
+            "--cluster",
+            "c.yaml",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_cli_defaults_the_dataset_to_the_current_directory(monkeypatch, tmp_path):
+    """`-d` mirrors datalad's, and its absence is the common case: you are
+    standing in the study."""
+    import sys as _sys
+
+    from mechababs import cli
+
+    study = tmp_path / "study-ds000001"
+    (study / ".datalad").mkdir(parents=True)
+    monkeypatch.chdir(study)
+
+    seen = {}
+    monkeypatch.setattr(
+        cli.campaign_init,
+        "init",
+        lambda root, *a, **kw: seen.update(root=root, kw=kw) or (root / "c"),
+    )
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        [
+            "mechababs",
+            "campaign",
+            "init",
+            "nprep",
+            "--apps",
+            "a.yaml",
+            "--cluster",
+            "c.yaml",
+        ],
+    )
+    cli.main()
+
+    assert seen["root"] == study.resolve()
+    assert seen["kw"]["superstudy"] is False

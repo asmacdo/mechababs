@@ -26,13 +26,19 @@ time, where the pipeline's eligibility rule and the campaign's ``--limit`` apply
 pinned inside that cell's ``datalad run``.
 """
 
+import contextlib
+import re
+import shutil
 import sys
+import urllib.parse
 from pathlib import Path
 
 import yaml
+from datalad.api import Dataset
 
 from mechababs import campaign as campaign_mod
 from mechababs import campaign_init, select, utils
+from mechababs import study as study_mod
 
 
 def resolve_sourcedata(study, sourcedata):
@@ -120,16 +126,181 @@ def check_dependencies(source_dataset, apps):
             )
 
 
-def add(sourcedata):
+def looks_like_url(arg):
+    """True for something ``datalad clone`` should be handed rather than a path.
+
+    Deliberately crude: a scheme, or the ``host:path`` form ssh uses. A local
+    path that happens to contain a colon is vanishingly rare next to the cost of
+    guessing wrong in the other direction, where a URL read as a path produces a
+    confusing "no such member" instead of a clone.
+    """
+    return bool(urllib.parse.urlparse(arg).scheme) or re.match(r"^[^/]+@[^/]+:", arg)
+
+
+def resolve_member(superstudy, arg):
+    """``--study`` to a member directory, cloning it in first if it is a URL.
+
+    The one case where a selection verb brings something in, and a narrow one:
+    a member study is the *container* for source data, not the data. Cloning it
+    is what "add-dataset does not install data" is not about — the raw BIDS
+    content underneath is still never fetched.
+    """
+    if looks_like_url(arg):
+        name = Path(urllib.parse.urlparse(arg).path.rstrip("/")).name
+        name = name[:-4] if name.endswith(".git") else name
+        dest = Path(superstudy) / name
+        if dest.exists():
+            sys.exit(
+                f"{dest} already exists; pass --study {name} to select into it "
+                f"rather than a URL to clone it again."
+            )
+        Dataset(str(superstudy)).clone(
+            source=arg, path=name, result_renderer="disabled"
+        )
+        return dest.resolve()
+
+    path = Path(arg)
+    member = (path if path.is_absolute() else Path(superstudy) / path).resolve()
+    if not member.is_relative_to(Path(superstudy)):
+        sys.exit(
+            f"{member} is not inside this superstudy ({superstudy}).\n"
+            f"--study names a member of the superstudy you are standing in."
+        )
+    if not study_mod.is_study_root(member):
+        sys.exit(
+            f"not a member study: {member}\n"
+            f"--study names a study already in this superstudy, or a URL to "
+            f"clone one in."
+        )
+    return member
+
+
+def write_member_footprint(superstudy, member, label):
+    """Give ``member`` this campaign's footprint, if it has not got one yet.
+
+    A member receives the campaign at the moment it is first selected into it,
+    which is why ``campaign init`` at a super fans out to nothing: no members are
+    chosen yet. The copy is the config epoch made local — the same configs and the
+    same lock — so the member reproduces its own derivatives from its own contents,
+    without the superstudy.
+
+    No ``env.sh`` and no venv: the operational environment lives at the configured
+    level, and a member of a super-campaign is not operated from. Its lock is copied
+    down anyway, so a venv can be rebuilt from it for detached use.
+
+    A footprint already at this label is **reused only if it is ours**. Labels are
+    short user-chosen words (``tryout``, ``nprep``) and a study accumulates campaigns
+    by design, so a member can arrive already carrying one: its own standalone
+    campaign, or a different superstudy's. Adopting either would compose cells from
+    *our* app bundle and write them into *that* campaign's statefile, which scaffold
+    then reads back from the member — running configs nobody chose for this campaign,
+    silently. Both doors lead here (selecting a member that is already present, and
+    cloning one in with ``--study <URL>`` from a study published with its
+    ``.mechababs/`` committed), so one check covers both.
+    """
+    dest = campaign_mod.campaign_dir(member, label)
+    if (dest / campaign_mod.CONFIG_FILENAME).is_file():
+        # Compared as ids, not by resolving the owner to a directory: a foreign
+        # owner is often not on this filesystem at all (the member was cloned out
+        # of it), and "I cannot find it" must not read as "it has none".
+        owner = campaign_mod.recorded_superstudy_id(member, label)
+        ours = campaign_mod.dataset_id(superstudy)
+        if owner != ours:
+            where = campaign_mod.superstudy_of(member, label)
+            whose = (
+                "a campaign of its own"
+                if owner is None
+                else f"the superstudy at {where}"
+                if where
+                else f"another superstudy (datalad-id {owner})"
+            )
+            sys.exit(
+                f"{Path(member).name} already carries a campaign called {label!r}, "
+                f"and it belongs to {whose}.\n"
+                f"  this superstudy: {Path(superstudy).resolve()}\n"
+                f"  that campaign:   {campaign_mod.campaign_dir(member, label)}\n"
+                f"That is a different campaign that happens to share a name, and a "
+                f"study holds one campaign per label — so there is no room for "
+                f"both, and adopting it would run its app configs under this "
+                f"campaign's name.\n"
+                f"The member is left exactly as it is, and nothing here undoes it: "
+                f"if --study just cloned it, it is already registered and committed "
+                f"in this superstudy.\n"
+                f"Nothing needs re-cloning — re-run with a different label and "
+                f"`--study {Path(member).name}` to select it as it stands. If you "
+                f"want it gone instead, remove the member yourself (it is a "
+                f"committed subdataset here, so `git reset --hard` would leave the "
+                f"directory untracked and dirty this superstudy)."
+            )
+        return dest
+    src = campaign_mod.campaign_dir(superstudy, label)
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in (
+        ".gitattributes",
+        ".gitignore",
+        campaign_mod.PYPROJECT_FILENAME,
+        campaign_mod.UV_LOCK_FILENAME,
+    ):
+        if (src / name).is_file():
+            shutil.copy2(src / name, dest / name)
+    for dirname in (campaign_mod.APPS_DIRNAME, campaign_mod.CLUSTERS_DIRNAME):
+        if (src / dirname).is_dir():
+            shutil.copytree(src / dirname, dest / dirname)
+
+    # The config, plus the marker that says which level operates this campaign. The
+    # super's datalad-id, not a path back up to it: an id survives the member being
+    # cloned or the super being moved, and a path does not -- it re-resolves against
+    # wherever the member now sits and points at a stranger.
+    config = yaml.safe_load((src / campaign_mod.CONFIG_FILENAME).read_text()) or {}
+    owner_id = campaign_mod.dataset_id(superstudy)
+    if owner_id is None:
+        sys.exit(
+            f"the superstudy at {superstudy} has no datalad-id, so a member cannot "
+            f"record which campaign it belongs to.\n"
+            f"A superstudy must be a datalad dataset (`datalad create`)."
+        )
+    config[campaign_mod.SUPERSTUDY_KEY] = owner_id
+    (dest / campaign_mod.CONFIG_FILENAME).write_text(
+        yaml.safe_dump(config, sort_keys=False)
+    )
+    (dest / campaign_mod.STATE_FILENAME).write_text(campaign_mod.initial_header())
+    return dest
+
+
+def add(sourcedata, member_arg=None):
     """Select ``sourcedata`` into the selected campaign. Returns the rows added.
 
-    Runs from the campaign root: the study is the current directory (the same rule
-    every operating verb follows), and ``sourcedata`` is a path inside it.
+    Runs from the campaign root, like every operating verb. For a study-configured
+    campaign that root is the study and ``sourcedata`` is a path inside it. For a
+    super-configured one it is the superstudy, and reaching a member takes a second
+    coordinate rather than a different place to stand: ``member_arg`` (``--study``)
+    selects the member and ``sourcedata`` re-bases onto it.
     """
-    study, label, _ = campaign_mod.require_selected_campaign()
+    root, label, _, _ = campaign_mod.require_selected_campaign()
+    at_super = campaign_mod.is_superstudy_campaign(root, label)
+
+    # Both directions of the configured-level rule, refused at the door.
+    if member_arg and not at_super:
+        sys.exit(
+            f"campaign {label!r} here is configured at a study, so there is no "
+            f"member to name.\n--study selects a member of a superstudy; drop it "
+            f"and pass --sourcedata alone."
+        )
+    if at_super and not member_arg:
+        sys.exit(
+            f"campaign {label!r} here is configured at a superstudy, so a source "
+            f"dataset lives in one of its members.\n"
+            f"Name it: --study <member> --sourcedata <path inside that member>."
+        )
+    superstudy = root if at_super else None
+    study = resolve_member(root, member_arg) if at_super else root
     source_dataset = resolve_sourcedata(study, sourcedata)
 
-    apps = campaign_apps(study, label)
+    # The bundle is read at the level the campaign was CONFIGURED at, where it is
+    # canonical. At a super the member's copy is materialized from it inside the
+    # scope below, so reading the member's would be a chicken-and-egg on the first
+    # selection into it.
+    apps = campaign_apps(root, label)
     try:
         identity = select.sniff_source_dataset(study, Path(source_dataset).name)
     except RuntimeError as e:
@@ -138,38 +309,96 @@ def add(sourcedata):
         # generalization work, so say what is missing rather than guessing at counts.
         sys.exit(f"cannot read the study metadata for {source_dataset}: {e}")
 
-    # Flock first (the campaign's single-writer guarantee), clean-in second (the
-    # statefile must be untouched before this write, so the commit is attributable),
-    # then the read-modify-write — committed as one node when the scope exits.
-    with (
-        utils.flocked(campaign_mod.flock_path(study, label)),
-        utils.campaign_save_scope(study, campaign_mod.state_path(study, label)) as save,
-    ):
-        rows = campaign_mod.read_state(study, label)
-        # The bundle is fixed at init, so a dataset is selected whole or not at all —
-        # re-adding refuses. To run more apps on this data, start a new campaign
-        # (a new config epoch): bundle growth is deliberately unsupported (#116).
-        if any(r["source_dataset"] == source_dataset for r in rows):
-            sys.exit(
-                f"{source_dataset} is already selected into campaign {label!r}.\n"
-                f"The app bundle is fixed at campaign init — to run more apps "
-                f"on this data, create a new campaign."
-            )
-        check_dependencies(source_dataset, apps)
+    # What this write covers, and so what must be clean going in. At a study, the
+    # statefile alone — the rest of the campaign dir is init's, and a config the user
+    # has edited is none of add-dataset's business. At a superstudy the member may be
+    # receiving the whole footprint right now, so the scope is its campaign dir and
+    # the footprint lands as part of the same attributable node as the cells it is
+    # there to hold. An empty directory is invisible to git, so creating it before
+    # the check does not dirty it.
+    if superstudy:
+        scope_target = campaign_mod.campaign_dir(study, label)
+        scope_target.mkdir(parents=True, exist_ok=True)
+    else:
+        scope_target = campaign_mod.state_path(study, label)
 
-        added = [
-            {
-                "source_dataset": source_dataset,
-                "app_config": name,
-                "depends_on": upstream,
-                **identity,
-            }
-            for name, upstream in apps
-        ]
-        campaign_mod.write_state(study, label, rows + added)
+    # Nested, and in this order for a reason. The super declares the member as one
+    # of its outputs, so its clean-in must run while the member is still clean —
+    # opened the other way round it would see its own intended change (the member's
+    # advanced gitlink) as pre-existing dirt and refuse. Nesting also makes each
+    # level commit exactly once for one add-dataset.
+    with contextlib.ExitStack() as stack:
+        super_save = (
+            stack.enter_context(
+                utils.campaign_save_scope(
+                    superstudy,
+                    # Both of the super's changes, declared: its catalog, and the
+                    # member itself — newly cloned it is a NEW SUBDATASET here, and
+                    # already present it still moves its gitlink by committing the
+                    # footprint. Every level stays clean; nothing is left for later.
+                    [campaign_mod.campaign_dir(superstudy, label), study],
+                )
+            )
+            if superstudy
+            else None
+        )
+        save = stack.enter_context(utils.campaign_save_scope(study, scope_target))
+        # Inside the scope, and before the flock: the footprint carries the campaign
+        # dir's .gitignore, which is what keeps the lock file out of the commit.
+        if superstudy:
+            write_member_footprint(superstudy, study, label)
+        # The campaign's single-writer guarantee, spanning the whole
+        # read-modify-write of the shard. Taken at `root` — the level the campaign
+        # is operated from — and not at the member: this writes the member's shard
+        # AND the super's catalog, so a member-keyed lock would leave two
+        # concurrent `--study` selections serialized on nothing while they both
+        # rewrite the catalog.
+        with utils.flocked(campaign_mod.flock_path(root, label)):
+            rows = campaign_mod.read_state(study, label)
+            # The bundle is fixed at init, so a dataset is selected whole or not at
+            # all — re-adding refuses. To run more apps on this data, start a new
+            # campaign (a new config epoch): bundle growth is deliberately
+            # unsupported (#116).
+            if any(r["source_dataset"] == source_dataset for r in rows):
+                sys.exit(
+                    f"{source_dataset} is already selected into campaign {label!r}.\n"
+                    f"The app bundle is fixed at campaign init — to run more apps "
+                    f"on this data, create a new campaign."
+                )
+            check_dependencies(source_dataset, apps)
+
+            added = [
+                {
+                    "source_dataset": source_dataset,
+                    "app_config": name,
+                    "depends_on": upstream,
+                    **identity,
+                }
+                for name, upstream in apps
+            ]
+            campaign_mod.write_state(study, label, rows + added)
         save.message = (
             f"mechababs add-dataset {source_dataset} "
             f"({identity['processing_level']}-level; "
             f"{', '.join(row['app_config'] for row in added)})"
         )
+
+        # Set last, so the super's commit lands after the member's and its
+        # freshly-registered gitlink points at the state this catalog row describes.
+        if super_save is not None:
+            member_rel = Path(study).relative_to(Path(superstudy)).as_posix()
+            members = campaign_mod.read_members(superstudy, label)
+            members.append(
+                {
+                    "study": member_rel,
+                    "source_dataset": source_dataset,
+                    "lifecycle": campaign_mod.LIFECYCLE_PENDING,
+                }
+            )
+            campaign_mod.write_members(superstudy, label, members)
+            super_save.message = (
+                f"mechababs add-dataset {member_rel}/{source_dataset} "
+                f"(member selected into campaign {label!r})"
+            )
+
     return added

@@ -73,6 +73,10 @@ class _Tick(list):
     cleans = 0
     locks = 0
 
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.lock_paths = []
+
 
 @pytest.fixture
 def tick(monkeypatch, study):
@@ -117,7 +121,7 @@ def tick(monkeypatch, study):
 
     monkeypatch.setattr(iterate_mod.babs_status, "read_status", fake_status)
 
-    def fake_clean(root, *, what="this operation"):
+    def fake_clean(root, *, what="this operation", ignore=()):
         calls.cleans += 1
 
     monkeypatch.setattr(iterate_mod, "require_clean_shallow", fake_clean)
@@ -126,6 +130,7 @@ def tick(monkeypatch, study):
 
     def counting_flock(lock):
         calls.locks += 1
+        calls.lock_paths.append(Path(lock))
         return real_flocked(lock)
 
     monkeypatch.setattr(iterate_mod.utils, "flocked", counting_flock)
@@ -359,15 +364,29 @@ def test_a_derivative_that_matches_nothing_is_a_typo_not_an_empty_tick(study, ti
 # --------------------------------------------------------------------------
 
 
-def test_the_flock_is_taken_exactly_once_around_the_whole_tick(study, tick):
+def test_the_flock_is_taken_exactly_once_around_the_whole_tick(
+    study, tick, monkeypatch
+):
     """One lock, held across every cell: the campaign is the single-writer unit. It
     must not be taken per cell (and never inside a verb this tick dispatches — an
-    flock is per open-file-description, so that would deadlock against this one)."""
-    write(study, [cell(ANCHOR), cell(CHAIN)])
+    flock is per open-file-description, so that would deadlock against this one).
 
-    iterate_mod.tick(study, LABEL)
+    Driven through `run_iterate`, which is where the lock is taken: a fan-out calls
+    `tick` once per member, so a lock inside `tick` would be released between them.
+    """
+    write(study, [cell(ANCHOR), cell(CHAIN)])
+    monkeypatch.setattr(
+        campaign_mod,
+        "require_selected_campaign",
+        lambda path=".", **kw: campaign_mod.Selected(
+            study, LABEL, campaign_mod.campaign_dir(study, LABEL), study
+        ),
+    )
+
+    iterate_mod.run_iterate(str(study))
 
     assert tick.locks == 1, f"the flock was taken {tick.locks} times"
+    assert tick.lock_paths == [campaign_mod.flock_path(study, LABEL)]
     assert campaign_mod.flock_path(study, LABEL).exists()
 
 
@@ -441,3 +460,337 @@ def test_dry_run_routes_for_real_and_dispatches_nothing(study, tick):
 def test_dry_run_says_it_shows_only_this_ticks_transitions(study, tick, capsys):
     iterate_mod.tick(study, LABEL, dry_run=True)
     assert "DRY-RUN" in capsys.readouterr().err
+
+
+# --- at a superstudy: fanning out to members --------------------------------
+#
+# `tick` was always parameterized on the study, so the level adds a fan-out rather
+# than a second reconciler. What these pin is the fan-out's shape: catalog order,
+# per-member batching, and the narrowing that does NOT change the level.
+
+
+@pytest.fixture
+def superstudy(tmp_path, monkeypatch):
+    """A superstudy whose campaign covers two members, each with a one-cell shard."""
+    root = tmp_path / "my-super"
+    campaign_mod.campaign_dir(root, LABEL).mkdir(parents=True)
+    members = []
+    for name in ("study-dsA", "study-dsB"):
+        member = root / name
+        campaign_mod.campaign_dir(member, LABEL).mkdir(parents=True)
+        # Installed — the tick advances only members that are actually here, so a
+        # fixture member has to look present the way `study.is_study_root` reads it.
+        (member / ".datalad").mkdir()
+        campaign_mod.state_path(member, LABEL).write_text(campaign_mod.initial_header())
+        write(member, [cell(ANCHOR)])
+        members.append(member)
+    campaign_mod.write_members(
+        root,
+        LABEL,
+        [
+            {
+                "study": "study-dsA",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+            {
+                "study": "study-dsB",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+        ],
+    )
+
+    monkeypatch.setattr(
+        campaign_mod,
+        "require_selected_campaign",
+        lambda path=".", **kw: campaign_mod.Selected(
+            root, LABEL, campaign_mod.campaign_dir(root, LABEL), root
+        ),
+    )
+    # The fixture tree is plain directories, so the super's own datalad calls are
+    # recorded rather than run. What they record is the point of the tests below.
+    recorded = []
+    monkeypatch.setattr(
+        iterate_mod.utils,
+        "save_paths",
+        lambda root_, paths, message: recorded.append((root_, str(paths), message)),
+    )
+    monkeypatch.setattr(
+        iterate_mod.utils, "require_clean_gitlink", lambda root_, member: None
+    )
+    return root, members, recorded
+
+
+def test_a_superstudy_tick_advances_every_member(superstudy, tick):
+    root, members, _saves = superstudy
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [call["study"] for call in tick] == [str(m) for m in members]
+
+
+def test_members_advance_in_catalog_order(superstudy, tick):
+    """Catalog order is the ordering interface at the super, the way row order is
+    within a shard."""
+    root, members, _saves = superstudy
+    campaign_mod.write_members(
+        root,
+        LABEL,
+        [
+            {
+                "study": "study-dsB",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+            {
+                "study": "study-dsA",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+        ],
+    )
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [Path(call["study"]).name for call in tick] == ["study-dsB", "study-dsA"]
+
+
+def test_a_member_selected_twice_is_advanced_once(superstudy, tick):
+    """Several source datasets in one member give several catalog rows, one member."""
+    root, _, _saves = superstudy
+    campaign_mod.write_members(
+        root,
+        LABEL,
+        [
+            {
+                "study": "study-dsA",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+            {
+                "study": "study-dsA",
+                "source_dataset": "sourcedata/other",
+                "lifecycle": "pending",
+            },
+        ],
+    )
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [Path(call["study"]).name for call in tick] == ["study-dsA"]
+
+
+def test_study_narrows_to_one_member(superstudy, tick):
+    root, _, _saves = superstudy
+
+    iterate_mod.run_iterate(str(root), study="study-dsB")
+
+    assert [Path(call["study"]).name for call in tick] == ["study-dsB"]
+
+
+def test_a_study_that_is_not_a_member_is_a_typo_not_an_empty_tick(superstudy, tick):
+    """Matched against the catalog, not the filesystem: a directory that exists but
+    was never selected into this campaign is an error, not a silent no-op."""
+    root, _, _saves = superstudy
+    (root / "study-dsC").mkdir()
+
+    with pytest.raises(SystemExit) as excinfo:
+        iterate_mod.run_iterate(str(root), study="study-dsC")
+    assert "not a member" in str(excinfo.value)
+
+
+def test_batch_bounds_the_whole_tick_not_each_member(superstudy, tick):
+    """`--batch N` means one thing at either level: at most N cells advance. At a
+    superstudy the budget is spent in catalog order, which is what makes the catalog
+    a priority interface — it decides who gets the budget, not only who goes first."""
+    root, members, _saves = superstudy
+
+    iterate_mod.run_iterate(str(root), batch=1)
+
+    assert [call["study"] for call in tick] == [str(members[0])]
+
+
+def test_a_spent_batch_stops_the_fan_out_before_the_next_member_is_touched(
+    superstudy, tick, monkeypatch
+):
+    """A tick with nothing left to spend must not touch the filesystem to find out."""
+    root, _members, _saves = superstudy
+    checked = []
+    monkeypatch.setattr(
+        iterate_mod.utils,
+        "require_clean_gitlink",
+        lambda root_, member: checked.append(member),
+    )
+
+    iterate_mod.run_iterate(str(root), batch=1)
+
+    assert checked == ["study-dsA"]
+
+
+def test_an_unspent_batch_carries_on_to_the_next_member(superstudy, tick):
+    """The budget is the tick's, so what one member does not spend the next can."""
+    root, members, _saves = superstudy
+
+    iterate_mod.run_iterate(str(root), batch=2)
+
+    assert [call["study"] for call in tick] == [str(m) for m in members]
+
+
+def test_study_is_refused_for_a_study_configured_campaign(study, tick, monkeypatch):
+    monkeypatch.setattr(
+        campaign_mod,
+        "require_selected_campaign",
+        lambda path=".", **kw: campaign_mod.Selected(
+            study, LABEL, campaign_mod.campaign_dir(study, LABEL), study
+        ),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        iterate_mod.run_iterate(str(study), study="study-dsA")
+    assert "no members to select between" in str(excinfo.value)
+
+
+def test_one_lock_at_the_super_covers_the_whole_fan_out(superstudy, tick):
+    """The single writer is the campaign, and the campaign is operated at the super.
+
+    A per-member lock would be released between members — leaving the gaps it exists
+    to close — and would cover none of the super's own writes (the gitlink and the
+    catalog row), which are precisely what a second concurrent tick would collide
+    with.
+    """
+    root, members, _ = superstudy
+
+    iterate_mod.run_iterate(str(root))
+
+    assert tick.locks == 1, f"the flock was taken {tick.locks} times for 2 members"
+    assert tick.lock_paths == [campaign_mod.flock_path(root, LABEL)]
+    for member in members:
+        assert not campaign_mod.flock_path(member, LABEL).exists(), (
+            f"{member.name} was locked as if it were its own single-writer unit"
+        )
+
+
+def test_each_member_is_checked_before_it_is_touched_and_scoped_to_itself(
+    superstudy, tick, monkeypatch
+):
+    """The member's own tree is covered twice already (`tick`, then the transition's
+    `datalad run`), so what is left for the super is whether its gitlink still
+    matches the member's HEAD. Scoped to the one member, the check costs the same in
+    a superstudy of a thousand as in one of two."""
+    root, members, _saves = superstudy
+    order = []
+
+    monkeypatch.setattr(
+        iterate_mod.utils,
+        "require_clean_gitlink",
+        lambda root_, member: order.append(("gitlink", member)),
+    )
+    real_tick = iterate_mod.tick
+    monkeypatch.setattr(
+        iterate_mod,
+        "tick",
+        lambda study_arg, *a, **kw: (
+            order.append(("tick", Path(study_arg).name)),
+            real_tick(study_arg, *a, **kw),
+        )[1],
+    )
+
+    iterate_mod.run_iterate(str(root))
+
+    assert order == [
+        ("gitlink", "study-dsA"),
+        ("tick", "study-dsA"),
+        ("gitlink", "study-dsB"),
+        ("tick", "study-dsB"),
+    ]
+
+
+def test_the_super_is_checked_once_before_any_member_is_touched(
+    superstudy, tick, monkeypatch
+):
+    """The per-member check is scoped to a member, so it cannot see dirt in the
+    super's own tree. That is what this one is for, and once per tick is enough."""
+    root, _members, _saves = superstudy
+    order = []
+
+    monkeypatch.setattr(
+        iterate_mod,
+        "require_clean_shallow",
+        lambda root_, **kw: order.append(("shallow", Path(root_).name)),
+    )
+    monkeypatch.setattr(
+        iterate_mod.utils,
+        "require_clean_gitlink",
+        lambda root_, member: order.append(("gitlink", member)),
+    )
+
+    iterate_mod.run_iterate(str(root))
+
+    assert order[0] == ("shallow", "my-super")
+    assert order.count(("shallow", "my-super")) == 1
+
+
+def test_an_uninstalled_member_is_left_alone(superstudy, tick):
+    """A member the user pushed and uninstalled is skipped, never reinstalled to
+    advance it: reclaiming space is a decision a tick must not quietly reverse."""
+    root, members, _saves = superstudy
+    (members[0] / ".datalad").rmdir()
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [call["study"] for call in tick] == [str(members[1])]
+
+
+def test_an_uninstalled_member_is_left_alone_even_when_named(superstudy, tick):
+    """Naming it with --study does not override this — it is still not here."""
+    root, members, _saves = superstudy
+    (members[0] / ".datalad").rmdir()
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    assert tick == []
+
+
+def test_an_uninstalled_member_is_not_recorded_at_the_super(superstudy, tick):
+    """Nothing advanced, so there is no gitlink to register."""
+    root, members, saves = superstudy
+    (members[0] / ".datalad").rmdir()
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    assert saves == []
+
+
+def test_each_member_is_recorded_at_the_super_as_it_advances(superstudy, tick):
+    """A study-only campaign needs none of this — the transition's own `datalad run`
+    commits in the study, which is the operating level. With a super above, that run
+    leaves the member's gitlink advanced and only the super can register it."""
+    root, members, saves = superstudy
+
+    iterate_mod.run_iterate(str(root))
+
+    assert [Path(path).name for _root, path, _msg in saves] == [m.name for m in members]
+    assert all(saved_root == root for saved_root, _, _ in saves)
+    assert all(LABEL in message for _, _, message in saves)
+
+
+def test_a_member_that_does_not_advance_is_not_recorded(superstudy, tick):
+    """Nothing moved, nothing to register — an empty commit at the super would say
+    a member advanced when it did not."""
+    root, _members, saves = superstudy
+    for member in _members:
+        rows = campaign_mod.read_state(member, LABEL)
+        rows[0]["merged"] = "yes"
+        campaign_mod.write_state(member, LABEL, rows)
+
+    iterate_mod.run_iterate(str(root))
+
+    assert saves == []
+
+
+def test_a_dry_run_records_nothing_at_the_super(superstudy, tick):
+    root, _members, saves = superstudy
+
+    iterate_mod.run_iterate(str(root), dry_run=True)
+
+    assert saves == []

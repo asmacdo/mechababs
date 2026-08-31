@@ -38,10 +38,21 @@ def cmd_campaign_init(args):
     that does not take the env-match guard. It creates the environment the guard
     will check from here on.
 
-    The study is the current directory, not a flag: study-first commands operate on
-    where you are, and this one has no ledger or config to point elsewhere with.
+    Alone among the verbs it names its target rather than taking the cwd: ``-d``
+    mirrors datalad's, and ``--superstudy NAME`` names a superstudy to create or
+    adopt. Every other verb runs from the root of the dataset that owns the
+    campaign, which is what makes "operate a campaign only from the level it was
+    configured" checkable rather than conventional.
+
+    The superstudy and the campaign are named separately because they are not the
+    same thing and do not share a lifetime: one superstudy accumulates many
+    campaigns, each its own label and config epoch.
     """
-    study = study_mod.require_study_root(".")
+    if args.superstudy:
+        root = campaign_init.create_superstudy(args.superstudy)
+    else:
+        root = study_mod.require_study_root(args.dataset or ".")
+    study = root
     # `--apps a.yaml,b.yaml` (as the quickstart shows) and a repeated `--apps` both
     # work, and compose — the bundle is ordered as written either way.
     apps = [
@@ -55,6 +66,7 @@ def cmd_campaign_init(args):
         limit=args.limit,
         babs_spec=args.babs,
         mechababs_spec=args.mechababs,
+        superstudy=bool(args.superstudy),
     )
     rel = campaign.relative_to(study)
     print(f"\ncampaign {args.label!r} created at {rel}", file=sys.stderr)
@@ -77,7 +89,7 @@ def cmd_add_dataset(args):
     Runs from the campaign root — the study — like every operating verb;
     ``--sourcedata`` is a path inside it.
     """
-    added = add_dataset_mod.add(args.sourcedata)
+    added = add_dataset_mod.add(args.sourcedata, args.study)
     cell = added[0]  # identity is the same across a dataset's cells
     size = f"{cell['n_subjects']} subjects"
     if cell["n_sessions"]:
@@ -102,7 +114,12 @@ def cmd_iterate(args):
     """
     try:
         iterate_mod.run_iterate(
-            ".", batch=args.batch, derivative=args.derivative, dry_run=args.dry_run
+            ".",
+            batch=args.batch,
+            derivative=args.derivative,
+            study=args.study,
+            dry_run=args.dry_run,
+            force=args.force,
         )
     except RuntimeError as e:
         sys.exit(str(e))
@@ -175,6 +192,27 @@ def main():
         help="the campaign's identity (its directory name, and "
         "what MECHABABS_CAMPAIGN selects)",
     )
+    # Both name the target, so argparse refuses them together rather than the
+    # command choosing a winner. -d is the study side and mirrors datalad's;
+    # --superstudy is the superstudy side and may name one that does not exist yet.
+    target = pci.add_mutually_exclusive_group()
+    target.add_argument(
+        "-d",
+        "--dataset",
+        default=None,
+        metavar="PATH",
+        help="the study to create the campaign in, named the way datalad's -d "
+        "is (default: the current directory)",
+    )
+    target.add_argument(
+        "--superstudy",
+        default=None,
+        metavar="NAME",
+        help="create the campaign at a superstudy of this name, creating the "
+        "superstudy if it is not there yet and adopting it if it is. A "
+        "superstudy holds many campaigns over time, so it is named separately "
+        "from the campaign label.",
+    )
     pci.add_argument(
         "--apps",
         action="append",
@@ -227,6 +265,15 @@ def main():
         ),
     )
     pa.add_argument(
+        "--study",
+        default=None,
+        metavar="PATH|URL",
+        help="at a superstudy, the member holding the source dataset: a member "
+        "already there, or a URL to clone one in. --sourcedata is then relative "
+        "to that member. Not for a study-configured campaign, which has no "
+        "members.",
+    )
+    pa.add_argument(
         "--sourcedata",
         metavar="PATH",
         required=True,
@@ -263,10 +310,23 @@ def main():
         help="only this app config's cells, by its filename stem (e.g. MRIQC-24.0.2)",
     )
     pi.add_argument(
+        "--study",
+        default=None,
+        metavar="MEMBER",
+        help="at a superstudy, advance only this member (composable with "
+        "--derivative). Where you stand gives the level; this narrows within it.",
+    )
+    pi.add_argument(
         "--dry-run",
         action="store_true",
         help="route every cell for real and print the transitions it would "
         "dispatch, without dispatching them",
+    )
+    pi.add_argument(
+        "--force",
+        action="store_true",
+        help="advance a member study whose campaign is operated from its "
+        "superstudy. You then own reconciling it with the super.",
     )
     pi.set_defaults(func=cmd_iterate)
 

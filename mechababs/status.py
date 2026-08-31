@@ -127,7 +127,7 @@ def run_status(root="."):
     campaign, and is this the right environment", and ``report`` takes both as
     parameters — so nothing below here assumes the study is the cwd.
     """
-    study, label, _ = campaign_mod.require_selected_campaign(root)
+    study, label, _, _ = campaign_mod.require_selected_campaign(root)
     return report(study, label)
 
 
