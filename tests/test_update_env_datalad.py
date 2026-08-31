@@ -68,7 +68,7 @@ def fake_uv(monkeypatch):
     """
     state = {"new_lock": "lock-v2\n"}
 
-    def fake_run_uv(*args, campaign, cluster_file, uv=None):
+    def fake_run_uv(*args, campaign, cluster_file, uv=None, retry=None):
         if args and args[0] == "lock" and state["new_lock"] is not None:
             (campaign / campaign_mod.UV_LOCK_FILENAME).write_text(state["new_lock"])
 

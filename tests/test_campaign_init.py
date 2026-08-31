@@ -833,3 +833,28 @@ def test_cli_defaults_the_dataset_to_the_current_directory(monkeypatch, tmp_path
 
     assert seen["root"] == study.resolve()
     assert seen["kw"]["superstudy"] is False
+
+
+def test_the_retry_advice_is_the_calling_verbs(fake_uv, tmp_path):
+    """Same diagnosis, different way back. `init` cannot re-run over an existing
+    campaign, so it says to remove the half-built one; `update-env` converges an
+    existing campaign, and telling its user to `rm -rf` would delete a campaign
+    holding real derivatives and history.
+    """
+    fake_uv(UV_BUILD_FAILURE)
+    campaign = tmp_path / "study" / ".mechababs" / "campaigns" / "nprep"
+    uv = dict(campaign=campaign, cluster_file=campaign / "clusters" / "sherlock.yaml")
+
+    with pytest.raises(SystemExit) as init_failure:
+        campaign_init.run_uv("sync", **uv)
+    with pytest.raises(SystemExit) as update_failure:
+        campaign_init.run_uv("sync", **uv, retry=campaign_init.UPDATE_ENV_RETRY)
+
+    assert f"rm -rf {campaign}" in str(init_failure.value)
+    assert "campaign init" in str(init_failure.value)
+
+    assert "rm -rf" not in str(update_failure.value)
+    assert "campaign update-env" in str(update_failure.value)
+    # the diagnosis half is shared, not duplicated
+    for message in (str(init_failure.value), str(update_failure.value)):
+        assert "pandas" in message and "env_constraints" in message

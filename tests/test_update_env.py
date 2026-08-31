@@ -23,8 +23,10 @@ def uv_calls(monkeypatch):
     """Record the uv commands instead of running them."""
     calls = []
 
-    def fake_run_uv(*args, campaign, cluster_file, uv=None):
-        calls.append({"args": list(args), "campaign": campaign, "uv": uv})
+    def fake_run_uv(*args, campaign, cluster_file, uv=None, retry=None):
+        calls.append(
+            {"args": list(args), "campaign": campaign, "uv": uv, "retry": retry}
+        )
 
     monkeypatch.setattr(campaign_init, "run_uv", fake_run_uv)
     return calls
@@ -177,6 +179,19 @@ def test_a_build_failure_is_pointed_at_the_campaigns_own_cluster_config(
     expected = campaign_mod.clusters_dir(study, "nprep") / "dartmouth.yaml"
     assert all(c["campaign"] for c in uv_calls)
     assert update_env.staged_cluster(study, "nprep") == expected
+
+
+def test_a_build_failure_tells_the_user_to_re_run_update_env_not_to_delete(
+    study, uv_calls, saves
+):
+    """init's tail says to `rm -rf` the half-built campaign, because init cannot
+    re-run over an existing one. Here that would delete a campaign holding real
+    derivatives and history — update-env converges an existing campaign, so the way
+    back is simply to run it again."""
+    update_env.run_update_env(study)
+
+    assert all(c["retry"] == campaign_init.UPDATE_ENV_RETRY for c in uv_calls)
+    assert "rm -rf" not in campaign_init.UPDATE_ENV_RETRY
 
 
 # --- what it commits --------------------------------------------------------

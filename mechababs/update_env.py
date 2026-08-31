@@ -202,7 +202,15 @@ def run_update_env(root=".", *, upgrade=(), member=None):
         # registry. None of that is logic of ours.
         lock_args += ["--upgrade-package", package]
 
-    uv_kwargs = dict(campaign=campaign, cluster_file=cluster_file, uv=uv)
+    # The site-cannot-install-this failure is the same one init translates, but the
+    # way back is not: telling an update-env user to `rm -rf` the campaign would
+    # delete one that is holding a running campaign's derivatives and history.
+    uv_kwargs = dict(
+        campaign=campaign,
+        cluster_file=cluster_file,
+        uv=uv,
+        retry=campaign_init.UPDATE_ENV_RETRY,
+    )
     campaign_init.run_uv(*lock_args, **uv_kwargs)
     campaign_init.run_uv("sync", "--project", str(campaign), "--frozen", **uv_kwargs)
 

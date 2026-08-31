@@ -362,8 +362,28 @@ def render_pyproject(
 UV_BUILD_FAILURE_RE = re.compile(r"Failed to build [`'\"]([A-Za-z0-9._-]+)")
 
 
-def missing_wheel_message(package, campaign, cluster_file):
-    """What to tell a user whose site cannot install ``package``."""
+# How to retry, once the cap is in the cluster config. The diagnosis is the same for
+# both verbs -- the site cannot install this package -- but the way back differs, and
+# giving `update-env` init's tail would tell a user to delete a campaign that is
+# running work. `{campaign}` is filled in per failure.
+INIT_RETRY = (
+    "\nThen remove the half-built campaign and run `mechababs campaign init` "
+    "again — init does not re-run over an existing campaign:\n"
+    "\n    rm -rf {campaign}\n"
+)
+UPDATE_ENV_RETRY = (
+    "\nThen run `mechababs campaign update-env` again. Nothing needs removing: "
+    "update-env converges an existing campaign, and the environment it failed to "
+    "build is the one it will retry.\n"
+)
+
+
+def missing_wheel_message(package, campaign, cluster_file, retry=INIT_RETRY):
+    """What to tell a user whose site cannot install ``package``.
+
+    ``retry`` is the way back, which is the caller's to say: the diagnosis is shared
+    but the remedy is not.
+    """
     return (
         f"\ncould not build the campaign environment: uv had no installable wheel for "
         f"{package!r} on this system and building it from source failed (above).\n"
@@ -373,13 +393,10 @@ def missing_wheel_message(package, campaign, cluster_file):
         f"\n    # {cluster_file}\n"
         f"    env_constraints:\n"
         f"      - {package}<=<the last version with a wheel for this system>\n"
-        f"\nThen remove the half-built campaign and run `mechababs campaign init` "
-        f"again — init does not re-run over an existing campaign:\n"
-        f"\n    rm -rf {campaign}\n"
-    )
+    ) + retry.format(campaign=campaign)
 
 
-def run_uv(*args, campaign, cluster_file, uv=None):
+def run_uv(*args, campaign, cluster_file, uv=None, retry=INIT_RETRY):
     """Run a ``uv`` command, and translate a source-build failure into a named one.
 
     ``uv`` is which binary to run; ``None`` means PATH's, the only answer available at
@@ -387,6 +404,9 @@ def run_uv(*args, campaign, cluster_file, uv=None):
     yet. ``campaign update-env`` passes the venv's own once there is one. Resolved
     here rather than as a default argument, so the module-level ``UV`` stays the one
     place PATH resolution is named (and stays monkeypatchable).
+
+    ``retry`` is how a missing-wheel failure tells the user to come back, which
+    differs by verb — see :data:`INIT_RETRY` and :data:`UPDATE_ENV_RETRY`.
 
     A package with no wheel for this system does not announce itself as one: uv falls
     back to the sdist, and what reaches the user is the build backend's compiler error
@@ -416,7 +436,7 @@ def run_uv(*args, campaign, cluster_file, uv=None):
         # Not a build failure at all (an unreachable pin, no network, a bad
         # specifier). Say so plainly rather than dressing it as a platform problem.
         sys.exit(f"\n{' '.join(cmd)} failed (exit {proc.returncode})")
-    sys.exit(missing_wheel_message(failed[0], campaign, cluster_file))
+    sys.exit(missing_wheel_message(failed[0], campaign, cluster_file, retry))
 
 
 def build_env(campaign, cluster_file):
