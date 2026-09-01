@@ -971,9 +971,9 @@ def _stage_retire_clears_a_cell_so_it_can_be_redone(study):
     # names a host directory outside every dataset, so recording either as
     # re-executable would be a promise retire cannot keep.
     subject = _git(study, "log", "-1", "--format=%s").strip()
-    assert subject.startswith(f"mechababs retire-derivative {derivative_rel} --path "), (
-        subject
-    )
+    assert subject.startswith(
+        f"mechababs retire-derivative {derivative_rel} --path "
+    ), subject
     assert not subject.startswith("[DATALAD RUNCMD]"), (
         f"retire recorded itself as a re-executable run: {subject}"
     )

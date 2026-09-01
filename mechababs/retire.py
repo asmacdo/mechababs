@@ -49,7 +49,9 @@ human intervention on a cell that went wrong — the same argument ``update-env`
 makes about resolving against the live world — so it lands as a labeled save.
 """
 
+import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -150,7 +152,9 @@ def require_outside(dest, *insides):
     dest = Path(dest).expanduser().resolve()
     for inside in insides:
         inside = Path(inside).resolve()
-        if dest == inside or dest.is_relative_to(inside):
+        # `is_relative_to` is true of the directory itself, so DEST *being* the study
+        # is caught here too — the case a plain prefix check would let through.
+        if dest.is_relative_to(inside):
             sys.exit(
                 f"--path must be outside the study, and {dest} is inside "
                 f"{inside}.\n"
@@ -217,6 +221,26 @@ def rehome_gitdir(derivative, gitdir):
     )
 
 
+def rmtree(path):
+    """Delete ``path``, including git-annex's deliberately read-only object store.
+
+    git-annex takes the write bit off both its object files and the directories
+    holding them — that is how it protects content from accidental modification, and
+    it is why a plain ``shutil.rmtree`` of a derivative dies with ``EACCES`` on the
+    first annexed object. Unlinking needs the write bit on the *containing
+    directory* rather than on the file, so one pass restoring it to every directory
+    is enough. Read-only directories are still listable and traversable, so the walk
+    itself needs no help.
+
+    Only ``--remove`` needs this. A move is a rename, which never touches the
+    contents' permissions at all.
+    """
+    path = Path(path)
+    for dirpath, _, _ in os.walk(path):
+        os.chmod(dirpath, os.stat(dirpath).st_mode | stat.S_IWUSR | stat.S_IXUSR)
+    shutil.rmtree(path)
+
+
 def drop_local_submodule_section(study, derivative_rel):
     """Drop git's stale ``submodule.<path>`` section from the study's LOCAL config.
 
@@ -252,11 +276,11 @@ def detach(study, derivative_rel, dest):
     derivative = Path(study) / derivative_rel
     gitdir = absorbed_gitdir(derivative)
     if dest is None:
-        shutil.rmtree(derivative)
+        rmtree(derivative)
         if gitdir is not None and gitdir.is_dir():
             # An absorbed git dir lives in the parent's `.git/modules/`, so removing
             # the worktree would leave the whole repository behind as cruft.
-            shutil.rmtree(gitdir)
+            rmtree(gitdir)
     else:
         if gitdir is not None:
             rehome_gitdir(derivative, gitdir)

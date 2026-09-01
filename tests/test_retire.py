@@ -327,6 +327,26 @@ def test_remove_deletes_the_derivative_outright(study, saves, tmp_path):
     assert not list(tmp_path.glob("**/job.o")), "--remove parked the evidence somewhere"
 
 
+def test_remove_gets_through_a_read_only_annex_object_store(study, saves):
+    """git-annex takes the write bit off its object files *and* the directories that
+    hold them, which is how it protects content — and it makes a plain `shutil.rmtree`
+    die with EACCES on the first annexed object. Found by the e2e against a real babs
+    derivative; kept here so it stays found without one.
+
+    `--path` needs none of this: a move is a rename and never touches the contents.
+    """
+    objects = study / DERIVATIVE / ".git" / "annex" / "objects" / "pF" / "Jk"
+    objects.mkdir(parents=True)
+    (objects / "MD5E-s1450--deadbeef.yaml").write_text("annexed content\n")
+    (objects / "MD5E-s1450--deadbeef.yaml").chmod(0o444)
+    for readonly in (objects, objects.parent, objects.parent.parent):
+        readonly.chmod(0o555)
+
+    retire.run_retire(DERIVATIVE, remove=True)
+
+    assert not (study / DERIVATIVE).exists()
+
+
 # --- the cell reset ------------------------------------------------------------
 
 
