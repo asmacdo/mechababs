@@ -241,6 +241,28 @@ def rmtree(path):
     shutil.rmtree(path)
 
 
+def relocate(src, dest):
+    """Move ``src`` to ``dest``, across filesystems if it comes to that.
+
+    A rename when both sides are on one filesystem, which is the fast, atomic,
+    permission-blind case and the one a sibling DEST gets. Across filesystems there
+    is no rename, so the tree is copied and the original deleted — and the delete is
+    :func:`rmtree`'s, not ``shutil``'s, for the same reason ``--remove`` needs it:
+    ``shutil.move``'s own cross-device fallback ends in a plain ``rmtree`` that dies
+    on git-annex's read-only object store. A cluster DEST on a different mount than
+    the study is the normal case, not an exotic one.
+
+    ``symlinks=True`` keeps the annex's symlinks as symlinks rather than
+    dereferencing them into copies of the content they point at.
+    """
+    src, dest = Path(src), Path(dest)
+    try:
+        os.rename(src, dest)
+    except OSError:
+        shutil.copytree(src, dest, symlinks=True)
+        rmtree(src)
+
+
 def drop_local_submodule_section(study, derivative_rel):
     """Drop git's stale ``submodule.<path>`` section from the study's LOCAL config.
 
@@ -285,7 +307,7 @@ def detach(study, derivative_rel, dest):
         if gitdir is not None:
             rehome_gitdir(derivative, gitdir)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(derivative), str(dest))
+        relocate(derivative, dest)
     drop_local_submodule_section(study, derivative_rel)
 
 

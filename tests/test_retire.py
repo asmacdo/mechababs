@@ -327,6 +327,33 @@ def test_remove_deletes_the_derivative_outright(study, saves, tmp_path):
     assert not list(tmp_path.glob("**/job.o")), "--remove parked the evidence somewhere"
 
 
+def test_a_cross_filesystem_archive_copies_and_then_deletes(study, saves, monkeypatch):
+    """A cluster DEST on a different mount than the study is the normal case.
+
+    There is no rename across filesystems, so the tree is copied and the original
+    deleted — with our own annex-aware delete, because `shutil.move`'s cross-device
+    fallback ends in a plain `rmtree` that dies on the read-only object store. Forced
+    here by making `os.rename` raise the way EXDEV does, since a second filesystem is
+    not something a unit test can conjure.
+    """
+    attic = study.parent / "attic"
+    objects = study / DERIVATIVE / ".git" / "annex" / "objects"
+    objects.mkdir(parents=True)
+    (objects / "MD5E-s1450--deadbeef.yaml").write_text("annexed content\n")
+    (objects / "MD5E-s1450--deadbeef.yaml").chmod(0o444)
+    objects.chmod(0o555)
+    monkeypatch.setattr(
+        retire.os, "rename", lambda *a, **k: (_ for _ in ()).throw(OSError("EXDEV"))
+    )
+
+    retire.run_retire(DERIVATIVE, dest=str(attic))
+
+    parked = attic / "study-ds000001-MRIQC-24.0.2+ds000001-attempt-1"
+    assert (parked / "logs" / "job.o").read_text() == "the evidence\n"
+    assert (parked / ".git" / "annex" / "objects").is_dir(), "the annex did not travel"
+    assert not (study / DERIVATIVE).exists(), "the original was left behind"
+
+
 def test_remove_gets_through_a_read_only_annex_object_store(study, saves):
     """git-annex takes the write bit off its object files *and* the directories that
     hold them, which is how it protects content — and it makes a plain `shutil.rmtree`
