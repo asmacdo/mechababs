@@ -26,9 +26,9 @@ E2E_DIRNAME = "e2e"
 # absent from here would be silently skipped by a truncated install.
 SUITE_MODULES = (
     "conftest.py",
-    "test_runs.py",
     "test_spine.py",
     "test_study_fixture.py",
+    "test_superstudy.py",
 )
 
 

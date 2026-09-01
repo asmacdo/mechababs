@@ -499,6 +499,13 @@ def _stage_scaffold(study):
         f"the derivative is not registered as a subdataset: {gitlink}"
     )
 
+    # The RIA stores are babs's local machinery, not content: committing them would
+    # put an absolute-path store into the published derivative. Scoped to the two
+    # store directories, since babs does track `.babs/babs_init_config.yaml` itself.
+    assert not _git(
+        derivative, "ls-files", "--", ".babs/input_ria", ".babs/output_ria"
+    ).strip(), "the RIA stores were committed into the derivative"
+
     # The pin records what was REQUESTED; babs's own processing_inclusion.csv records
     # what it could run. Their diff is what catches a selected subject the data lacks.
     pin = (
