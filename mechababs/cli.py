@@ -168,7 +168,7 @@ def cmd_test_cluster(args):
 
 def cmd_status(args):
     """Read-only: one row per cell, with live job counts for the running ones."""
-    return status_mod.run_status(".", study=args.study)
+    return status_mod.run_status(".", study=args.study, derivative=args.derivative)
 
 
 def main():
@@ -494,6 +494,14 @@ def main():
         help="at a superstudy, only this member's cells. Matched against the "
         "campaign's catalog, so a directory that was never selected in is an "
         "error rather than an empty table.",
+    )
+    ps.add_argument(
+        "--derivative",
+        default=None,
+        metavar="STEM",
+        help="only this app config's cells, by its filename stem (e.g. "
+        "MRIQC-24.0.2). Checked against the campaign's declared apps, so a typo "
+        "is refused even when nothing is installed to compare against.",
     )
     ps.set_defaults(func=cmd_status)
 

@@ -9,6 +9,7 @@ does not cost the view of the others.
 import subprocess
 
 import pytest
+import yaml
 
 from mechababs import campaign as campaign_mod
 from mechababs import iterate as iterate_mod
@@ -38,11 +39,20 @@ def cell(app_config, *, depends_on="", babs="", merged=""):
     }
 
 
+def declare_apps(root, *app_configs):
+    """Write the campaign.yaml bundle — the vocabulary `--derivative` is checked
+    against. Fixed at `campaign init` in real life, so a fixture declares it once."""
+    campaign_mod.config_path(root, LABEL).write_text(
+        yaml.safe_dump({"label": LABEL, "apps": list(app_configs)})
+    )
+
+
 @pytest.fixture
 def study(tmp_path):
     study = tmp_path / "study-ds999999"
     campaign_mod.campaign_dir(study, LABEL).mkdir(parents=True)
     campaign_mod.state_path(study, LABEL).write_text(campaign_mod.initial_header())
+    declare_apps(study, ANCHOR, CHAIN)
     return study
 
 
@@ -239,6 +249,7 @@ def superstudy(tmp_path, monkeypatch):
     """
     root = tmp_path / "my-super"
     campaign_mod.campaign_dir(root, LABEL).mkdir(parents=True)
+    declare_apps(root, ANCHOR, CHAIN)
 
     installed = root / "study-dsA"
     campaign_mod.campaign_dir(installed, LABEL).mkdir(parents=True)
@@ -252,6 +263,9 @@ def superstudy(tmp_path, monkeypatch):
             cell(CHAIN, babs="derivatives/chain"),
         ],
     )
+    # The active cell's derivative is on disk; the merged one's has been offloaded.
+    # That asymmetry is the point of the AND-ed column, so the fixture carries it.
+    (installed / "derivatives" / "chain" / ".datalad").mkdir(parents=True)
 
     # dsB is registered and absent: no directory at all, which is what `datalad
     # uninstall` leaves behind once the mount point is gone.
@@ -309,17 +323,26 @@ def test_a_superstudy_renders_every_member_in_catalog_order(
 
 
 def test_installed_is_its_own_column_not_a_state(superstudy, queried, capsys):
-    """The two axes are independent, so a merged cell reads `merged` whatever the
-    member's installation says, and an absent member's cells read `unknown` rather
-    than `not started` — the difference between finished and unseen."""
+    """The two axes are independent. The first row is the one that proves it: a cell
+    whose work is finished and whose derivative has since been offloaded is `merged`
+    AND `no` — folding them into one column would report it as neither. An absent
+    member's cells read `unknown` rather than `not started`: finished vs unseen."""
     assert status_mod.run_status() == 0
 
     rows, _ = _rows(capsys, status_mod.SUPER_COLUMNS)
     assert [(r["installed"], r["state"]) for r in rows] == [
-        (status_mod.YES, status_mod.MERGED),
+        (status_mod.NO, status_mod.MERGED),
         (status_mod.YES, status_mod.ACTIVE),
         (status_mod.NO, status_mod.UNKNOWN),
     ]
+
+
+def test_a_cell_with_nothing_scaffolded_is_installed_when_its_study_is(study, queried):
+    """There is no derivative to be missing, so the study alone decides."""
+    campaign_mod.write_state(study, LABEL, [cell(ANCHOR)])
+    (record,) = status_mod.records(study, LABEL)
+
+    assert status_mod.cell_installed(study, record) == status_mod.YES
 
 
 def test_an_uninstalled_member_costs_no_babs_query(superstudy, queried, capsys):
@@ -359,3 +382,64 @@ def test_study_refuses_a_directory_that_was_never_selected_in(superstudy, querie
         status_mod.run_status(study="study-dsZ")
 
     assert "not a member" in str(excinfo.value)
+
+
+# --------------------------------------------------------------------------
+# `--derivative`: narrowing to one app, and refusing a name the campaign
+# does not declare. The declaration is the vocabulary, NOT the visible cells —
+# which is what makes a typo catchable when nothing is installed to compare to.
+
+
+def test_derivative_narrows_to_one_app(study, queried, capsys):
+    campaign_mod.write_state(study, LABEL, [cell(ANCHOR), cell(CHAIN)])
+
+    assert status_mod.report(study, LABEL, derivative="SimBIDS-0.0.3+chain") == 0
+
+    out, _ = capsys.readouterr()
+    rows = [line for line in out.splitlines()[1:]]
+    assert len(rows) == 1
+    assert "SimBIDS-0.0.3+chain" in rows[0]
+
+
+def test_derivative_refuses_a_name_the_campaign_does_not_declare(study, queried):
+    campaign_mod.write_state(study, LABEL, [cell(ANCHOR), cell(CHAIN)])
+
+    with pytest.raises(SystemExit) as excinfo:
+        status_mod.report(study, LABEL, derivative="SimBIDS-0.0.3+typo")
+
+    assert "not an app in campaign" in str(excinfo.value)
+    assert "SimBIDS-0.0.3+anchor, SimBIDS-0.0.3+chain" in str(excinfo.value)
+
+
+def test_a_typo_is_refused_even_when_no_member_is_installed(superstudy, queried):
+    """The case that decides where the vocabulary comes from. With every member
+    uninstalled there is not one readable cell to compare a name against, so a filter
+    validated against visible apps would accept anything and render a table of
+    `unknown` — reporting a typo as "nothing to see"."""
+    (superstudy / "study-dsA" / ".datalad").rmdir()
+
+    with pytest.raises(SystemExit) as excinfo:
+        status_mod.run_status(derivative="SimBIDS-0.0.3+typo")
+
+    assert "not an app in campaign" in str(excinfo.value)
+
+
+def test_an_uninstalled_member_survives_a_derivative_filter(
+    superstudy, queried, capsys
+):
+    """Its app is unreadable, not absent. Dropping it would assert this app has no
+    cell there, which is exactly the claim `unknown` refuses to make."""
+    assert status_mod.run_status(derivative="SimBIDS-0.0.3+anchor") == 0
+
+    rows, _ = _rows(capsys, status_mod.SUPER_COLUMNS)
+    assert [(r["study"], r["app"], r["state"]) for r in rows] == [
+        ("study-dsA", "SimBIDS-0.0.3+anchor", status_mod.MERGED),
+        ("study-dsB", "", status_mod.UNKNOWN),
+    ]
+
+
+def test_declared_app_stems_reads_the_campaigns_own_declaration(study):
+    assert campaign_mod.declared_app_stems(study, LABEL) == [
+        "SimBIDS-0.0.3+anchor",
+        "SimBIDS-0.0.3+chain",
+    ]
