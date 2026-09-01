@@ -1,34 +1,24 @@
-"""utils.py — the campaign's datalad primitives: `locked` and `datalad_save_scope`.
+"""utils.py — the primitives every mechababs writer shares: the flock, and saving.
 
-The two things every campaign mutator (`add-dataset`, `iterate`,
-`retire-derivative`) needs: a single-writer lock, and a way to collapse a block of
-work into one labeled provenance node. They are kept together because they are
-always used together — take the lock, then open a scope.
+Two things, and each verb reaches for both: a single-writer lock over the campaign,
+and a way to land a block of work as one attributable commit at one level.
 
-`datalad_save_scope` is a clean-in / one-node-out context manager built entirely
-on `ds.save(since=<entry>)` (datalad#7821's run-merge engine, exposed via `since=`).
-It records HEAD at entry and, on clean exit, collapses everything the block did
-into ONE first-parent commit — one labeled "node" — on `ds`'s mainline:
+**Saving is always path-scoped and always declared.** `campaign_save_scope` and
+`save_paths` commit exactly the paths the caller names — the same
+declare-your-outputs contract `datalad run --explicit` makes — so nothing outside
+the declaration is walked, evaluated, or swept in. A declared path that is a
+subdataset is gitlink-registered, never recursed: the super's record of a member is
+which commit it points at, and descending would both cost a walk of that member's
+tree and pull its own uncommitted work into a commit at this level.
 
-  - a block that only edited files              -> a flat commit;
-  - a block that made inner commits (babs init) -> a merge whose FIRST parent is
-                                                   the entry sha and whose second
-                                                   parent is the inner chain, so
-                                                   `git log --first-parent` shows
-                                                   just this one labeled step (the
-                                                   inner commits stay reachable +
-                                                   `datalad rerun`-able off it).
+That is what makes "every level commits its own facts" implementable: a verb that
+changes a member and its superstudy opens one scope per level, nested outer-first,
+and each commits only what that level can see.
 
-"One node" is PER touched dataset, not one commit total. `recursive=True` is the
-load-bearing correctness knob: without it a subdataset-deep change (the derivative's
-own commits under a study under the campaign) is a silent `notneeded` no-op, so the
-campaign never records the advance. With it, one call bumps a gitlink up each level
-of the nest — one clean node at the derivative, one at the study, one at the campaign
-(the irreducible per-level ripple: git can't move the super's pointer without the
-sub having a new commit to point at).
-
-The clean-in guard makes "everything since base == this block's work" true, so the
-node is attributable; a dirty tree raises rather than absorbing unrelated changes.
+**Checking is deliberately shallow.** `shallow_status` compares submodule gitlinks
+without walking their worktrees, which is what keeps a check over a study with real
+source data cheap enough to run every tick — and a dirty submodule *worktree* is
+never this layer's business, while a moved submodule *pointer* always is.
 """
 
 import fcntl
@@ -38,8 +28,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from datalad.api import Dataset
-
-from mechababs.state import LOCK_FILENAME
 
 
 def run(*cmd, **kwargs):
@@ -102,9 +90,7 @@ def campaign_save_scope(root, paths):
 
     Through ``datalad.api``, not a shelled-out ``datalad``: datalad is a declared
     dependency, so it is importable wherever this runs — including the ``uvx``
-    install, which has no ``bin/datalad`` beside the interpreter to find. (Sibling to
-    ``datalad_save_scope`` below, whose clean-in is whole-dataset and whose save is
-    ``since=``-based; here the scope is one directory, so both can be path-scoped.)
+    install, which has no ``bin/datalad`` beside the interpreter to find.
     """
     paths = require_clean_paths(root, paths)
     pending = PendingSave()
@@ -269,42 +255,3 @@ def flocked(lock):
             yield
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
-
-
-@contextmanager
-def locked(campaign):
-    """Hold the campaign's single-writer flock around a read-modify-write.
-
-    The campaign-level primitive that keeps `add-dataset`, `iterate`, and
-    `retire-derivative` from interleaving: each holds this for the whole
-    read-modify-write of the ledger and the nest it describes.
-    """
-    with flocked(Path(campaign) / LOCK_FILENAME):
-        yield
-
-
-@contextmanager
-def datalad_save_scope(ds, message, *, recursive=False, dry_run=False, **save_kwargs):
-    """Group everything done in the block into ONE labeled node at `ds`.
-
-    dry_run yields the block (whose own steps print rather than mutate), then skips
-    the clean-in guard and the save, printing the save that would have run — so a
-    caller uses one code path for real and dry runs.
-
-    `since=` is helper-owned (it collides with the entry sha); everything else
-    `ds.save()` accepts (`path=`, `jobs=`, `to_git=`, …) rides `**save_kwargs`.
-    """
-    if dry_run:
-        yield ds
-        rflag = "--recursive " if recursive else ""
-        print(
-            f"DRY-RUN  datalad save --dataset {ds.path} --since <HEAD> "
-            f"{rflag}--message {message!r}",
-            file=sys.stderr,
-        )
-        return
-    if ds.repo.dirty:
-        raise RuntimeError(f"{ds.path} is dirty; refusing to open datalad_save_scope")
-    base = ds.repo.get_hexsha()
-    yield ds
-    ds.save(since=base, message=message, recursive=recursive, **save_kwargs)

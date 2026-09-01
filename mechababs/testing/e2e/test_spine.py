@@ -499,6 +499,13 @@ def _stage_scaffold(study):
         f"the derivative is not registered as a subdataset: {gitlink}"
     )
 
+    # The RIA stores are babs's local machinery, not content: committing them would
+    # put an absolute-path store into the published derivative. Scoped to the two
+    # store directories, since babs does track `.babs/babs_init_config.yaml` itself.
+    assert not _git(
+        derivative, "ls-files", "--", ".babs/input_ria", ".babs/output_ria"
+    ).strip(), "the RIA stores were committed into the derivative"
+
     # The pin records what was REQUESTED; babs's own processing_inclusion.csv records
     # what it could run. Their diff is what catches a selected subject the data lacks.
     pin = (
@@ -893,6 +900,115 @@ def _stage_iterate_drives_the_chain_cell(study):
     _assert_clean(study, "the tick with nothing left to do")
 
 
+def _stage_retire_clears_a_cell_so_it_can_be_redone(study):
+    """A derivative leaves the study, its cell reopens, and a tick really redoes it.
+
+    Both modes, because they are different promises. `--path` has to leave a readable
+    archive OUTSIDE the study — same dataset relocated, not a copy — while `--remove`
+    has to leave nothing anywhere. And between them the assertion that makes retire
+    worth having at all: after the reset, `iterate` scaffolds the cell again.
+
+    Runs last, and deliberately so: it takes the campaign's derivatives away.
+
+    Needs no scheduler. The anchor cell is scaffolded by `_stage_scaffold` on every
+    rung, and a re-scaffold is `babs init` and git.
+    """
+    anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
+    derivative_rel = f"derivatives/{ANCHOR}+{DATASET_ID}"
+    derivative = study / derivative_rel
+    # A sibling of the study, so the move is a rename rather than a copy — and so the
+    # outside-the-study rule is exercised against a real neighbouring directory.
+    attic = study.parent / f"{study.name}-retired"
+    before_id = campaign_mod.dataset_id(derivative)
+    assert before_id, f"{derivative} has no datalad-id to preserve"
+
+    # Inside the study is refused, and refused without touching anything — a study is
+    # a published object, and a retired attempt kept in it would travel with it.
+    refused = _in_campaign(
+        study,
+        LABEL,
+        "retire-derivative",
+        derivative_rel,
+        "--path",
+        str(study / "attic"),
+        check=False,
+    )
+    assert refused.returncode != 0, "a destination inside the study was accepted"
+    assert "must be outside the study" in refused.stderr, refused.stderr
+    assert derivative.is_dir(), "the refused retire moved the derivative anyway"
+    _assert_clean(study, "the refused retire")
+
+    # --- --path: the archive keeps the evidence --------------------------------
+    _in_campaign(
+        study, LABEL, "retire-derivative", derivative_rel, "--path", str(attic)
+    )
+
+    parked = attic / f"{study.name}-{ANCHOR}+{DATASET_ID}-attempt-1"
+    assert parked.is_dir(), sorted(p.name for p in attic.iterdir())
+    assert (parked / "logs").is_dir(), "the archive lost the logs it exists to keep"
+    assert campaign_mod.dataset_id(parked) == before_id, (
+        "the archive is a copy, not the same dataset relocated"
+    )
+    # Readable where it landed: an archive whose git history cannot be opened is a
+    # directory of files, and the history is half the evidence.
+    assert _git(parked, "log", "-1", "--format=%s").strip()
+
+    assert not derivative.exists(), "the derivative is still in the study"
+    assert f"derivatives/{ANCHOR}" not in (study / ".gitmodules").read_text(), (
+        "the study still registers the retired derivative"
+    )
+
+    rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
+    assert rows[anchor_app]["babs"] == "" and rows[anchor_app]["merged"] == "", (
+        f"retire did not reset the cell: {rows[anchor_app]}"
+    )
+    assert rows[anchor_app]["source_dataset"] == SOURCEDATA, (
+        "the reset rewrote an identity column"
+    )
+    assert _status_row(_status(study), ANCHOR)["state"] == "not started", _status(study)
+
+    # A plain save, NOT a `datalad run`: `--remove` destroys content and `--path`
+    # names a host directory outside every dataset, so recording either as
+    # re-executable would be a promise retire cannot keep.
+    subject = _git(study, "log", "-1", "--format=%s").strip()
+    assert subject.startswith(
+        f"mechababs retire-derivative {derivative_rel} --path "
+    ), subject
+    assert not subject.startswith("[DATALAD RUNCMD]"), (
+        f"retire recorded itself as a re-executable run: {subject}"
+    )
+    # One commit, declaring only what the study level owns.
+    changed = sorted(_git(study, "show", "--name-only", "--format=", "HEAD").split())
+    assert changed == sorted(
+        [
+            ".gitmodules",
+            str(campaign_mod.state_path(study, LABEL).relative_to(study)),
+            derivative_rel,
+        ]
+    ), changed
+    _assert_clean(study, "retire --path")
+
+    # --- the reset is real: a tick scaffolds the cell again ---------------------
+    tick = _iterate(study, "--batch", "1", "--derivative", ANCHOR)
+    assert "not started -> scaffold" in tick.stderr, tick.stderr
+    assert (derivative / ".babs").is_dir(), "the cell was not re-scaffolded"
+    _assert_clean(study, "the tick that re-scaffolded the retired cell")
+
+    # --- --remove: nothing is kept ---------------------------------------------
+    _in_campaign(study, LABEL, "retire-derivative", derivative_rel, "--remove")
+
+    assert not derivative.exists(), "--remove left the derivative in place"
+    assert sorted(p.name for p in attic.iterdir()) == [parked.name], (
+        "--remove parked the derivative instead of deleting it"
+    )
+    rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
+    assert rows[anchor_app]["babs"] == "", "--remove did not reset the cell"
+    assert _git(study, "log", "-1", "--format=%s").strip() == (
+        f"mechababs retire-derivative {derivative_rel} --remove (campaign {LABEL!r})"
+    )
+    _assert_clean(study, "retire --remove")
+
+
 def test_spine(
     study, cluster_config, app_configs, mechababs_pin, babs_pin, simbids_sif
 ):
@@ -913,6 +1029,7 @@ def test_spine(
     _stage_merge(study)
     _stage_update_env_bumps_the_environment(study)
     _stage_iterate_drives_the_chain_cell(study)
+    _stage_retire_clears_a_cell_so_it_can_be_redone(study)
 
 
 def test_campaign_init_refuses_outside_a_study(
