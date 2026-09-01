@@ -104,14 +104,25 @@ DERIVED_COLUMNS = ["babs", "merged"]
 STATE_COLUMNS = IDENTITY_COLUMNS + TOPOLOGY_COLUMNS + DERIVED_COLUMNS
 
 # The superstudy's membership catalog: which (study, source dataset) pairs this
-# campaign runs on, plus the ONE piece of state committed at the super. `lifecycle`
-# is deliberately coarse (pending/active/complete) and written only at material
-# transitions -- a member starts, a member's last cell merges -- never per tick. It
-# exists for readers who have git but not the cluster; per-cell truth stays in the
-# member shards, so nothing here can disagree with them at a finer grain than it
-# claims to describe.
+# campaign runs on, plus the ONE piece of state committed at the super. It exists for
+# readers who have git but not the cluster; per-cell truth stays in the member shards.
+#
+# One lifecycle per ROW, not per member: the file is `studies+sourcedata.tsv` and a
+# study may carry more than one source dataset, each with its own progress. The finer
+# grain computes the coarser one for free (a study is done when all its rows are), so
+# rolling up here would only lose which source dataset is behind.
 MEMBER_COLUMNS = ["study", "source_dataset", "lifecycle"]
-LIFECYCLE_PENDING = "pending"
+
+# The three a row can read, in the order they happen. `registered` is what
+# `add-dataset` writes: selected into the campaign, nothing dispatched. Not "pending"
+# -- nothing is queued, since a tick only happens when a human runs one -- and the
+# word would collide with the cell vocabulary's `waiting`, which is a real
+# blocked-on-a-producer state. `merged` rather than "complete" because it is the word
+# the cell table already uses for the same fact one grain down, so a member and its
+# cells read alike.
+LIFECYCLE_REGISTERED = "registered"
+LIFECYCLE_ACTIVE = "active"
+LIFECYCLE_MERGED = "merged"
 
 # The member's half of the superstudy relationship, written into its campaign.yaml
 # when its footprint is created. Its value is the super's DATALAD-ID: an identity,
