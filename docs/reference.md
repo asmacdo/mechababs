@@ -38,7 +38,7 @@ and a fix can be exercised through a whole campaign before it is pushed anywhere
 The pin records that path, so it is for development rather than for a campaign
 whose provenance has to resolve elsewhere later.
 
-### 2. `mechababs {configure,add-dataset,iterate,test-cluster,status,retire-derivative}` — operate (run from the campaign venv)
+### 2. `mechababs {configure,add-dataset,iterate,test-cluster,status,jobs,retire-derivative}` — operate (run from the campaign venv)
 
 ```bash
 cd my-campaign
@@ -69,11 +69,16 @@ mechababs test-cluster --cluster your-site.yaml   # by path; configs are not loo
                  [--babs URL@REF]                # default: what a user's campaign gets
                  [-- -k test_spine]              # after `--`, args go to pytest
 
-# read-only: one row per job across every (dataset, pipeline) cell —
-# dataset · pipeline · sub/ses · job_id · state · time_used/limit · failed · log path
-mechababs status [-o columns|tsv|vd]     # default: an aligned table
-                 [--study ds004044] [--derivative MRIQC-24.0.2] [--failed]
-                 [--no-refresh]          # skip the per-cell `babs status` refresh
+# read-only: one row per CELL — the statefile as it is, plus live babs counts for
+# the cells that are running. At a superstudy the rows span every member.
+mechababs status [--study study-ds000001]      # at a superstudy, one member
+                 [--derivative MRIQC-24.0.2]   # one app config, by its stem
+
+# read-only: one row per JOB — the drill-down under status's cells, with each job's
+# sub/ses, SLURM id, state, times, and the directory its logs are in.
+mechababs jobs   [--study study-ds000001] [--derivative MRIQC-24.0.2]
+                 [--failed]         # only jobs babs marks failed
+                 [--no-refresh]     # read babs's cache instead of recomputing it
 
 # retire a derivative that has to be redone: move it out of its study into
 # derivative-attempts/ and reset its ledger cell, so iterate re-scaffolds it
@@ -128,11 +133,47 @@ commands won't operate on it, and neither will `datalad get`/`push` through thos
 siblings**. Read its logs, history and content; retire a cell you mean to redo from
 scratch, not one you mean to continue.
 
-`status` aggregates each babs project's `code/job_status.csv` (which carries no
-dataset/pipeline column, and where every job is named `bid`) so a failure points
-straight at its log. It refreshes each matched cell from `sacct` first — `--study`
-/`--derivative` narrow *before* the refresh, so scoping keeps it fast — and
-`--no-refresh` makes reading the possibly-stale cache an explicit choice.
+`status` and `jobs` are the two read-only views, and they answer different
+questions: `status` says how each **cell** is doing, `jobs` says which subject's
+**job** failed and where to look. Neither takes the campaign lock, so either can be
+run while a tick is in progress — which is precisely when you want to look. Both put
+the table on stdout and the summary line on stderr, so `status | grep FAILED` sees
+rows and only rows.
+
+**At a superstudy the rollup is computed, never stored.** `status` reads each
+member's shard at the moment you look; the superstudy commits membership and no
+per-cell state, so there is no cache here to drift out of agreement with what it
+summarizes. Rows gain a `study` column and an `installed` one.
+
+`installed` is a separate axis from `state`, not a value of it. It is `yes` only if
+the member study **and** that cell's derivative are on disk, so a cell whose work is
+finished and whose output has since been offloaded reads `merged` + `no` — folding
+them into one column would report it as neither. Dropping annexed *content* does not
+show up here: `datalad drop` leaves the derivative dataset in place, and the campaign
+dir carries `* annex.largefiles=nothing`, so the shard stays readable in git and the
+state stays correct. Only a member with no working tree at all is opaque, and its
+cells read `unknown` — never `not started`, which would assert something false about
+work that may well be finished.
+
+`--derivative` is checked against the campaign's **declared** app bundle rather than
+against the apps visible in the rows. The two differ in one situation and it is the
+one that matters: with every member uninstalled there is not a readable cell to
+compare a name against, so a typo would otherwise render as a page of `unknown`
+instead of being refused.
+
+`jobs` reads each babs project's `code/job_status.csv` — which carries no dataset or
+app column and names every job `bid` — and adds the context babs has no way to know:
+which study, source dataset and app each row came from. The job id is `<job>_<task>`,
+SLURM's own array addressing, so it can be pasted straight into `sacct -j`. The log
+column is the cell's log *directory*, resolved from where you are standing.
+
+That CSV is a cache babs recomputes from the scheduler, so `jobs` refreshes it first.
+Reading it as-is can be actively wrong rather than merely stale: babs's submit path
+rewrites a resubmitted row's `job_id` without clearing the previous attempt's
+`is_failed`, so a running job can show as failed. `--study`/`--derivative` narrow
+*before* the refresh, so scoping keeps it fast, and `--no-refresh` makes accepting a
+possibly-wrong row an explicit choice (the header then says the table was not
+refreshed).
 
 `configure` refuses to overwrite an existing ledger — resetting a campaign is
 "delete `desc-mechababs_datasets.tsv`, re-run `configure`" (containers already
