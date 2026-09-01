@@ -83,10 +83,27 @@ FAILED = "FAILED"
 # still in git and still reads exactly right. Dropping content to reclaim space is
 # the ordinary sweep move and it costs no visibility -- only a full uninstall does.
 #
-# The catalog's `lifecycle` column is what is meant to answer this ("for readers who
-# have git but not the cluster", campaign.py) and nothing advances it past `pending`
-# yet. When it does, `complete` lands here instead of `unknown`.
+# The catalog's `lifecycle` column is what answers this ("for readers who have git but
+# not the cluster", campaign.py), so an uninstalled member's rows read it rather than
+# this. `unknown` is the fallback for a row that has none — a catalog written before
+# the column carried anything, where "we cannot see" really is the honest reading.
 UNKNOWN = "unknown"
+
+# The catalog's lifecycle, said in the table's own words. An uninstalled member's rows
+# come from the catalog rather than a shard, and `state` has to mean one thing in the
+# column regardless of which it was read from — so the coarse value is translated here
+# rather than leaking a second vocabulary into the table (and past ``SUMMARY_ORDER``,
+# which would count it in the total and then drop it from the parts).
+#
+# The translation is exact at both ends and lossy in the middle: `registered` really is
+# `not started`, and `merged` really is `merged`, but a member-level `active` cannot say
+# which of its cells is the active one. That is the resolution the catalog claims, and
+# the reason installing the member is what buys per-cell detail.
+FROM_LIFECYCLE = {
+    campaign_mod.LIFECYCLE_REGISTERED: NOT_STARTED,
+    campaign_mod.LIFECYCLE_ACTIVE: ACTIVE,
+    campaign_mod.LIFECYCLE_MERGED: MERGED,
+}
 
 # ``route`` returns a waiting state carrying its producer's stem, so the summary
 # buckets on the prefix rather than the whole string.
@@ -204,7 +221,7 @@ def member_records(superstudy, label, name, catalog):
             STUDY: name,
             INSTALLED: NO,
             "source_dataset": row.get("source_dataset", ""),
-            "state": UNKNOWN,
+            "state": FROM_LIFECYCLE.get(row.get("lifecycle"), UNKNOWN),
         }
         for row in catalog
         if row.get("study") == name
