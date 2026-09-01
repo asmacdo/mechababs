@@ -16,6 +16,7 @@ from mechababs import __version__, campaign_init
 from mechababs import add_dataset as add_dataset_mod
 from mechababs import campaign as campaign_mod
 from mechababs import iterate as iterate_mod
+from mechababs import jobs as jobs_mod
 from mechababs import retire as retire_mod
 from mechababs import status as status_mod
 from mechababs import study as study_mod
@@ -169,6 +170,17 @@ def cmd_test_cluster(args):
 def cmd_status(args):
     """Read-only: one row per cell, with live job counts for the running ones."""
     return status_mod.run_status(".", study=args.study, derivative=args.derivative)
+
+
+def cmd_jobs(args):
+    """Read-only: one row per job, with the log path for each."""
+    return jobs_mod.run_jobs(
+        ".",
+        study=args.study,
+        derivative=args.derivative,
+        failed=args.failed,
+        refresh_first=args.refresh,
+    )
 
 
 def main():
@@ -504,6 +516,43 @@ def main():
         "is refused even when nothing is installed to compare against.",
     )
     ps.set_defaults(func=cmd_status)
+
+    pj = sub.add_parser(
+        "jobs",
+        help="one row per job of the selected campaign (read-only)",
+        description=(
+            "The drill-down under `status`'s cells: every job babs is tracking, "
+            "tagged with the study, source dataset and app it belongs to, and the "
+            "path to its log. A cell with nothing submitted has no job_status.csv "
+            "and is left out. Read-only, and it takes no lock."
+        ),
+    )
+    pj.add_argument(
+        "--study",
+        default=None,
+        metavar="MEMBER",
+        help="at a superstudy, only this member's jobs",
+    )
+    pj.add_argument(
+        "--derivative",
+        default=None,
+        metavar="STEM",
+        help="only this app config's jobs, by its filename stem",
+    )
+    pj.add_argument(
+        "--failed",
+        action="store_true",
+        help="only jobs babs marks failed (ended without results)",
+    )
+    pj.add_argument(
+        "--no-refresh",
+        dest="refresh",
+        action="store_false",
+        help="read babs's job_status.csv as it stands instead of recomputing it "
+        "from the scheduler first. Faster, and an explicit choice: a stale row can "
+        "show a resubmitted job as failed.",
+    )
+    pj.set_defaults(func=cmd_jobs)
 
     args = p.parse_args()
     return args.func(args)
