@@ -122,7 +122,7 @@ def cmd_iterate(args):
         iterate_mod.run_iterate(
             ".",
             batch=args.batch,
-            derivative=args.derivative,
+            app=args.app,
             study=args.study,
             dry_run=args.dry_run,
         )
@@ -362,7 +362,7 @@ def main():
         "already done, waiting, or still running does not count against it.",
     )
     pi.add_argument(
-        "--derivative",
+        "--app",
         default=None,
         metavar="STEM",
         help="only this app config's cells, by its filename stem (e.g. MRIQC-24.0.2)",
@@ -372,7 +372,7 @@ def main():
         default=None,
         metavar="MEMBER",
         help="at a superstudy, advance only this member (composable with "
-        "--derivative). Where you stand gives the level; this narrows within it.",
+        "--app). Where you stand gives the level; this narrows within it.",
     )
     pi.add_argument(
         "--dry-run",

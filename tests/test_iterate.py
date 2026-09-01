@@ -317,7 +317,7 @@ def test_a_producer_that_merges_mid_tick_opens_its_dependants_gate(study, tick):
 
 
 # --------------------------------------------------------------------------
-# Scope: --batch and --derivative
+# Scope: --batch and --app
 # --------------------------------------------------------------------------
 
 
@@ -348,14 +348,14 @@ def test_a_cell_that_does_not_advance_does_not_consume_batch(study, tick):
 def test_derivative_narrows_to_one_apps_cells(study, tick):
     write(study, [cell(ANCHOR), cell(CHAIN)])
 
-    iterate_mod.tick(study, LABEL, derivative="SimBIDS-0.0.3+chain")
+    iterate_mod.tick(study, LABEL, app="SimBIDS-0.0.3+chain")
 
     assert [c["cell"][1] for c in dispatched(tick)] == [CHAIN]
 
 
 def test_a_derivative_that_matches_nothing_is_a_typo_not_an_empty_tick(study, tick):
-    with pytest.raises(SystemExit, match="no cells for --derivative"):
-        iterate_mod.tick(study, LABEL, derivative="MRIQC-24.0.2")
+    with pytest.raises(SystemExit, match="no cells for --app"):
+        iterate_mod.tick(study, LABEL, app="MRIQC-24.0.2")
     assert tick == []
 
 
