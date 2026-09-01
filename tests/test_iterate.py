@@ -239,7 +239,7 @@ def test_jobs_still_in_flight_are_left_alone(study, tick):
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT)])
     tick.status = dict(STILL_RUNNING)
 
-    assert iterate_mod.tick(study, LABEL) == 0
+    assert iterate_mod.tick(study, LABEL) == []
     assert dispatched(tick) == [], "a running cell was advanced"
 
 
@@ -288,7 +288,7 @@ def test_a_merged_cell_is_skipped_without_asking_babs(study, tick):
     """The economy the `merged` column buys: a done cell costs no query at all."""
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT, merged="true")])
 
-    assert iterate_mod.tick(study, LABEL) == 0
+    assert iterate_mod.tick(study, LABEL) == []
     assert tick == [], "a merged cell was queried or advanced"
 
 
@@ -324,7 +324,7 @@ def test_a_producer_that_merges_mid_tick_opens_its_dependants_gate(study, tick):
 def test_batch_bounds_the_cells_that_advance(study, tick):
     write(study, [cell(ANCHOR), cell(CHAIN)])
 
-    assert iterate_mod.tick(study, LABEL, batch=1) == 1
+    assert len(iterate_mod.tick(study, LABEL, batch=1)) == 1
     assert [c["cell"][1] for c in dispatched(tick)] == [ANCHOR]
 
 
@@ -341,7 +341,7 @@ def test_a_cell_that_does_not_advance_does_not_consume_batch(study, tick):
         ],
     )
 
-    assert iterate_mod.tick(study, LABEL, batch=1) == 1
+    assert len(iterate_mod.tick(study, LABEL, batch=1)) == 1
     assert [c["cell"][1] for c in dispatched(tick)] == ["bids-app-configs/Third.yaml"]
 
 
@@ -491,12 +491,12 @@ def superstudy(tmp_path, monkeypatch):
             {
                 "study": "study-dsA",
                 "source_dataset": SOURCEDATA,
-                "lifecycle": "pending",
+                "lifecycle": campaign_mod.LIFECYCLE_REGISTERED,
             },
             {
                 "study": "study-dsB",
                 "source_dataset": SOURCEDATA,
-                "lifecycle": "pending",
+                "lifecycle": campaign_mod.LIFECYCLE_REGISTERED,
             },
         ],
     )
@@ -514,7 +514,7 @@ def superstudy(tmp_path, monkeypatch):
     monkeypatch.setattr(
         iterate_mod.utils,
         "save_paths",
-        lambda root_, paths, message: recorded.append((root_, str(paths), message)),
+        lambda root_, paths, message: recorded.append((root_, list(paths), message)),
     )
     monkeypatch.setattr(
         iterate_mod.utils, "require_clean_gitlink", lambda root_, member: None
@@ -541,12 +541,12 @@ def test_members_advance_in_catalog_order(superstudy, tick):
             {
                 "study": "study-dsB",
                 "source_dataset": SOURCEDATA,
-                "lifecycle": "pending",
+                "lifecycle": campaign_mod.LIFECYCLE_REGISTERED,
             },
             {
                 "study": "study-dsA",
                 "source_dataset": SOURCEDATA,
-                "lifecycle": "pending",
+                "lifecycle": campaign_mod.LIFECYCLE_REGISTERED,
             },
         ],
     )
@@ -566,12 +566,12 @@ def test_a_member_selected_twice_is_advanced_once(superstudy, tick):
             {
                 "study": "study-dsA",
                 "source_dataset": SOURCEDATA,
-                "lifecycle": "pending",
+                "lifecycle": campaign_mod.LIFECYCLE_REGISTERED,
             },
             {
                 "study": "study-dsA",
                 "source_dataset": "sourcedata/other",
-                "lifecycle": "pending",
+                "lifecycle": campaign_mod.LIFECYCLE_REGISTERED,
             },
         ],
     )
@@ -769,7 +769,9 @@ def test_each_member_is_recorded_at_the_super_as_it_advances(superstudy, tick):
 
     iterate_mod.run_iterate(str(root))
 
-    assert [Path(path).name for _root, path, _msg in saves] == [m.name for m in members]
+    assert [[Path(p).name for p in paths] for _root, paths, _msg in saves] == [
+        [member.name, campaign_mod.MEMBERS_FILENAME] for member in members
+    ]
     assert all(saved_root == root for saved_root, _, _ in saves)
     assert all(LABEL in message for _, _, message in saves)
 
