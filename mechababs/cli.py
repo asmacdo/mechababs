@@ -168,7 +168,7 @@ def cmd_test_cluster(args):
 
 def cmd_status(args):
     """Read-only: one row per cell, with live job counts for the running ones."""
-    return status_mod.run_status(".")
+    return status_mod.run_status(".", study=args.study)
 
 
 def main():
@@ -478,11 +478,22 @@ def main():
         "status",
         help="one row per cell of the selected campaign (read-only)",
         description=(
-            "Render this study's cells for the selected campaign, one row each — the "
-            "statefile as it is, plus the part it deliberately does not store: for a "
-            "cell whose jobs are running, the live `babs status` counts. Read-only, "
-            "and it takes no lock, so it can be run while a tick is in progress."
+            "Render the selected campaign's cells, one row each — the statefile as it "
+            "is, plus the part it deliberately does not store: for a cell whose jobs "
+            "are running, the live `babs status` counts. At a superstudy the rows "
+            "span every member, computed from their shards at the moment you look, "
+            "with a column saying which members are on disk. Read-only, and it takes "
+            "no lock, so it can be run while a tick is in progress. The table goes to "
+            "stdout and the summary to stderr, so it stays pipeable."
         ),
+    )
+    ps.add_argument(
+        "--study",
+        default=None,
+        metavar="MEMBER",
+        help="at a superstudy, only this member's cells. Matched against the "
+        "campaign's catalog, so a directory that was never selected in is an "
+        "error rather than an empty table.",
     )
     ps.set_defaults(func=cmd_status)
 

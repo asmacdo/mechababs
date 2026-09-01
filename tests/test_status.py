@@ -221,3 +221,141 @@ def test_an_empty_campaign_renders_nothing_and_says_why(study, queried, capsys):
     out, err = capsys.readouterr()
     assert out == ""
     assert "add-dataset" in err
+
+
+# --------------------------------------------------------------------------
+# At a superstudy: the same table, wider. The rollup is computed from the member
+# shards at the moment you look, so what is worth asserting is that it reads THEM
+# (not a cache at the super), that `installed` is an axis of its own, and that an
+# uninstalled member costs neither a shard read nor a babs query.
+
+
+@pytest.fixture
+def superstudy(tmp_path, monkeypatch):
+    """A super with two members: `study-dsA` installed, `study-dsB` never installed.
+
+    dsB is the case that matters — registered in the catalog, no working tree, so its
+    shard cannot be read at all. dsA carries one merged cell and one active one.
+    """
+    root = tmp_path / "my-super"
+    campaign_mod.campaign_dir(root, LABEL).mkdir(parents=True)
+
+    installed = root / "study-dsA"
+    campaign_mod.campaign_dir(installed, LABEL).mkdir(parents=True)
+    (installed / ".datalad").mkdir()
+    campaign_mod.state_path(installed, LABEL).write_text(campaign_mod.initial_header())
+    campaign_mod.write_state(
+        installed,
+        LABEL,
+        [
+            cell(ANCHOR, babs=ANCHOR_PROJECT, merged="yes"),
+            cell(CHAIN, babs="derivatives/chain"),
+        ],
+    )
+
+    # dsB is registered and absent: no directory at all, which is what `datalad
+    # uninstall` leaves behind once the mount point is gone.
+    campaign_mod.write_members(
+        root,
+        LABEL,
+        [
+            {
+                "study": "study-dsA",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+            {
+                "study": "study-dsB",
+                "source_dataset": SOURCEDATA,
+                "lifecycle": "pending",
+            },
+        ],
+    )
+
+    monkeypatch.setattr(
+        campaign_mod,
+        "require_selected_campaign",
+        lambda path=".", **kw: campaign_mod.Selected(
+            root, LABEL, campaign_mod.campaign_dir(root, LABEL), root
+        ),
+    )
+    return root
+
+
+def _rows(capsys, columns):
+    """The rendered table parsed back by the header's column positions."""
+    out, err = capsys.readouterr()
+    lines = out.splitlines()
+    starts, pos = [], 0
+    for col in columns:
+        pos = lines[0].index(col, pos)
+        starts.append(pos)
+        pos += len(col)
+    bounds = list(zip(starts, starts[1:] + [None]))
+    rows = [
+        {col: line[a:b].strip() for col, (a, b) in zip(columns, bounds)}
+        for line in lines[1:]
+    ]
+    return rows, err
+
+
+def test_a_superstudy_renders_every_member_in_catalog_order(
+    superstudy, queried, capsys
+):
+    assert status_mod.run_status() == 0
+
+    rows, _ = _rows(capsys, status_mod.SUPER_COLUMNS)
+    assert [r["study"] for r in rows] == ["study-dsA", "study-dsA", "study-dsB"]
+
+
+def test_installed_is_its_own_column_not_a_state(superstudy, queried, capsys):
+    """The two axes are independent, so a merged cell reads `merged` whatever the
+    member's installation says, and an absent member's cells read `unknown` rather
+    than `not started` — the difference between finished and unseen."""
+    assert status_mod.run_status() == 0
+
+    rows, _ = _rows(capsys, status_mod.SUPER_COLUMNS)
+    assert [(r["installed"], r["state"]) for r in rows] == [
+        (status_mod.YES, status_mod.MERGED),
+        (status_mod.YES, status_mod.ACTIVE),
+        (status_mod.NO, status_mod.UNKNOWN),
+    ]
+
+
+def test_an_uninstalled_member_costs_no_babs_query(superstudy, queried, capsys):
+    """Its shard is not there to read, so there is nothing to ask babs about — which
+    is what keeps a whole-superstudy look cheap when most of it is not on disk."""
+    assert status_mod.run_status() == 0
+
+    assert queried == [str(superstudy / "study-dsA" / "derivatives/chain")]
+
+
+def test_the_summary_goes_to_stderr_and_the_table_to_stdout(
+    superstudy, queried, capsys
+):
+    """Data and commentary, split so `status | grep` sees rows and only rows."""
+    assert status_mod.run_status() == 0
+
+    out, err = capsys.readouterr()
+    assert err.splitlines() == [
+        f"campaign {LABEL!r} · superstudy my-super",
+        "2 member(s), 1 installed · 3 cell(s): 1 merged, 1 active, 1 unknown",
+    ]
+    assert out.splitlines()[0].split() == status_mod.SUPER_COLUMNS
+
+
+def test_study_narrows_to_one_member(superstudy, queried, capsys):
+    assert status_mod.run_status(study="study-dsA") == 0
+
+    rows, err = _rows(capsys, status_mod.SUPER_COLUMNS)
+    assert {r["study"] for r in rows} == {"study-dsA"}
+    assert "1 member(s), 1 installed" in err
+
+
+def test_study_refuses_a_directory_that_was_never_selected_in(superstudy, queried):
+    """Matched against the catalog, not the filesystem — the same rule a tick uses, so
+    a typo is an error rather than a quietly empty table."""
+    with pytest.raises(SystemExit) as excinfo:
+        status_mod.run_status(study="study-dsZ")
+
+    assert "not a member" in str(excinfo.value)
