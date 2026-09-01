@@ -469,15 +469,19 @@ def _stage_fanout_scaffold(superstudy):
     assert record["pwd"] == ".", record
     assert f"--campaign {LABEL}" in record["cmd"], record["cmd"]
 
-    # ...and the superstudy records that the member advanced. Its commit is the
-    # gitlink move, nothing more: the super coordinates, the member does the work.
+    # ...and the superstudy records that the member advanced: the gitlink move, plus
+    # the one piece of state the super commits. This is the member's first scaffold, so
+    # its lifecycle leaves `registered` — and because it did, the subject is that rather
+    # than what happened to the cells. The super coordinates; the member does the work.
     super_subject = _git(superstudy, "log", "-1", "--format=%s").strip()
     assert super_subject == (
-        f"mechababs iterate: {MEMBER} advanced 1 cell(s) in campaign {LABEL!r}"
+        f"mechababs iterate: {MEMBER} {SOURCEDATA} is now "
+        f"{campaign_mod.LIFECYCLE_ACTIVE} (campaign {LABEL!r})"
     ), super_subject
+    catalog = campaign_mod.members_path(superstudy, LABEL).relative_to(superstudy)
     touched = _git(superstudy, "show", "--pretty=", "--name-only", "HEAD").split()
-    assert touched == [MEMBER], (
-        f"the superstudy's commit reaches past the member's gitlink: {touched}"
+    assert sorted(touched) == sorted([MEMBER, str(catalog)]), (
+        f"the superstudy's commit reaches past the member and its catalog: {touched}"
     )
 
     _assert_every_level_clean(superstudy, "the fan-out scaffold", MEMBER)
@@ -530,9 +534,15 @@ def _stage_fanout_submit_and_merge(superstudy):
         f"{tracked}"
     )
 
+    # The anchor merged but the chain has not, so the member's coarse lifecycle is
+    # still `active` and the catalog is not rewritten to what it already says. With no
+    # lifecycle change to lead with, the subject is what happened to the cells.
     assert _git(superstudy, "log", "-1", "--format=%s").strip() == (
-        f"mechababs iterate: {MEMBER} advanced 1 cell(s) in campaign {LABEL!r}"
+        f"mechababs iterate: {MEMBER} merged 1 cell (campaign {LABEL!r})"
     ), _git(superstudy, "log", "-1", "--format=%s")
+    assert _git(superstudy, "show", "--pretty=", "--name-only", "HEAD").split() == [
+        MEMBER
+    ], "the catalog was rewritten for a lifecycle that did not move"
     _assert_every_level_clean(superstudy, "the fan-out merge", MEMBER)
 
 
