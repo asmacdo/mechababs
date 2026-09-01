@@ -134,6 +134,37 @@ def config_path(root, label):
     return campaign_dir(root, label) / CONFIG_FILENAME
 
 
+def declared_app_stems(root, label):
+    """The stems of every app this campaign declares, from ``campaign.yaml``.
+
+    The campaign's **vocabulary**, and the thing to validate an app name against.
+    Read at the level the campaign is configured at, so it is answerable whatever is
+    or is not installed below it: a superstudy whose members have all been pushed and
+    uninstalled still knows exactly which apps it runs, while its cells are
+    unreadable. Validating a filter against visible cells instead would let a typo
+    through in precisely that case, and report it as "nothing to see".
+
+    The bundle is fixed at ``campaign init`` and added whole, so this is the complete
+    set of app stems any of this campaign's cells can carry.
+    """
+    config = yaml.safe_load(config_path(root, label).read_text()) or {}
+    return sorted({Path(rel).stem for rel in (config.get("apps") or [])})
+
+
+def require_declared_app(root, label, app):
+    """Exit unless ``app`` names one of this campaign's declared apps.
+
+    One refusal shared by every command that narrows by app, so the message a typo
+    gets does not depend on which verb you typed it into.
+    """
+    stems = declared_app_stems(root, label)
+    if app not in stems:
+        sys.exit(
+            f"--app {app!r} is not an app in campaign {label!r}.\n"
+            f"This campaign's apps are: {', '.join(stems) or '(none)'}"
+        )
+
+
 def state_path(study, label):
     """``study``, not ``root``: a statefile exists only at a study.
 

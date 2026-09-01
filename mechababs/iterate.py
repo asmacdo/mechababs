@@ -177,32 +177,30 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
     return True
 
 
-def work_list(rows, derivative=None):
+def work_list(rows, app=None):
     """The cells this tick will consider, in shard order, as ``(source, app)`` keys.
 
     Row order is the ordering mechanism — there is no priority scheme — so this
-    preserves it. ``derivative`` narrows to one app config's cells by its stem; naming
+    preserves it. ``app`` narrows to one app config's cells by its stem; naming
     a stem the campaign does not have is a typo far more often than it is an empty
     campaign, so it is refused rather than reported as "nothing to do".
     """
     keys = [campaign_mod.cell_key(row) for row in rows]
-    if derivative is None:
+    if app is None:
         return keys
     matched = [
-        key
-        for key, row in zip(keys, rows)
-        if scaffold_mod.app_stem(key[1]) == derivative
+        key for key, row in zip(keys, rows) if scaffold_mod.app_stem(key[1]) == app
     ]
     if not matched:
         stems = sorted({scaffold_mod.app_stem(key[1]) for key in keys})
         sys.exit(
-            f"no cells for --derivative {derivative!r} in this campaign.\n"
+            f"no cells for --app {app!r} in this campaign.\n"
             f"This campaign's apps are: {', '.join(stems) or '(none)'}"
         )
     return matched
 
 
-def tick(study, label, *, batch=None, derivative=None, dry_run=False):
+def tick(study, label, *, batch=None, app=None, dry_run=False):
     """One reconciler tick over ``study``'s shard for ``label``. Returns cells advanced.
 
     ``study`` is a parameter, never the cwd: at a superstudy the reconciler will stand
@@ -222,8 +220,8 @@ def tick(study, label, *, batch=None, derivative=None, dry_run=False):
     # ran in. Cheap: a gitlink compare, no descent into submodule worktrees.
     require_clean_shallow(study, what="an iterate tick")
 
-    cells = work_list(campaign_mod.read_state(study, label), derivative)
-    scope = f" ({derivative})" if derivative else ""
+    cells = work_list(campaign_mod.read_state(study, label), app)
+    scope = f" ({app})" if app else ""
     note(f"tick over {len(cells)} cell(s) in {study}{scope}")
 
     advanced = 0
@@ -274,7 +272,7 @@ def member_studies(superstudy, label, target=None):
     return [wanted]
 
 
-def run_iterate(root=".", *, batch=None, derivative=None, study=None, dry_run=False):
+def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
     """Resolve where we are standing, then tick — once, or once per member.
 
     The **configured-level check lives here**, on the user-driven path, and not on
@@ -317,9 +315,7 @@ def run_iterate(root=".", *, batch=None, derivative=None, study=None, dry_run=Fa
                     f"campaign {label!r} here is configured at a study, so there are "
                     f"no members to select between.\n--study narrows a superstudy tick."
                 )
-            return tick(
-                root, label, batch=batch, derivative=derivative, dry_run=dry_run
-            )
+            return tick(root, label, batch=batch, app=app, dry_run=dry_run)
 
         members = member_studies(root, label, study)
         note(f"superstudy tick over {len(members)} member(s) in {root}")
@@ -363,9 +359,7 @@ def run_iterate(root=".", *, batch=None, derivative=None, study=None, dry_run=Fa
             # status would answer this for every member at a cost linear in members, and
             # would answer it too early to be worth much; this one is flat and current.
             utils.require_clean_gitlink(root, name)
-            moved = tick(
-                member, label, batch=remaining, derivative=derivative, dry_run=dry_run
-            )
+            moved = tick(member, label, batch=remaining, app=app, dry_run=dry_run)
             advanced += moved
             if remaining is not None:
                 remaining -= moved

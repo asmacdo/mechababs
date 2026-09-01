@@ -16,6 +16,7 @@ from mechababs import __version__, campaign_init
 from mechababs import add_dataset as add_dataset_mod
 from mechababs import campaign as campaign_mod
 from mechababs import iterate as iterate_mod
+from mechababs import jobs as jobs_mod
 from mechababs import retire as retire_mod
 from mechababs import status as status_mod
 from mechababs import study as study_mod
@@ -121,7 +122,7 @@ def cmd_iterate(args):
         iterate_mod.run_iterate(
             ".",
             batch=args.batch,
-            derivative=args.derivative,
+            app=args.app,
             study=args.study,
             dry_run=args.dry_run,
         )
@@ -168,7 +169,18 @@ def cmd_test_cluster(args):
 
 def cmd_status(args):
     """Read-only: one row per cell, with live job counts for the running ones."""
-    return status_mod.run_status(".")
+    return status_mod.run_status(".", study=args.study, app=args.app)
+
+
+def cmd_jobs(args):
+    """Read-only: one row per job, with the log path for each."""
+    return jobs_mod.run_jobs(
+        ".",
+        study=args.study,
+        app=args.app,
+        failed=args.failed,
+        refresh_first=args.refresh,
+    )
 
 
 def main():
@@ -350,7 +362,7 @@ def main():
         "already done, waiting, or still running does not count against it.",
     )
     pi.add_argument(
-        "--derivative",
+        "--app",
         default=None,
         metavar="STEM",
         help="only this app config's cells, by its filename stem (e.g. MRIQC-24.0.2)",
@@ -360,7 +372,7 @@ def main():
         default=None,
         metavar="MEMBER",
         help="at a superstudy, advance only this member (composable with "
-        "--derivative). Where you stand gives the level; this narrows within it.",
+        "--app). Where you stand gives the level; this narrows within it.",
     )
     pi.add_argument(
         "--dry-run",
@@ -478,13 +490,69 @@ def main():
         "status",
         help="one row per cell of the selected campaign (read-only)",
         description=(
-            "Render this study's cells for the selected campaign, one row each — the "
-            "statefile as it is, plus the part it deliberately does not store: for a "
-            "cell whose jobs are running, the live `babs status` counts. Read-only, "
-            "and it takes no lock, so it can be run while a tick is in progress."
+            "Render the selected campaign's cells, one row each — the statefile as it "
+            "is, plus the part it deliberately does not store: for a cell whose jobs "
+            "are running, the live `babs status` counts. At a superstudy the rows "
+            "span every member, computed from their shards at the moment you look, "
+            "with a column saying which members are on disk. Read-only, and it takes "
+            "no lock, so it can be run while a tick is in progress. The table goes to "
+            "stdout and the summary to stderr, so it stays pipeable."
         ),
     )
+    ps.add_argument(
+        "--study",
+        default=None,
+        metavar="MEMBER",
+        help="at a superstudy, only this member's cells. Matched against the "
+        "campaign's catalog, so a directory that was never selected in is an "
+        "error rather than an empty table.",
+    )
+    ps.add_argument(
+        "--app",
+        default=None,
+        metavar="STEM",
+        help="only this app config's cells, by its filename stem (e.g. "
+        "MRIQC-24.0.2). Checked against the campaign's declared apps, so a typo "
+        "is refused even when nothing is installed to compare against.",
+    )
     ps.set_defaults(func=cmd_status)
+
+    pj = sub.add_parser(
+        "jobs",
+        help="one row per job of the selected campaign (read-only)",
+        description=(
+            "The drill-down under `status`'s cells: every job babs is tracking, "
+            "tagged with the study, source dataset and app it belongs to, and the "
+            "path to its log. A cell with nothing submitted has no job_status.csv "
+            "and is left out. Read-only, and it takes no lock."
+        ),
+    )
+    pj.add_argument(
+        "--study",
+        default=None,
+        metavar="MEMBER",
+        help="at a superstudy, only this member's jobs",
+    )
+    pj.add_argument(
+        "--app",
+        default=None,
+        metavar="STEM",
+        help="only this app config's jobs, by its filename stem",
+    )
+    pj.add_argument(
+        "--failed",
+        action="store_true",
+        help="only jobs babs marks failed (ended without results)",
+    )
+    pj.add_argument(
+        "--no-refresh",
+        dest="refresh",
+        action="store_false",
+        help="read babs's job_status.csv as it stands instead of recomputing it "
+        "from the scheduler first. Faster, and an explicit choice: a stale row can "
+        "show a resubmitted job as failed.",
+    )
+    pj.set_defaults(func=cmd_jobs)
 
     args = p.parse_args()
     return args.func(args)

@@ -66,7 +66,7 @@ A cell waiting on an unmerged producer is noted and passed over, and a cell whos
 mechababs iterate
 mechababs status
 ```
-`iterate --batch N` advances at most N cells this tick, `--derivative <stem>` narrows to one app's cells, and `--dry-run` prints the transitions it would dispatch without dispatching them.
+`iterate --batch N` advances at most N cells this tick, `--app <stem>` narrows to one app's cells, and `--dry-run` prints the transitions it would dispatch without dispatching them.
 A campaign is operated from the level where it was configured — the superstudy for a superstudy campaign, the study for a study campaign.
 At a superstudy, `iterate --study study-ds000001` narrows the tick to one member, to concentrate resources on finishing it.
 

@@ -989,7 +989,7 @@ def _stage_retire_clears_a_cell_so_it_can_be_redone(study):
     _assert_clean(study, "retire --path")
 
     # --- the reset is real: a tick scaffolds the cell again ---------------------
-    tick = _iterate(study, "--batch", "1", "--derivative", ANCHOR)
+    tick = _iterate(study, "--batch", "1", "--app", ANCHOR)
     assert "not started -> scaffold" in tick.stderr, tick.stderr
     assert (derivative / ".babs").is_dir(), "the cell was not re-scaffolded"
     _assert_clean(study, "the tick that re-scaffolded the retired cell")
