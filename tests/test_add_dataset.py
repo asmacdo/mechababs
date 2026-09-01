@@ -434,7 +434,7 @@ def test_the_super_records_the_membership_row(superstudy, saves):
         {
             "study": "study-ds000001",
             "source_dataset": "sourcedata/ds000001",
-            "lifecycle": campaign_mod.LIFECYCLE_PENDING,
+            "lifecycle": campaign_mod.LIFECYCLE_REGISTERED,
         }
     ]
 

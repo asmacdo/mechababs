@@ -392,7 +392,7 @@ def add(sourcedata, member_arg=None):
                 {
                     "study": member_rel,
                     "source_dataset": source_dataset,
-                    "lifecycle": campaign_mod.LIFECYCLE_PENDING,
+                    "lifecycle": campaign_mod.LIFECYCLE_REGISTERED,
                 }
             )
             campaign_mod.write_members(superstudy, label, members)

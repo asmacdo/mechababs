@@ -276,12 +276,12 @@ def superstudy(tmp_path, monkeypatch):
             {
                 "study": "study-dsA",
                 "source_dataset": SOURCEDATA,
-                "lifecycle": "pending",
+                "lifecycle": "",
             },
             {
                 "study": "study-dsB",
                 "source_dataset": SOURCEDATA,
-                "lifecycle": "pending",
+                "lifecycle": "",
             },
         ],
     )
@@ -325,8 +325,9 @@ def test_a_superstudy_renders_every_member_in_catalog_order(
 def test_installed_is_its_own_column_not_a_state(superstudy, queried, capsys):
     """The two axes are independent. The first row is the one that proves it: a cell
     whose work is finished and whose derivative has since been offloaded is `merged`
-    AND `no` — folding them into one column would report it as neither. An absent
-    member's cells read `unknown` rather than `not started`: finished vs unseen."""
+    AND `no` — folding them into one column would report it as neither. The absent
+    member's catalog row carries no lifecycle here, so its cells read `unknown` rather
+    than `not started`: finished vs unseen."""
     assert status_mod.run_status() == 0
 
     rows, _ = _rows(capsys, status_mod.SUPER_COLUMNS)
@@ -441,3 +442,42 @@ def test_declared_app_stems_reads_the_campaigns_own_declaration(study):
         "SimBIDS-0.0.3+anchor",
         "SimBIDS-0.0.3+chain",
     ]
+
+
+def test_an_uninstalled_member_reads_its_committed_lifecycle(
+    superstudy, queried, capsys
+):
+    """The case `installed` exists to serve: a member whose work is finished and whose
+    content has been offloaded should read as finished. Its shard is unreachable, so
+    the catalog is the only thing that can say so — which is what it is committed for."""
+    rows = campaign_mod.read_members(superstudy, LABEL)
+    for row in rows:
+        if row["study"] == "study-dsB":
+            row["lifecycle"] = campaign_mod.LIFECYCLE_MERGED
+    campaign_mod.write_members(superstudy, LABEL, rows)
+
+    assert status_mod.run_status() == 0
+
+    rows, _ = _rows(capsys, status_mod.SUPER_COLUMNS)
+    absent = [r for r in rows if r["study"] == "study-dsB"]
+    assert [(r["installed"], r["state"]) for r in absent] == [
+        (status_mod.NO, status_mod.MERGED)
+    ]
+
+
+def test_a_registered_member_reads_in_the_tables_own_words(superstudy, queried, capsys):
+    """`registered` is the catalog's word for it; the table already has one, and a
+    second vocabulary in the `state` column would also slip past SUMMARY_ORDER —
+    counted in the total, then dropped from the parts."""
+    rows = campaign_mod.read_members(superstudy, LABEL)
+    for row in rows:
+        if row["study"] == "study-dsB":
+            row["lifecycle"] = campaign_mod.LIFECYCLE_REGISTERED
+    campaign_mod.write_members(superstudy, LABEL, rows)
+
+    assert status_mod.run_status() == 0
+
+    out, err = capsys.readouterr()
+    assert status_mod.NOT_STARTED in out
+    assert "1 not started" in err, err
+    assert "registered" not in out

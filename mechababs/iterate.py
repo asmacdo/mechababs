@@ -40,6 +40,7 @@ tick, at the level the campaign is operated from.
 
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from mechababs import babs_status, dispatch
 from mechababs import campaign as campaign_mod
@@ -61,6 +62,26 @@ DONE = "done"
 ACTIVE = "active"
 WAITING = "waiting"
 SCAFFOLD = "scaffold"
+
+# What a cell was just *done to*, which is a different thing from what state it is in:
+# these name the transition that happened, in the past tense a save message wants. A
+# tick returns these, never a count, so the save at the super can say what it recorded.
+SCAFFOLDED = "scaffolded"
+SUBMITTED = "submitted"
+MERGED = "merged"
+
+
+class Advance(NamedTuple):
+    """One cell moved: what was done to it, which cell, and whose lifecycle it bears on.
+
+    ``source_dataset`` is carried separately from ``cell`` — which is a display string —
+    because it is the catalog key the lifecycle recompute needs, and re-parsing it back
+    out of the label would be inventing a format to then depend on.
+    """
+
+    transition: str
+    cell: str
+    source_dataset: str
 
 
 def note(text):
@@ -120,6 +141,91 @@ def route(rows, row):
     return SCAFFOLD, ""
 
 
+def source_lifecycle(rows, source_dataset):
+    """One catalog row's lifecycle, derived from the shard it describes.
+
+    Goes through ``route`` rather than reading ``babs``/``merged`` again, for the same
+    reason ``status`` does: a second reading of the same columns is a second thing to
+    keep in agreement, and this one would be committed.
+
+    Derived, never accumulated — so it is a stored view of the shard, not a tally the
+    transitions keep. What it is NOT is a repair pass: mechababs is the single writer
+    and a dirty tree stops the tick, so this recomputes the value rather than hunting
+    for drift behind the tool.
+    """
+    states = [
+        route(rows, row)[0]
+        for row in rows
+        if campaign_mod.cell_key(row)[0] == source_dataset
+    ]
+    if states and all(state == DONE for state in states):
+        return campaign_mod.LIFECYCLE_MERGED
+    if any(state in (DONE, ACTIVE) for state in states):
+        return campaign_mod.LIFECYCLE_ACTIVE
+    return campaign_mod.LIFECYCLE_REGISTERED
+
+
+def update_lifecycle(superstudy, label, name, member, advances):
+    """Recompute the catalog lifecycle for the source datasets this tick touched.
+
+    Returns ``{source_dataset: (before, after)}`` for the rows that changed, and writes
+    them. Only touched rows are recomputed: a lifecycle changes as a consequence of a
+    transition, so a row whose cells did not move cannot have moved either — and
+    walking the rest would be a drift scan, which is not what this is.
+    """
+    rows = campaign_mod.read_state(member, label)
+    members = campaign_mod.read_members(superstudy, label)
+    touched = {advance.source_dataset for advance in advances}
+    changed = {}
+    for row in members:
+        if row.get("study") != name or row.get("source_dataset") not in touched:
+            continue
+        before = row.get("lifecycle", "")
+        after = source_lifecycle(rows, row["source_dataset"])
+        if after != before:
+            row["lifecycle"] = after
+            changed[row["source_dataset"]] = (before, after)
+    if changed:
+        campaign_mod.write_members(superstudy, label, members)
+    return changed
+
+
+def describe_advances(advances):
+    """The tick's transitions for one member, counted by kind, in the order they ran."""
+    kinds = []
+    for advance in advances:
+        if advance.transition not in kinds:
+            kinds.append(advance.transition)
+    counts = {kind: sum(a.transition == kind for a in advances) for kind in kinds}
+    if len(kinds) == 1:
+        kind, count = kinds[0], counts[kinds[0]]
+        return f"{kind} {count} cell{'s' if count != 1 else ''}"
+    return ", ".join(f"{kind} {counts[kind]}" for kind in kinds)
+
+
+def member_message(name, label, advances, changed):
+    """The super's save message for one member: what this tick recorded about it.
+
+    A lifecycle change is the subject when there is one — it is the rarest and most
+    consequential thing a tick does to a member, and the line a reader with git but not
+    the cluster is scanning for. Otherwise the subject is what happened to the cells.
+    Never a bare count of them: that is what this message used to say, and it left the
+    super's own history unreadable.
+    """
+    moves = ", ".join(
+        f"{source} is now {after}" for source, (_, after) in sorted(changed.items())
+    )
+    headline = moves if changed else describe_advances(advances)
+    body = [f"{advance.transition}  {advance.cell}" for advance in advances]
+    body += [
+        f"lifecycle: {source}  {before or '-'} -> {after}"
+        for source, (before, after) in sorted(changed.items())
+    ]
+    return f"mechababs iterate: {name} {headline} (campaign {label!r})\n\n" + "\n".join(
+        body
+    )
+
+
 def describe_counts(status):
     """The live babs counts, in one readable clause."""
     return (
@@ -129,11 +235,15 @@ def describe_counts(status):
 
 
 def advance_cell(study, label, rows, row, *, dry_run=False):
-    """Advance one cell by at most one transition. True if something was dispatched.
+    """Advance one cell by at most one transition. The transition's name, or ``None``.
 
-    Returns False for every state that costs nothing — done, waiting, jobs still in
+    Returns ``None`` for every state that costs nothing — done, waiting, jobs still in
     flight, jobs failed — which is also what keeps those cells from consuming
     ``--batch``.
+
+    It returns the name rather than a bool because the caller has to say what happened:
+    a save message built from a count ("advanced 2 cell(s)") is what a save site writes
+    when it has been handed a number instead of the work.
     """
     state, detail = route(rows, row)
     where = cell_label(row)
@@ -141,16 +251,16 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
 
     if state == DONE:
         note(f"{where}: merged — nothing to do")
-        return False
+        return None
 
     if state == WAITING:
         note(f"{where}: waiting on {detail} — not scaffolded this tick")
-        return False
+        return None
 
     if state == SCAFFOLD:
         note(f"{where}: not started -> scaffold")
         dispatch.scaffold(study, label, source_dataset, app_config, dry_run=dry_run)
-        return True
+        return SCAFFOLDED
 
     # ACTIVE: the one state whose next step is not knowable from the shard. Ask babs,
     # every tick, rather than mirroring a job status into a column that could drift.
@@ -159,7 +269,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
     note(f"{where}: {describe_counts(status)} -> {action}")
 
     if action == "skip":
-        return False
+        return None
     if action == "fail":
         # Loud, and stopping at this cell only: the campaign keeps reconciling, and a
         # human decides what happened here. Nothing is written — the next tick
@@ -168,13 +278,13 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
             f"!! {where}: {status['failed']} job(s) FAILED — NOT merging. "
             f"Look at it with:  babs status {detail}"
         )
-        return False
+        return None
     if action == "submit":
         dispatch.submit(study, label, source_dataset, app_config, dry_run=dry_run)
-        return True
+        return SUBMITTED
 
     dispatch.merge(study, label, source_dataset, app_config, dry_run=dry_run)
-    return True
+    return MERGED
 
 
 def work_list(rows, app=None):
@@ -201,7 +311,11 @@ def work_list(rows, app=None):
 
 
 def tick(study, label, *, batch=None, app=None, dry_run=False):
-    """One reconciler tick over ``study``'s shard for ``label``. Returns cells advanced.
+    """One reconciler tick over ``study``'s shard for ``label``.
+
+    Returns the ``Advance`` records for the cells that moved — what happened, not how
+    much of it. The caller's save message is built from these, and at a superstudy so
+    is the lifecycle recompute, which needs to know which source datasets were touched.
 
     ``study`` is a parameter, never the cwd: at a superstudy the reconciler will stand
     at the super and drive member studies, so nothing here may assume it is standing
@@ -224,9 +338,9 @@ def tick(study, label, *, batch=None, app=None, dry_run=False):
     scope = f" ({app})" if app else ""
     note(f"tick over {len(cells)} cell(s) in {study}{scope}")
 
-    advanced = 0
+    advanced = []
     for i, key in enumerate(cells):
-        if batch is not None and advanced >= batch:
+        if batch is not None and len(advanced) >= batch:
             note(
                 f"--batch {batch} reached — {len(cells) - i} cell(s) left for "
                 f"the next tick"
@@ -236,16 +350,17 @@ def tick(study, label, *, batch=None, app=None, dry_run=False):
         # start is stale the moment a cell advances. Ground truth, every cell.
         rows = campaign_mod.read_state(study, label)
         row = campaign_mod.find_cell(rows, *key)
-        if advance_cell(study, label, rows, row, dry_run=dry_run):
-            advanced += 1
+        transition = advance_cell(study, label, rows, row, dry_run=dry_run)
+        if transition:
+            advanced.append(Advance(transition, cell_label(row), key[0]))
 
     if dry_run:
         note(
-            f"DRY-RUN: {advanced} cell(s) would advance. Nothing changed, so no "
+            f"DRY-RUN: {len(advanced)} cell(s) would advance. Nothing changed, so no "
             f"cell's state moved — a real tick may advance more."
         )
     else:
-        note(f"tick done: {advanced} cell(s) advanced.")
+        note(f"tick done: {len(advanced)} cell(s) advanced.")
     return advanced
 
 
@@ -360,20 +475,31 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
             # would answer it too early to be worth much; this one is flat and current.
             utils.require_clean_gitlink(root, name)
             moved = tick(member, label, batch=remaining, app=app, dry_run=dry_run)
-            advanced += moved
+            advanced += len(moved)
             if remaining is not None:
-                remaining -= moved
+                remaining -= len(moved)
             # Then record. A study-only campaign needs none of this: the transition's own
             # `datalad run` commits in the study, which IS the operating level. With a
             # super above it, that same run leaves the member's gitlink advanced and only
             # the super can register it — so each member is recorded as it lands, rather
             # than at the end, so an interrupted fan-out still leaves the super
             # describing the members that did advance.
+            #
+            # The lifecycle rides along rather than costing a commit of its own: it is
+            # recomputed from the shard this tick just changed, and the catalog joins the
+            # same save as one more declared path.
             if moved and not dry_run:
+                changed = update_lifecycle(root, label, name, member, moved)
+                paths = [member]
+                if changed:
+                    paths.append(campaign_mod.members_path(root, label))
                 utils.save_paths(
-                    root,
-                    member,
-                    f"mechababs iterate: {name} advanced {moved} cell(s) "
-                    f"in campaign {label!r}",
+                    root, paths, member_message(name, label, moved, changed)
                 )
+            elif moved:
+                # Dry-run advances nothing, so the shard still reads as it did and the
+                # lifecycle cannot be computed from it. Say which cells would move and
+                # leave it there rather than printing a transition that assumes they
+                # all succeeded.
+                note(f"DRY-RUN: {name} would record {describe_advances(moved)}")
         return advanced
