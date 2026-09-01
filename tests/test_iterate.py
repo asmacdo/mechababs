@@ -796,3 +796,147 @@ def test_a_dry_run_records_nothing_at_the_super(superstudy, tick):
     iterate_mod.run_iterate(str(root), dry_run=True)
 
     assert saves == []
+
+
+# --- the lifecycle a superstudy commits ------------------------------------------
+
+
+def test_a_source_dataset_with_nothing_started_is_registered():
+    assert (
+        iterate_mod.source_lifecycle([cell(ANCHOR), cell(CHAIN)], SOURCEDATA)
+        == campaign_mod.LIFECYCLE_REGISTERED
+    )
+
+
+def test_a_source_dataset_is_active_once_any_cell_has_a_babs_project():
+    rows = [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN)]
+
+    assert (
+        iterate_mod.source_lifecycle(rows, SOURCEDATA) == campaign_mod.LIFECYCLE_ACTIVE
+    )
+
+
+def test_a_source_dataset_still_reads_active_when_only_some_cells_merged():
+    """The whole point of the coarse value: `merged` must mean all of them."""
+    rows = [cell(ANCHOR, babs=ANCHOR_PROJECT, merged="true"), cell(CHAIN)]
+
+    assert (
+        iterate_mod.source_lifecycle(rows, SOURCEDATA) == campaign_mod.LIFECYCLE_ACTIVE
+    )
+
+
+def test_a_source_dataset_is_merged_only_when_every_one_of_its_cells_is():
+    rows = [
+        cell(ANCHOR, babs=ANCHOR_PROJECT, merged="true"),
+        cell(CHAIN, babs="derivatives/chain", merged="true"),
+    ]
+
+    assert (
+        iterate_mod.source_lifecycle(rows, SOURCEDATA) == campaign_mod.LIFECYCLE_MERGED
+    )
+
+
+def test_a_lifecycle_reads_only_its_own_source_datasets_cells():
+    """A study may hold several source datasets, each with its own catalog row — so a
+    busy neighbour must not make a finished one read active."""
+    other = dict(cell(ANCHOR), source_dataset="sourcedata/ds111111")
+    rows = [cell(ANCHOR, babs=ANCHOR_PROJECT, merged="true"), other]
+
+    assert (
+        iterate_mod.source_lifecycle(rows, SOURCEDATA) == campaign_mod.LIFECYCLE_MERGED
+    )
+
+
+def lifecycles(root):
+    return {
+        row["study"]: row["lifecycle"] for row in campaign_mod.read_members(root, LABEL)
+    }
+
+
+def test_scaffolding_a_members_first_cell_moves_it_to_active(superstudy, tick):
+    root, _members, _saves = superstudy
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    assert lifecycles(root)["study-dsA"] == campaign_mod.LIFECYCLE_ACTIVE
+    assert lifecycles(root)["study-dsB"] == campaign_mod.LIFECYCLE_REGISTERED, (
+        "a member this tick never touched had its lifecycle rewritten"
+    )
+
+
+def test_merging_a_members_last_cell_moves_it_to_merged(superstudy, tick):
+    root, members, saves = superstudy
+    write(members[0], [cell(ANCHOR, babs=ANCHOR_PROJECT)])
+    tick.status = dict(ALL_DONE)
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    assert lifecycles(root)["study-dsA"] == campaign_mod.LIFECYCLE_MERGED
+    (_root, _paths, message) = saves[0]
+    assert message.startswith(
+        f"mechababs iterate: study-dsA {SOURCEDATA} is now merged"
+    ), message
+
+
+def set_lifecycle(root, study, value):
+    rows = campaign_mod.read_members(root, LABEL)
+    for row in rows:
+        if row["study"] == study:
+            row["lifecycle"] = value
+    campaign_mod.write_members(root, LABEL, rows)
+
+
+def test_the_catalog_is_written_only_when_the_lifecycle_actually_changed(
+    superstudy, tick
+):
+    """A submit advances a cell without moving the coarse value, so the save carries
+    the gitlink alone — the catalog is not rewritten to the same thing."""
+    root, members, saves = superstudy
+    write(members[0], [cell(ANCHOR, babs=ANCHOR_PROJECT)])
+    set_lifecycle(root, "study-dsA", campaign_mod.LIFECYCLE_ACTIVE)
+    tick.status = dict(UNSUBMITTED)
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    (_root, paths, message) = saves[0]
+    assert [Path(p).name for p in paths] == ["study-dsA"]
+    assert "submitted 1 cell" in message, message
+
+
+def test_the_save_message_names_the_transitions_not_a_count(superstudy, tick):
+    """With no lifecycle change to lead with, the subject is what happened to the
+    cells — and it names them, rather than counting them."""
+    root, members, saves = superstudy
+    write(members[0], [cell(ANCHOR), cell(CHAIN)])
+    set_lifecycle(root, "study-dsA", campaign_mod.LIFECYCLE_ACTIVE)
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    (_root, _paths, message) = saves[0]
+    subject, _blank, *body = message.splitlines()
+    assert "scaffolded 2 cells" in subject, subject
+    assert body[:2] == [
+        f"scaffolded  {SOURCEDATA} / SimBIDS-0.0.3+anchor",
+        f"scaffolded  {SOURCEDATA} / SimBIDS-0.0.3+chain",
+    ], body
+    assert "cell(s)" not in message, "the count message survived"
+
+
+def test_a_tick_that_does_two_different_things_says_both(superstudy, tick):
+    root, members, saves = superstudy
+    write(members[0], [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN)])
+    set_lifecycle(root, "study-dsA", campaign_mod.LIFECYCLE_ACTIVE)
+    tick.status = dict(UNSUBMITTED)
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    subject = saves[0][2].splitlines()[0]
+    assert "submitted 1, scaffolded 1" in subject, subject
+
+
+def test_a_dry_run_writes_no_lifecycle(superstudy, tick):
+    root, _members, _saves = superstudy
+
+    iterate_mod.run_iterate(str(root), dry_run=True)
+
+    assert set(lifecycles(root).values()) == {campaign_mod.LIFECYCLE_REGISTERED}

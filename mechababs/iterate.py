@@ -493,7 +493,9 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
                 paths = [member]
                 if changed:
                     paths.append(campaign_mod.members_path(root, label))
-                utils.save_paths(root, paths, member_message(name, label, moved, changed))
+                utils.save_paths(
+                    root, paths, member_message(name, label, moved, changed)
+                )
             elif moved:
                 # Dry-run advances nothing, so the shard still reads as it did and the
                 # lifecycle cannot be computed from it. Say which cells would move and
