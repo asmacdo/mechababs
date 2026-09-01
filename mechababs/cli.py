@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from mechababs import __version__, campaign_init, state
+from mechababs import __version__, campaign_init
 from mechababs import add_dataset as add_dataset_mod
 from mechababs import campaign as campaign_mod
 from mechababs import iterate as iterate_mod
@@ -21,14 +21,6 @@ from mechababs import status as status_mod
 from mechababs import study as study_mod
 from mechababs import update_env as update_env_mod
 from mechababs import validate as validate_mod
-
-
-def _ensure_campaign(args):
-    """Resolve --campaign-path and confirm it is a campaign (i.e. has a ledger)."""
-    campaign = args.campaign_path.resolve()
-    if not state.state_path(campaign).is_file():
-        sys.exit(f"not a campaign (no {state.STATE_FILENAME}): {campaign}")
-    return campaign
 
 
 def cmd_campaign_init(args):
@@ -139,9 +131,15 @@ def cmd_iterate(args):
 
 
 def cmd_retire_derivative(args):
-    """Move derivative(s) into derivative-attempts/ and reset their ledger cells."""
-    campaign = _ensure_campaign(args)
-    return retire_mod.run_retire(campaign, args.paths, dry_run=args.dry_run)
+    """Take one derivative out of its study and reset the cell that made it.
+
+    Runs from the campaign root — the study, or the superstudy — like every operating
+    verb. Where the derivative goes is a required choice, not a default: `--path`
+    keeps its evidence somewhere outside the study, `--remove` throws it away.
+    """
+    return retire_mod.run_retire(
+        args.derivative, dest=args.path, remove=args.remove, root="."
+    )
 
 
 def cmd_test_cluster(args):
@@ -374,34 +372,48 @@ def main():
 
     pr = sub.add_parser(
         "retire-derivative",
-        help="move a derivative into derivative-attempts/ and reset its ledger cell",
+        help="take a derivative out of its study and reset the cell that made it",
         description=(
-            "Move a derivative out of its study into derivative-attempts/"
-            "<dataset_id>-<derivative>-attempt-<N> and reset its ledger cell, so the "
-            "next iterate re-scaffolds it. Keeps the logs, git history and run records "
-            "that say why the cell was redone. NOTE: the retired copy is an ARCHIVE, "
-            "not a resumable babs project — babs bakes absolute RIA paths at init, so "
-            "after the move its input/output siblings point at the old location and "
-            "babs commands (and datalad get/push via those siblings) will not work on "
-            "it. Retire a cell you intend to redo from scratch, not one to continue."
+            "Clear a cell that has to be redone. `babs init` refuses an existing "
+            "path, so the derivative has to leave before the next iterate can "
+            "re-scaffold — and where it goes is a required choice, because the two "
+            "answers are not interchangeable. `--path DEST` keeps its evidence (the "
+            "logs, the git history, the run records that say WHY the cell was "
+            "redone) at DEST/<study>-<derivative>-attempt-<N>; DEST must be outside "
+            "the study, and outside the whole superstudy when the campaign is "
+            "operated at one, since a study is a published object and a retired "
+            "attempt inside it would travel with it. `--remove` deletes the "
+            "derivative outright, for a cell whose evidence is worth nothing. Either "
+            "way the cell is reset in the same transition, so there is no window "
+            "where the derivative is gone but the reconciler still routes it as "
+            "in-progress. NOTE: what --path produces is an ARCHIVE, not a resumable "
+            "babs project — babs bakes absolute RIA paths at init, so after the move "
+            "its input/output siblings name the old location and babs commands (and "
+            "datalad get/push through those siblings) will not work on it. Retire a "
+            "cell you intend to redo from scratch, not one to continue."
         ),
     )
     pr.add_argument(
-        "paths",
-        nargs="+",
+        "derivative",
         metavar="PATH",
-        help="derivative path(s): studies/study-<id>/derivatives/<name>",
+        help="the derivative, campaign-relative or absolute: derivatives/<name> at "
+        "a study, <member>/derivatives/<name> at a superstudy",
     )
-    pr.add_argument(
-        "--campaign-path",
-        type=Path,
-        default=Path("."),
-        help="the campaign dataset (default: current directory)",
+    # Required and mutually exclusive: keeping the evidence and throwing it away are
+    # different decisions, and neither is safe to make on the user's behalf.
+    where = pr.add_mutually_exclusive_group(required=True)
+    where.add_argument(
+        "--path",
+        default=None,
+        metavar="DEST",
+        help="archive the derivative under DEST (created if absent), which must be "
+        "outside the study — and outside the superstudy, at one",
     )
-    pr.add_argument(
-        "--dry-run",
+    where.add_argument(
+        "--remove",
         action="store_true",
-        help="print the planned retirements and change nothing",
+        help="delete the derivative instead of archiving it, discarding its logs "
+        "and history with it",
     )
     pr.set_defaults(func=cmd_retire_derivative)
 
