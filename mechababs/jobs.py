@@ -114,7 +114,7 @@ def cell_jobs(study, row, prefix=""):
     return jobs
 
 
-def scoped_cells(root, label, *, superstudy, study=None, derivative=None):
+def scoped_cells(root, label, *, superstudy, study=None, app=None):
     """The cells in scope, and the members that could not be looked at.
 
     Returns ``(cells, unknown)``: ``cells`` is ``[(prefix, study_path, row)]`` for
@@ -129,7 +129,7 @@ def scoped_cells(root, label, *, superstudy, study=None, derivative=None):
     def cells_of(study_path, prefix=""):
         for row in campaign_mod.read_state(study_path, label):
             stem = scaffold_mod.app_stem(row.get("app_config", ""))
-            if derivative and stem != derivative:
+            if app and stem != app:
                 continue
             if row.get("babs"):
                 yield prefix, study_path, row
@@ -171,9 +171,7 @@ def refresh(cells):
             continue
 
 
-def run_jobs(
-    root=".", *, study=None, derivative=None, failed=False, refresh_first=True
-):
+def run_jobs(root=".", *, study=None, app=None, failed=False, refresh_first=True):
     """Resolve the level, gather every job in scope, render. A CLI exit code.
 
     Same level resolution as ``status`` and ``iterate`` — where you stand gives the
@@ -182,8 +180,8 @@ def run_jobs(
     """
     selected = campaign_mod.require_selected_campaign(root)
     root, label = selected.root, selected.label
-    if derivative:
-        campaign_mod.require_declared_app(root, label, derivative)
+    if app:
+        campaign_mod.require_declared_app(root, label, app)
 
     superstudy = campaign_mod.is_superstudy_campaign(root, label)
     if not superstudy:
@@ -197,7 +195,7 @@ def run_jobs(
     where = ("superstudy " if superstudy else "study ") + Path(root).name
 
     cells, unknown = scoped_cells(
-        root, label, superstudy=superstudy, study=study, derivative=derivative
+        root, label, superstudy=superstudy, study=study, app=app
     )
     if refresh_first:
         refresh(cells)
@@ -222,7 +220,7 @@ def run_jobs(
                 f"`mechababs status` shows what is known without it."
             )
             return 0
-        scope = " matching" if (failed or derivative or study) else ""
+        scope = " matching" if (failed or app or study) else ""
         status_mod.note(
             f"campaign {label!r} · {where} · no{scope} jobs yet — a cell with "
             f"nothing submitted has no job_status.csv to read."

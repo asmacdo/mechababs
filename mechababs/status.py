@@ -50,7 +50,6 @@ COLUMNS = [
     "sessions",
     "state",
     "jobs",
-    "derivative",
 ]
 
 # At a superstudy the same table gains two columns: which member a row came from, and
@@ -116,6 +115,11 @@ def cell_record(study, rows, row):
 
     Only an active cell costs a babs query — a merged or not-yet-started one has
     nothing volatile to ask about, which is the same economy the reconciler makes.
+
+    ``derivative`` is carried but not in ``COLUMNS``: it is the widest column on the
+    table and says nothing a reader acts on (the path is derivable from the study,
+    app and source dataset already shown), while ``cell_installed`` needs it to ask
+    whether that derivative is on disk.
     """
     state, detail = iterate.route(rows, row)
     record = {
@@ -230,7 +234,7 @@ def summarize(data):
     return f"{total} cell(s)" + (f": {', '.join(parts)}" if parts else "")
 
 
-def narrow(data, derivative, root, label):
+def narrow(data, app, root, label):
     """``data`` cut to one app's cells, by stem. Returns the rows to render.
 
     Validated against the campaign's **declared** vocabulary, not against
@@ -244,10 +248,10 @@ def narrow(data, derivative, root, label):
     there — the claim ``unknown`` exists to avoid making. A typo cannot hide behind
     them, because the name was already checked against the declaration.
     """
-    if derivative is None:
+    if app is None:
         return data
-    campaign_mod.require_declared_app(root, label, derivative)
-    return [row for row in data if row["app"] == derivative or row["state"] == UNKNOWN]
+    campaign_mod.require_declared_app(root, label, app)
+    return [row for row in data if row["app"] == app or row["state"] == UNKNOWN]
 
 
 def render(data, columns=COLUMNS):
@@ -268,7 +272,7 @@ def render(data, columns=COLUMNS):
     return "\n".join(lines) + "\n"
 
 
-def run_status(root=".", *, study=None, derivative=None):
+def run_status(root=".", *, study=None, app=None):
     """Resolve where we are standing, then report. Returns a CLI exit code.
 
     Same split as the reconciler's: ``run_status`` answers "which study, which
@@ -289,8 +293,8 @@ def run_status(root=".", *, study=None, derivative=None):
                 f"campaign {label!r} here is configured at a study, so there are "
                 f"no members to select between.\n--study narrows a superstudy view."
             )
-        return report(root, label, derivative=derivative)
-    return report_superstudy(root, label, study=study, derivative=derivative)
+        return report(root, label, app=app)
+    return report_superstudy(root, label, study=study, app=app)
 
 
 def note(text):
@@ -303,7 +307,7 @@ def note(text):
     print(text, file=sys.stderr)
 
 
-def report(study, label, *, derivative=None):
+def report(study, label, *, app=None):
     """Render ``study``'s cells for ``label``. Returns a CLI exit code."""
     campaign_mod.require_statefile(study, label)
 
@@ -315,13 +319,13 @@ def report(study, label, *, derivative=None):
             file=sys.stderr,
         )
         return 0
-    data = narrow(data, derivative, study, label)
+    data = narrow(data, app, study, label)
     note(f"campaign {label!r} · study {Path(study).name} · {summarize(data)}")
     sys.stdout.write(render(data))
     return 0
 
 
-def report_superstudy(superstudy, label, *, study=None, derivative=None):
+def report_superstudy(superstudy, label, *, study=None, app=None):
     """Render every member's cells for ``label``, in catalog order. A CLI exit code.
 
     The rollup is **computed, never stored** — read out of the member shards at the
@@ -347,7 +351,7 @@ def report_superstudy(superstudy, label, *, study=None, derivative=None):
         )
         return 0
 
-    data = narrow(data, derivative, superstudy, label)
+    data = narrow(data, app, superstudy, label)
 
     installed = sum(
         1 for name in members if study_mod.is_study_root(Path(superstudy) / name)

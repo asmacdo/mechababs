@@ -169,7 +169,7 @@ def cmd_test_cluster(args):
 
 def cmd_status(args):
     """Read-only: one row per cell, with live job counts for the running ones."""
-    return status_mod.run_status(".", study=args.study, derivative=args.derivative)
+    return status_mod.run_status(".", study=args.study, app=args.app)
 
 
 def cmd_jobs(args):
@@ -177,7 +177,7 @@ def cmd_jobs(args):
     return jobs_mod.run_jobs(
         ".",
         study=args.study,
-        derivative=args.derivative,
+        app=args.app,
         failed=args.failed,
         refresh_first=args.refresh,
     )
@@ -508,7 +508,7 @@ def main():
         "error rather than an empty table.",
     )
     ps.add_argument(
-        "--derivative",
+        "--app",
         default=None,
         metavar="STEM",
         help="only this app config's cells, by its filename stem (e.g. "
@@ -534,7 +534,7 @@ def main():
         help="at a superstudy, only this member's jobs",
     )
     pj.add_argument(
-        "--derivative",
+        "--app",
         default=None,
         metavar="STEM",
         help="only this app config's jobs, by its filename stem",

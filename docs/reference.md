@@ -72,11 +72,11 @@ mechababs test-cluster --cluster your-site.yaml   # by path; configs are not loo
 # read-only: one row per CELL — the statefile as it is, plus live babs counts for
 # the cells that are running. At a superstudy the rows span every member.
 mechababs status [--study study-ds000001]      # at a superstudy, one member
-                 [--derivative MRIQC-24.0.2]   # one app config, by its stem
+                 [--app MRIQC-24.0.2]          # one app config, by its stem
 
 # read-only: one row per JOB — the drill-down under status's cells, with each job's
 # sub/ses, SLURM id, state, times, and the directory its logs are in.
-mechababs jobs   [--study study-ds000001] [--derivative MRIQC-24.0.2]
+mechababs jobs   [--study study-ds000001] [--app MRIQC-24.0.2]
                  [--failed]         # only jobs babs marks failed
                  [--no-refresh]     # read babs's cache instead of recomputing it
 
@@ -155,7 +155,7 @@ state stays correct. Only a member with no working tree at all is opaque, and it
 cells read `unknown` — never `not started`, which would assert something false about
 work that may well be finished.
 
-`--derivative` is checked against the campaign's **declared** app bundle rather than
+`--app` is checked against the campaign's **declared** app bundle rather than
 against the apps visible in the rows. The two differ in one situation and it is the
 one that matters: with every member uninstalled there is not a readable cell to
 compare a name against, so a typo would otherwise render as a page of `unknown`
@@ -170,7 +170,7 @@ column is the cell's log *directory*, resolved from where you are standing.
 That CSV is a cache babs recomputes from the scheduler, so `jobs` refreshes it first.
 Reading it as-is can be actively wrong rather than merely stale: babs's submit path
 rewrites a resubmitted row's `job_id` without clearing the previous attempt's
-`is_failed`, so a running job can show as failed. `--study`/`--derivative` narrow
+`is_failed`, so a running job can show as failed. `--study`/`--app` narrow
 *before* the refresh, so scoping keeps it fast, and `--no-refresh` makes accepting a
 possibly-wrong row an explicit choice (the header then says the table was not
 refreshed).

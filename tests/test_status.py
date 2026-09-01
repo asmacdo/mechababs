@@ -40,7 +40,7 @@ def cell(app_config, *, depends_on="", babs="", merged=""):
 
 
 def declare_apps(root, *app_configs):
-    """Write the campaign.yaml bundle — the vocabulary `--derivative` is checked
+    """Write the campaign.yaml bundle — the vocabulary `--app` is checked
     against. Fixed at `campaign init` in real life, so a fixture declares it once."""
     campaign_mod.config_path(root, LABEL).write_text(
         yaml.safe_dump({"label": LABEL, "apps": list(app_configs)})
@@ -385,15 +385,15 @@ def test_study_refuses_a_directory_that_was_never_selected_in(superstudy, querie
 
 
 # --------------------------------------------------------------------------
-# `--derivative`: narrowing to one app, and refusing a name the campaign
+# `--app`: narrowing to one app, and refusing a name the campaign
 # does not declare. The declaration is the vocabulary, NOT the visible cells —
 # which is what makes a typo catchable when nothing is installed to compare to.
 
 
-def test_derivative_narrows_to_one_app(study, queried, capsys):
+def test_app_narrows_to_one_app(study, queried, capsys):
     campaign_mod.write_state(study, LABEL, [cell(ANCHOR), cell(CHAIN)])
 
-    assert status_mod.report(study, LABEL, derivative="SimBIDS-0.0.3+chain") == 0
+    assert status_mod.report(study, LABEL, app="SimBIDS-0.0.3+chain") == 0
 
     out, _ = capsys.readouterr()
     rows = [line for line in out.splitlines()[1:]]
@@ -401,11 +401,11 @@ def test_derivative_narrows_to_one_app(study, queried, capsys):
     assert "SimBIDS-0.0.3+chain" in rows[0]
 
 
-def test_derivative_refuses_a_name_the_campaign_does_not_declare(study, queried):
+def test_app_refuses_a_name_the_campaign_does_not_declare(study, queried):
     campaign_mod.write_state(study, LABEL, [cell(ANCHOR), cell(CHAIN)])
 
     with pytest.raises(SystemExit) as excinfo:
-        status_mod.report(study, LABEL, derivative="SimBIDS-0.0.3+typo")
+        status_mod.report(study, LABEL, app="SimBIDS-0.0.3+typo")
 
     assert "not an app in campaign" in str(excinfo.value)
     assert "SimBIDS-0.0.3+anchor, SimBIDS-0.0.3+chain" in str(excinfo.value)
@@ -419,17 +419,15 @@ def test_a_typo_is_refused_even_when_no_member_is_installed(superstudy, queried)
     (superstudy / "study-dsA" / ".datalad").rmdir()
 
     with pytest.raises(SystemExit) as excinfo:
-        status_mod.run_status(derivative="SimBIDS-0.0.3+typo")
+        status_mod.run_status(app="SimBIDS-0.0.3+typo")
 
     assert "not an app in campaign" in str(excinfo.value)
 
 
-def test_an_uninstalled_member_survives_a_derivative_filter(
-    superstudy, queried, capsys
-):
+def test_an_uninstalled_member_survives_an_app_filter(superstudy, queried, capsys):
     """Its app is unreadable, not absent. Dropping it would assert this app has no
     cell there, which is exactly the claim `unknown` refuses to make."""
-    assert status_mod.run_status(derivative="SimBIDS-0.0.3+anchor") == 0
+    assert status_mod.run_status(app="SimBIDS-0.0.3+anchor") == 0
 
     rows, _ = _rows(capsys, status_mod.SUPER_COLUMNS)
     assert [(r["study"], r["app"], r["state"]) for r in rows] == [

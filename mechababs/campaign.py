@@ -151,16 +151,16 @@ def declared_app_stems(root, label):
     return sorted({Path(rel).stem for rel in (config.get("apps") or [])})
 
 
-def require_declared_app(root, label, derivative):
-    """Exit unless ``derivative`` names one of this campaign's declared apps.
+def require_declared_app(root, label, app):
+    """Exit unless ``app`` names one of this campaign's declared apps.
 
     One refusal shared by every command that narrows by app, so the message a typo
     gets does not depend on which verb you typed it into.
     """
     stems = declared_app_stems(root, label)
-    if derivative not in stems:
+    if app not in stems:
         sys.exit(
-            f"--derivative {derivative!r} is not an app in campaign {label!r}.\n"
+            f"--app {app!r} is not an app in campaign {label!r}.\n"
             f"This campaign's apps are: {', '.join(stems) or '(none)'}"
         )
 

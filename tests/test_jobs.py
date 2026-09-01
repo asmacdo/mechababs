@@ -215,7 +215,7 @@ def test_study_is_refused_for_a_study_configured_campaign(study):
 
 def test_a_typo_is_refused_against_the_declared_apps(study):
     with pytest.raises(SystemExit) as excinfo:
-        jobs_mod.run_jobs(derivative="SimBIDS-0.0.3+typo")
+        jobs_mod.run_jobs(app="SimBIDS-0.0.3+typo")
 
     assert "not an app in campaign" in str(excinfo.value)
 
@@ -317,10 +317,10 @@ def test_every_scaffolded_cell_is_refreshed_before_it_is_read(study, refreshed):
     assert refreshed == [str(study / ANCHOR_PROJECT), str(study / CHAIN_PROJECT)]
 
 
-def test_derivative_narrows_the_refresh_not_just_the_render(study, refreshed):
+def test_app_narrows_the_refresh_not_just_the_render(study, refreshed):
     """The refresh is a scheduler query per cell, so narrowing has to happen first or
-    `--derivative` would cost the whole campaign to show one app."""
-    assert jobs_mod.run_jobs(derivative="SimBIDS-0.0.3+anchor") == 0
+    `--app` would cost the whole campaign to show one app."""
+    assert jobs_mod.run_jobs(app="SimBIDS-0.0.3+anchor") == 0
 
     assert refreshed == [str(study / ANCHOR_PROJECT)]
 
