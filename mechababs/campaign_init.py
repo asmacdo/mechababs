@@ -331,7 +331,14 @@ def render_pyproject(
         "[project]",
         f"name = {_toml_str('mechababs-campaign-' + label)}",
         'version = "0"',
-        'requires-python = ">=3.10"',
+        # The ceiling is a WORKAROUND, not a design choice, and it is deliberately
+        # one interpreter wide. On 3.14 the nipreps stack a campaign pulls in through
+        # babs has no wheel for `h5py` (babs -> niworkflows -> nitransforms -> h5py),
+        # and its source build needs libhdf5 headers a plain host does not have — so
+        # `campaign init` fails deep in a compiler error rather than saying which
+        # python it could not use. Refusing 3.14 up front turns that into uv's clear
+        # "no interpreter found". Raise the cap the moment h5py ships cp314 wheels.
+        'requires-python = ">=3.10,<3.14"',
         "dependencies = [",
     ]
     lines += [f"    {_toml_str(d)}," for d in deps]
