@@ -1,136 +1,85 @@
 # mechababs — overview
 
-mechababs is an end-to-end harness for running [BABS](https://github.com/PennLINC/babs) across clusters and many datasets.
-It runs **vanilla** BABS by default (`PennLINC/babs` main, or a PR branch under test), and can use a babs fork when one is needed.
-The unit of work is a **campaign**: a self-contained datalad dataset that holds its inputs, its outputs, its config, its state ledger, and the exact `babs` + `mechababs` code that produced everything.
+mechababs runs [BIDS Apps](https://bids-apps.neuroimaging.io/) over many studies on an HPC cluster, using [BABS](https://github.com/PennLINC/babs) to run the jobs.
+The unit it works on is a [BIDS study](https://bids-specification.readthedocs.io/en/stable/common-principles.html#study-dataset): raw data grouped with the derivatives made from it.
+mechababs adds derivatives to a study that already exists; it never authors one.
 
-## Concept
+The words used here are defined in the [glossary](glossary.md).
 
-Every run is the composition of three axes:
+## The objects
 
-- **A dataset** — an OpenNeuro raw BIDS study (`OpenNeuroDatasets/dsXXXXXX`),
-  registered by URL (the URL is its identity).
-- **A pipeline** — a config in the campaign's `pipelines/` (mriqc, fmriprep-anat /
-  minimal / resampling / full, simbids). Holds the container reference + BIDS-app
-  flags.
-- **A cluster** — a config in the campaign's `clusters/` (`dartmouth.yaml`,
-  `test-docker.yaml`). Holds SLURM resources + the job script preamble.
+A **study** is a datalad dataset holding one or more source datasets under `sourcedata/` and their derivatives under `derivatives/`.
+A **derivative** is what one BIDS App produced from one source dataset, itself a datalad dataset, created in its final home inside the study and never moved afterwards.
+A **superstudy** is a study whose members are studies: an optional layer for running many at once, holding no raw data of its own.
+[OpenNeuroStudies](https://github.com/OpenNeuroStudies/OpenNeuroStudies) is one.
 
-`merge_config.py` composes pipeline × cluster × dataset-URL into the single
-`babs-config.yaml` that `babs init` consumes. Never bake cluster details into a
-pipeline YAML or vice versa.
+```
+superstudy/                       # optional
+  study-ds000001/                 # a member study
+    sourcedata/ds000001/          #   a source dataset
+    derivatives/
+      MRIQC-24.0.2+ds000001/      #   a derivative mechababs added
+      fMRIPrep-25.2.5+anat+ds000001/
+    .mechababs/campaigns/<label>/ #   the campaign's record in this study
+  study-ds000002/
+  .mechababs/campaigns/<label>/   # the campaign's record at the superstudy
+```
+
+The full layout, and the reasoning behind it, is in [output_structure.md](output_structure.md).
 
 ## The campaign
 
-A campaign is its **own standalone datalad dataset** — the boundary that makes a
-processing run self-contained and reproducible. Its heavy parts (source data,
-derivatives, and the vendored code) are subdatasets inside it:
+A **campaign** is one processing run's recipe: a bundle of app configs, a cluster config, and a locked environment that pins mechababs and babs together.
+It is not a dataset.
+It is a directory inside the study (or superstudy) at `.mechababs/campaigns/<label>/`, committed there, so the study carries the record of every campaign that touched it and stays reproducible on its own.
+A study accumulates campaigns over time: a set of derivatives now, another a year later with newer tools, each under its own label.
 
-```
-my-campaign/                             # a campaign = a datalad dataset (datalad create)
-  .mechababs/campaign.yaml               # cluster file + {short_name: pipeline_file} + venv + limit
-  clusters/  pipelines/                  # the campaign's own configs (configure copies them in)
-  desc-mechababs_datasets.tsv            # the state ledger (one row per dataset)
-  .venv/                                 # campaign venv (gitignored, rebuildable)
-  code/
-    mechababs/                           # subdataset, pinned at a chosen ref
-    babs/                                # subdataset, pinned at a chosen ref
-    repronim-containers-shim/            # vendored container dataset(s)
-  sourcedata/  dsXXXXXX/  …              # subdatasets -> OpenNeuroDatasets
-  derivatives/
-    dsXXXXXX_mriqc_attempt-1/            # a babs project; attempt-N allocated at creation
-    dsXXXXXX_fmriprep-anat_attempt-1/
-```
+The configs are yours.
+An app config holds one BIDS App's flags and container; a cluster config holds the site's resources and job preamble.
+For each cell mechababs composes app × cluster × source dataset into the one config babs takes, so the same app runs on another site by swapping one file.
 
-Why this shape:
+The environment is a `uv.lock`, and the lock is the pin.
+`campaign init` builds the campaign's venv from it, and every later command refuses to run unless it is running that venv and the venv matches the lock.
+A version bump edits and commits the lock, so the lock's evolution is its git history, and a cell can always be traced to the exact code that produced it.
 
-- **Code is vendored and pinned per campaign.** `code/babs` and `code/mechababs`
-  are git submodules; the submodule commit *is* the pin. The campaign venv
-  editable-installs them, so the `babs` / `mechababs` that run are the
-  provenance-pinned ones recorded in the campaign — not whatever happens to be on
-  PATH. A different babs commit (e.g. to test a PR) is just a different pin.
-- **State is a re-derivable cache, not the source of truth.** `desc-mechababs_datasets.tsv`
-  is reconciled from ground truth (babs / the output RIA) each tick, so a crashed
-  run, a hand-edited file, or a changed inclusion self-heals on the next
-  `iterate`. To change an outcome, change ground truth (the inclusion, or reset).
-- **Outputs are produced and pushed outward** (to OpenNeuroDerivatives /
-  OpenNeuroStudies); the campaign is where they're made and tracked, not where
-  they permanently live.
+A campaign is operated only from the level it was configured at: the study for a study campaign, the superstudy for a superstudy campaign.
+Selecting it is sourcing its `env.sh`.
 
-**One tool, two modes.** Dev (a scratch sibling, small inclusions, a branch of
-babs under test) and production (OpenNeuro siblings, all subjects, released code)
-are the *same* tool — every difference is config and content, never a dev-only
-branch, field, or code path. Dev exercises prod's exact paths, so dev validates
-prod.
+## Cells and the reconciler
 
-**The campaign is a provenance object.** Because everything — inputs, outputs,
-pinned code, config, and the ledger — lives under one datalad boundary, the
-campaign is positioned to record not just *what* was produced but *how* it was
-orchestrated. Today the pinned submodule commits say exactly which `babs` /
-`mechababs` ran, and each tick's changes are saved as a grouped, per-transition
-commit. The direction (partly built, partly in progress) is for each derivative to
-carry a `prov/` record (BEP028-shaped) linking back to the campaign, and for the
-orchestration commands to be captured verbatim via `datalad run`. That is the
-STAMPED payoff mechababs is built toward — a self-contained, tracked,
-re-executable research object — and the reason it sits on top of babs rather than
-beside it. See [STAMPED](https://github.com/stamped-principles/) for the principles
-and [output_structure.md](output_structure.md) for the target shape.
+A **cell** is one source dataset × one app config, and it produces one derivative.
+The campaign's statefile has one row per cell, with two derived columns: `babs`, set once the derivative is scaffolded, and `merged`, set once the results are merged in.
+There is no status enum; a cell's state is read off those two columns.
 
-## The reconciler tick (`iterate`)
+`iterate` is one **tick** of a reconciler.
+It advances every cell by at most one transition: an unscaffolded cell is scaffolded (`babs init`); a scaffolded cell is asked what babs says about its jobs, and is submitted, waited on, merged, or flagged; a merged cell is skipped.
+You run it again and again until everything is merged.
 
-`iterate` is one **tick** of a reconciler. It reads the desired state (the ledger
-rows) and advances each `(dataset, pipeline)` cell by **at most one transition**,
-routing on which ledger columns are populated:
+An app config may declare `depends_on` another: its cell waits until the producer's cell for the same source dataset is merged.
+That is how a staged pipeline is expressed, one app config per stage, and it is ordering only; how a stage consumes the producer's output is babs's input wiring.
 
-| Cell state | Columns | Transition |
-|---|---|---|
-| not started | `<short>_babs` empty | **scaffold**: generate the inclusion → compose the babs config → `babs init` (no submit) → pin the inclusion → record `<short>_babs` (the project path) |
-| in progress | `<short>_babs` set, `<short>_babs-merged` empty | **active**: read `babs status --json`, decide `submit / skip / merge / flag-failed` from the counts |
-| done | `<short>_babs-merged` set | skip (no babs query) |
+You declare intent (`campaign init`, `add-dataset`) and `iterate` moves reality toward it.
+The tick is **level-triggered**: it re-reads ground truth every time, rather than reacting to events as they happen.
+A missed event in an event-driven system is permanent drift; a level-triggered loop simply picks up where things stand, which is what lets a long, interrupted campaign converge.
 
-The active step is decided from `babs status --json` counts: not-all-submitted →
-submit; still in flight → skip; all ended with failures → flag (don't merge); all
-done → merge. A single writer is enforced by a campaign flock, and each advanced
-cell is saved as it lands, so a long or interrupted tick still records progress.
-`--dry-run` runs the read-only steps for real and prints the mutating commands
-without running them.
+## Provenance
 
-There is **no status enum** — a pipeline's state is entirely derived from which
-columns are filled. Identity columns (`dataset_id`, `study_url`,
-`processing_level`, `n_subjects`, `n_sessions`) are *inputs* iterate reads and
-never overwrites; the `<short>_babs*` columns are *derived* and reconciled each tick.
+Every change-making transition is recorded with `datalad run` at the study, so the study's git history holds the exact command that scaffolded or merged each derivative.
+The jobs themselves are recorded by babs inside the derivative, as `datalad run` records of each `singularity run`.
+Two record homes: orchestration in the study, compute in the derivative.
 
-`babs init` runs **on the cluster** (via `iterate`), because babs bakes absolute
-RIA-store paths into the project at init that can't be relocated. Cheap steps
-(`add-dataset`) can run anywhere; the git-tracked ledger syncs by push/pull while
-the heavy RIA stores stay cluster-side.
+Together with the committed lock, that makes a study a self-contained, re-executable research object: clone it, rebuild the environment from the lock, and rerun a recorded command.
+That is the [STAMPED](https://github.com/stamped-principles/stamped-paper) payoff mechababs is built for, and the reason it sits on top of babs rather than beside it.
 
-## Declarative, not imperative — edge- vs level-triggered
+## Failures stop
 
-You don't tell mechababs *do these steps*. You declare intent — which datasets,
-which pipelines, on which cluster — through the CLI (`configure`, `add-dataset`),
-and `iterate` reconciles reality toward it, one tick at a time. There are two ways
-to drive a system toward a goal. *Edge-triggered*: an event fires and an action
-runs in response — a job finishes and kicks off the next one — so a missed event
-means permanent drift. *Level-triggered*: a loop repeatedly reconciles reality
-toward the declared goal, re-reading ground truth each pass. `iterate` is
-**level-triggered** — every tick re-reads ground truth (the babs projects, the
-output RIA) and re-derives what each cell needs, regardless of what happened
-before. Level-triggered reconciliation is what lets a long, messy, interrupted
-campaign converge instead of accumulating drift — the same reason it won out in
-cluster orchestration generally.
+Only durable facts are stored: scaffolded, merged.
+Everything volatile, including job status, `waiting`, and `FAILED`, is re-read from babs each tick, so nothing goes stale and a flag clears itself once the cause is fixed.
+When jobs fail for a reason a human has to decide about, the cell is flagged and left alone; the other cells keep going.
+Recovery is a human act, and the campaign records it rather than smoothing it away.
+See [interventions.md](interventions.md).
 
-The interface is the CLI — you don't hand-edit the ledger; mechababs maintains it,
-and keeps it deliberately thin. It records the *durable* facts about each cell —
-that a babs project exists, and whether it has been merged — and defers the
-volatile, moment-to-moment job status to babs, querying it live whenever a cell is
-still active. So there is no stale status mirror to drift out of sync: each tick
-re-reads the durable markers plus a live babs query and acts on that.
+## One tool, two modes
 
-**Self-healing has a deliberate limit.** The *bookkeeping* self-heals; a *failure*
-does not. When a job fails for a reason a human has to decide about — an OOM, a bad
-flag, a dataset quirk — `iterate` flags the cell and **stops** rather than silently
-retrying past it. Recovery is a human act, and the campaign's job is to make it
-provenance-safe: the intervention is recorded, not smoothed away (see
-[interventions.md](interventions.md)). Messy science is unavoidable; mechababs
-captures the mess honestly instead of pretending the run was clean.
+A throwaway study with one subject and a babs branch under test, and a production sweep over OpenNeuroStudies with released code, are the same tool with different configs and content.
+There is no dev-only branch, field, or code path, so a dev run exercises exactly what production will.
