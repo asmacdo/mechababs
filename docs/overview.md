@@ -81,5 +81,5 @@ See [interventions.md](interventions.md).
 
 ## One tool, two modes
 
-A throwaway study with one subject and a babs branch under test, and a production sweep over OpenNeuroStudies with released code, are the same tool with different configs and content.
+A throwaway study with one subject and a babs branch under test, running several bids-apps over one study, and a production sweep over OpenNeuroStudies with released code, are the same tool with different configs and content.
 There is no dev-only branch, field, or code path, so a dev run exercises exactly what production will.
