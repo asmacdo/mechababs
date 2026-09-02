@@ -1,0 +1,51 @@
+# SimBIDS 0.0.3 — a fast, cheap stand-in for a real BIDS App. It simulates an
+# app's outputs in seconds and needs no license, templateflow cache, or real
+# memory, so it is the config to run first: it exercises the whole path
+# (campaign init -> add-dataset -> iterate: scaffold -> submit -> merge) on your
+# cluster before a real app does. Not for producing real derivatives.
+
+mechababs:
+  # mechababs-only namespace, stripped before the config reaches babs.
+  # An empty selection rule is pass-through: every subject is eligible, still
+  # capped by the campaign's --limit.
+  selection: {}
+  container:
+    # A ReproNim/containers dataset, in its native layout: babs resolves the image
+    # from its datalad-containers registration (images/bids/bids-simbids--0.0.3.sif).
+    # A URL is portable but pays a fresh clone per cell; a path (absolute, or
+    # relative to the STUDY root) to a local clone avoids that.
+    source: https://github.com/ReproNim/containers.git
+    name: bids-simbids
+
+# BIDS-study layout: the babs project root IS the derivative, so the RIA stores go
+# under .babs/. Must match across every app config in a campaign.
+analysis_path: "."
+input_ria_path: ".babs/input_ria"
+output_ria_path: ".babs/output_ria"
+
+bids_app_args:
+  --bids-app: "fmriprep"        # which app's output shape to simulate
+  $SUBJECT_SELECTION_FLAG: "--participant-label"
+  --stop-on-first-crash: ""
+  -vv: ""
+  --anat-only: ""
+
+singularity_args:
+  - --containall
+  # Route the container's /tmp to real scratch. $JOB_TMP is created and
+  # trap-cleaned by the cluster config's script_preamble.
+  - -B $JOB_TMP:/tmp
+
+# A light simulator: one cpu, a short walltime, and no --mem, so the scheduler's
+# default applies (an explicit request fails on some small test partitions).
+cluster_resources:
+  interpreting_shell: "/bin/bash"
+  hard_runtime_limit: "00:30:00"
+  customized_text: |
+    #SBATCH --cpus-per-task=1
+    #SBATCH --nodes=1
+    #SBATCH --ntasks=1
+
+all_results_in_one_zip: true
+zip_foldernames:
+  SimBIDS-0.0.3: "0-0-3"

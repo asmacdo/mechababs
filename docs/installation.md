@@ -1,6 +1,6 @@
 # mechababs — installation & prerequisites
 
-What must be in place on an HPC before you validate a cluster profile with the e2e.
+What must be in place on an HPC before you validate a cluster config with `test-cluster` or run a campaign.
 Do this, then follow [cluster-config-and-testing-tutorial.md](cluster-config-and-testing-tutorial.md).
 Site-specific steps use UMass Unity as the worked example.
 
@@ -18,17 +18,15 @@ Verify before continuing:
 for t in git uv apptainer git-annex datalad; do command -v $t || echo "MISSING: $t"; done
 ```
 
-Jobs need a modern `git` (≥ 2.25, for `sparse-checkout`) and git-annex on PATH too — a login-node git *module* doesn't reach the compute nodes, so the cluster profile's `script_preamble` must put both on the job PATH (see `examples/clusters/unity.yaml`).
+Jobs need a modern `git` (≥ 2.25, for `sparse-checkout`) and git-annex on PATH too — a login-node git *module* doesn't reach the compute nodes, so the cluster config's `script_preamble` must put both on the job PATH (see `examples/clusters/unity.yaml`).
 
 ## Scratch, not home
 
 The campaign venv and RIA stores are large — put them on fast scratch, never home/`/tmp`.
 
-- Put the campaign on scratch. Validating a cluster is a separate space:
+- Put the study, and so the campaign inside it, on scratch. Validating a cluster is a separate space:
   `test-cluster --scratch-path` says where its throwaway study, the container dataset
   beside it, and its caches go — put that on scratch too.
-  (`MECHABABS_E2E_WORKDIR` is the same location, for driving the scenario from a
-  checkout instead.)
 - No persistent scratch (Unity)? `ws_allocate mechababs 30`, then `WS=$(ws_find mechababs)` for the live path.
 - Unity `$HOME` is quota'd and `/tmp` is `noexec` — redirect caches onto the workspace:
 
@@ -38,37 +36,32 @@ The campaign venv and RIA stores are large — put them on fast scratch, never h
   export PROOT_TMP_DIR=$WS/.proot-tmp
   ```
 
-## Container shim (one-time, temporary)
+## The container dataset
 
-**This is a temporary workaround and won't be needed soon.**
-Vanilla babs reads container images from its own hardcoded path, so the shim re-registers them there — and today it must be a clone of [ReproNim/containers](https://github.com/ReproNim/containers) specifically.
-Once [PennLINC/babs#383](https://github.com/PennLINC/babs/issues/383) lands, babs will resolve the image from **any** datalad-containers dataset directly (not just ReproNim/containers), and this step — the ReproNim coupling and the script — go away entirely.
-
-Until then, build it as a **sibling of your campaigns**:
+App configs name a [ReproNim/containers](https://github.com/ReproNim/containers) dataset as their `container.source`, and babs installs it into every derivative it inits.
+The starters use the GitHub URL, which works anywhere but pays a fresh clone per cell.
+For a real sweep, clone it once onto scratch and point the app configs at that path instead (absolute, or relative to the study root):
 
 ```bash
-REPRONIM=$WS/repronim-containers-shim ./tmp-repronim-container-shim.sh bids-simbids
+datalad clone https://github.com/ReproNim/containers.git $WS/containers
 ```
 
-`bids-simbids` is built from Docker Hub (needs the apptainer/proot redirects above); real apps (`bids-mriqc`, `bids-fmriprep`) are fetched.
-Idempotent — to rebuild cleanly, point `REPRONIM` at a fresh path.
+babs resolves the image out of that dataset's datalad-containers registration, which needs a babs carrying `PennLINC/babs#399`.
+It is merged but in no release, so pin babs by git ref at `campaign init` (`--babs https://github.com/PennLINC/babs.git@main`).
 
 ## The campaign venv is the only venv you need
 
-`bootstrap.sh` builds each campaign its own venv (pinned babs + mechababs + con-duct +
-pytest), and that venv is what operates the campaign — `mechababs` refuses to run outside
-it, a guard against a stray ambient install. Validation runs there too: `test-cluster`
-invokes the campaign venv's own pytest over the scenario that ships inside the installed
-package, so there is no separate driver env to build.
+`campaign init` builds each campaign its own venv from the campaign's `uv.lock` (pinned babs + mechababs), and that venv is what operates the campaign.
+`mechababs` refuses to run outside it, a guard against a stray ambient install, and refuses when the venv no longer matches the lock.
+Select and activate in one step, in every new shell:
 
 ```bash
-source <campaign>/.venv/bin/activate
-mechababs status          # or another iterate, or test-cluster
+source .mechababs/campaigns/<label>/env.sh
 ```
 
-Run under `tmux`/`screen` — a login-node disconnect kills a long run.
+Run under `tmux`/`screen`; a login-node disconnect kills a long run.
 
 ## Then
 
 Follow [cluster-config-and-testing-tutorial.md](cluster-config-and-testing-tutorial.md) to
-write your cluster profile and validate it with `mechababs test-cluster`.
+write your cluster config and validate it with `mechababs test-cluster`.

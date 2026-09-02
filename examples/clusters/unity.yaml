@@ -12,7 +12,7 @@ script_preamble: |
   # on the compute nodes too — so add the workspace standalone build (installed
   # once via `datalad-installer git-annex` into tools/usr/bin) to PATH. See #33.
   export PATH="/scratch4/workspace/${USER}-mechababs/tools/usr/bin:$PATH"
-  # campaign venv (abspath substituted at compose time by merge_config)
+  # campaign venv; mechababs substitutes the placeholder with the real path when it composes the babs config
   source "{{MECHABABS_VENV}}/bin/activate"
   export JOB_TMP="/scratch4/workspace/${USER}-mechababs/sjob-tmp/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
   mkdir -p "${JOB_TMP}"

@@ -5,19 +5,7 @@ A mix of what works today and what we are building toward; expected to grow.
 When a design decision is unclear, it should be resolvable by asking "which use case does this serve?"
 
 ## Terminology
-The words below are used consistently throughout this document and [output_structure.md](output_structure.md).
-
-- **source dataset** — a raw BIDS dataset, the input to a pipeline.
-- **derivative** — what one BIDS App produced from one source dataset.
-- **study** — the primary unit: one or more source datasets grouped with the derivatives made from them.
-- **superstudy** — a study of studies; an optional layer for operating on many at once.
-- **campaign** — one run's pinned environment and bundle of app configs, recorded in each study it touches. Not a dataset.
-- **sweep** — running a campaign across the member studies of a superstudy.
-
-A **level** is one of those nested scopes.
-Following datalad's superdataset convention, the hierarchy is a tree whose **root** is the outermost superstudy and whose **leaves** are the derivatives: the superstudy *contains* its studies, which contain their derivatives, the way a filesystem root contains everything beneath it.
-**"Up" is toward the root (the superstudy); "down" is toward the leaves (the derivatives).**
-Memory hook: *aggregation goes up* — each level's summary rolls up from the level below (derivative → study → superstudy), so the higher `super` level is always the more-aggregated one.
+The words below are defined in the [glossary](glossary.md), and used consistently throughout this document and [output_structure.md](output_structure.md).
 
 ## Sweep many pre-made studies
 As a mechababs user, I want to operate on ~1000 pre-made BIDS studies that each contain one raw source dataset.

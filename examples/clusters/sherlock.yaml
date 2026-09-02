@@ -22,7 +22,7 @@ script_preamble: |
   # the venv is built on — the compute node's system git is 1.8 and has neither.
   # On shared Lustre scratch so the compute nodes see it too.
   export PATH="/scratch/users/${USER}/mechababs-work/campaign-base/bin:$PATH"
-  # campaign venv (abspath substituted at compose time by merge_config)
+  # campaign venv; mechababs substitutes the placeholder with the real path when it composes the babs config
   source "{{MECHABABS_VENV}}/bin/activate"
   # The campaign venv is built --system-site-packages onto a conda-forge base (the
   # CentOS 7 glibc-2.17 workaround, see docs/installation.md), and that flag

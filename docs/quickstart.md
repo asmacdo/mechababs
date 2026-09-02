@@ -1,76 +1,124 @@
 # mechababs quickstart
 
-> 🚧 **Aspirational** — the study-first UX we're building toward; not all of it runs today.
+This walks one study through one campaign on your cluster, end to end, with a simulated BIDS App so the first run is fast and cheap.
+Swap in a real app config once it works.
+The words used here are in the [glossary](glossary.md); the ideas behind them are in the [overview](overview.md).
 
-## Prerequisites
+## Before you start
 
-`uv`, `git`, `datalad`, `apptainer`/`singularity`, `git-annex`.
-HPC setup — scratch dirs, caches, and especially `git-annex` (a system binary `uv` won't install) — is in [installation.md](installation.md).
+You need `git`, `git-annex`, `datalad`, `uv`, and `apptainer` (or `singularity`) on your PATH, on the login node and the compute nodes.
+Nothing else is installed globally; mechababs itself arrives with the campaign.
+HPC specifics, including the `git-annex` that is usually missing and where scratch should go, are in [installation.md](installation.md).
+Work on fast scratch, never home or `/tmp`, and inside `tmux` or `screen` so a dropped connection does not kill a long run.
 
-You never install mechababs globally, and you never invent syntax — it's plain `uv`.
+## 1. Get a study
 
-## Set up (once)
+mechababs works on a study that already exists: raw data under `sourcedata/`, derivatives under `derivatives/`.
+Clone one from OpenNeuroStudies and step into it.
 
-The first campaign is created by running mechababs straight from a pinned ref via `uvx` — nothing lands on your `PATH`, nothing is pre-installed.
-App and cluster configs are **your own**, given by path or URL; `examples/` in the mechababs repo are starters to copy and adapt.
-
-**You have a study:**
 ```bash
+datalad clone https://github.com/OpenNeuroStudies/study-ds000001
 cd study-ds000001
-uvx --from git+https://github.com/con/mechababs@v0.2 mechababs campaign init nprep \
-    --apps mriqc.yaml,fmriprep-anat.yaml,fmriprep-minimal.yaml --cluster dartmouth.yaml
 ```
 
-**You don't — scaffold a superstudy to hold many:**
+Every command from here on runs from this directory.
+
+## 2. Get your configs
+
+A campaign runs your configs: one per BIDS App, and one for your cluster.
+Copy the starters out of the mechababs repo and put them somewhere outside the study, such as `~/config/`.
+
 ```bash
-uvx --from git+https://github.com/con/mechababs@v0.2 mechababs campaign init nprep \
-    --superstudy my-lab-studies \
-    --apps mriqc.yaml,fmriprep-anat.yaml,fmriprep-minimal.yaml --cluster dartmouth.yaml
-cd my-lab-studies
+git clone https://github.com/con/mechababs ~/mechababs-src
+mkdir -p ~/config
+cp ~/mechababs-src/examples/bids-app-configs/SimBIDS-0.0.3.yaml ~/config/
+cp ~/mechababs-src/examples/clusters/dartmouth.yaml ~/config/your-site.yaml
 ```
 
-`campaign init` writes `.mechababs/campaigns/nprep/` — the configs copied in, plus a `pyproject.toml` + `uv.lock` pinning the exact `mechababs` + `babs` (by version number for a released version, by commit for a git source) — and builds the campaign's venv from that lock.
-**The lock is your provenance, captured just in time.**
-`fmriprep-minimal` declares in its app config that it depends on `fmriprep-anat`; the chain runs in order.
+Open `your-site.yaml` and set the two things every site differs on: the `script_preamble` that puts the tools on a job's PATH, and `job_compute_space`, the scratch directory jobs clone into.
+The SimBIDS config needs no editing.
+If your cluster is new to mechababs, the [cluster config and testing tutorial](cluster-config-and-testing-tutorial.md) walks through validating the config before you rely on it.
 
-## Daily use
+## 3. Create the campaign
 
-Once a campaign exists, mechababs runs from its venv — `uvx` was only the first step.
-Each campaign has an `env.sh` that selects it and activates its venv in one step:
+The first command runs mechababs straight from git with `uvx`, so nothing has to be installed first.
+
 ```bash
-source .mechababs/campaigns/nprep/env.sh
+uvx --from git+https://github.com/con/mechababs@main mechababs campaign init demo \
+    --apps ~/config/SimBIDS-0.0.3.yaml \
+    --cluster ~/config/your-site.yaml \
+    --babs https://github.com/PennLINC/babs.git@main \
+    --limit 2
 ```
-The selection `env.sh` exports (`MECHABABS_CAMPAIGN`) is what names the campaign you're operating on — always explicit, whether the study has one campaign or five.
-mechababs refuses to act if the running environment doesn't match the campaign's committed lock, so you can't run the wrong tools by accident.
 
-## Add data
+`demo` is the campaign's label.
+`campaign init` copies your configs into `.mechababs/campaigns/demo/`, pins mechababs and babs into a `uv.lock`, builds the campaign's own venv from that lock, and commits the lot into the study.
+The lock is the campaign's provenance: it records exactly which code ran.
 
-A campaign acts on the source datasets you explicitly select.
-In a study, select a source dataset **already present** in it — the enclosing study is found by walking up from the path:
+`--babs` points at babs's `main` because babs has not had a release in a long time, and the released version predates fixes mechababs depends on.
+`--limit 2` caps each source dataset at its first two eligible subjects; leave it off for a real run.
+
+## 4. Select the campaign
+
+Each campaign has an `env.sh`.
+Sourcing it activates the campaign's venv and names the campaign you are operating on, in one step.
+
+```bash
+source .mechababs/campaigns/demo/env.sh
+```
+
+Do this in every new shell.
+Every mechababs command checks that it is running the selected campaign's venv and that the venv matches the committed lock, and refuses otherwise, so you cannot run the wrong tools by accident.
+
+## 5. Add data
+
+A campaign acts only on the source datasets you select.
+This study holds one.
+
 ```bash
 mechababs add-dataset --sourcedata sourcedata/ds000001
 ```
-At a superstudy, `--study <url>` first clones the member study in, then selects the source dataset inside it:
+
+This writes one cell per app config into the campaign's statefile: here, one cell.
+It does not fetch any data; babs does that inside each job.
+
+## 6. Run it
+
+`iterate` advances every cell by at most one step: scaffold the derivative, then submit its jobs, then merge the results.
+Run it until everything is merged.
+
 ```bash
+mechababs iterate     # scaffold
+mechababs iterate     # submit
+mechababs status      # watch the jobs
+mechababs iterate     # merge, once the jobs are done
+```
+
+`status` shows one row per cell with its state and live job counts; `jobs --failed` lists the jobs that ended without results and where their logs are.
+A cell whose jobs failed is flagged and left for you; [interventions.md](interventions.md) covers repairing it.
+Run `iterate` as often as you like: it re-reads what babs knows every time and only acts on cells that are ready.
+
+## 7. What you get
+
+A new derivative in the study's `derivatives/`, a datalad dataset of its own, plus the study's git history recording the exact commands that made it.
+Swap the SimBIDS config for a real one, `examples/bids-app-configs/MRIQC-24.0.2.yaml` say, create a new campaign, and run it the same way.
+The [reference](reference.md) has every command and flag.
+
+## Many studies at once
+
+To run one campaign across many studies, create it at a superstudy instead of in a study.
+`--superstudy` creates one if it does not exist yet, and `add-dataset --study` clones a member study in before selecting a dataset inside it.
+
+```bash
+uvx --from git+https://github.com/con/mechababs@main mechababs campaign init demo \
+    --superstudy my-studies \
+    --apps ~/config/SimBIDS-0.0.3.yaml --cluster ~/config/your-site.yaml \
+    --babs https://github.com/PennLINC/babs.git@main --limit 2
+cd my-studies
+source .mechababs/campaigns/demo/env.sh
 mechababs add-dataset --study https://github.com/OpenNeuroStudies/study-ds000001 \
     --sourcedata sourcedata/ds000001
-```
-One verb covers every shape — a dataset in your lone study, another dataset of a member already added, or a whole study brought in to select a dataset inside it.
-
-## Run it
-
-`iterate` is one reconciler tick: every cell advances by **at most one** transition — scaffold, then submit, then merge — so you repeat it until everything is merged.
-A cell waiting on an unmerged producer is noted and passed over, and a cell whose jobs failed is flagged rather than merged; neither stops the other cells.
-`status` shows where every cell stands, with live job counts for the ones that are running.
-```bash
 mechababs iterate
-mechababs status
 ```
-`iterate --batch N` advances at most N cells this tick, `--app <stem>` narrows to one app's cells, and `--dry-run` prints the transitions it would dispatch without dispatching them.
-A campaign is operated from the level where it was configured — the superstudy for a superstudy campaign, the study for a study campaign.
-At a superstudy, `iterate --study study-ds000001` narrows the tick to one member, to concentrate resources on finishing it.
 
-## What you get
-
-Each derivative lands in its study's `derivatives/`, standalone and reproducible; the study's git history carries the `datalad run` records of how it was orchestrated.
-Publish outward when ready.
+`iterate` and `status` then span every member study; `--study study-ds000001` narrows either to one.
