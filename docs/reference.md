@@ -1,257 +1,302 @@
-# mechababs — CLI & workflow reference
+# mechababs — CLI reference
 
-The conceptual model (the three axes, the campaign, the reconciler tick) is in
-[overview.md](overview.md); recovering from failures and changing a running
-campaign are in [interventions.md](interventions.md). This is the operational
-reference: the CLI, selection, and the config files.
+The operational reference: every command, then selection, then the two config files.
+The concepts are in [overview.md](overview.md), the words in the [glossary](glossary.md), a first run in the [quickstart](quickstart.md), and the on-disk layout of a study, superstudy, campaign dir and derivative in [output_structure.md](output_structure.md).
+Recovering from a failed cell is in [interventions.md](interventions.md).
 
-## CLI — two layers
-
-Bootstrapping has a chicken-and-egg problem: the operate-side CLI is installed
-*from the mechababs code vendored into the campaign*, so it can't be what creates
-the campaign. The split is bootstrap-vs-operate:
-
-### 1. `bootstrap.sh` — build the environment (run once per campaign)
-
-`bootstrap.sh` is self-contained — it clones the code pins itself, so you only
-need `git` + `uv` on PATH; no repo checkout required. Pipe it straight into bash:
+Two rules hold for every command below.
+Commands run from the root of the level the campaign was configured at: the study for a study campaign, the superstudy for a superstudy campaign.
+The campaign is selected by sourcing its `env.sh`, which activates its venv and exports `MECHABABS_CAMPAIGN=<label>`; there is no `--campaign` flag and no default when only one exists.
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/con/mechababs/main/bootstrap.sh \
-  | bash -s -- my-campaign \
-      [--babs URL@REF]        # default: https://github.com/PennLINC/babs.git@main
-      [--mechababs URL@REF]   # default: https://github.com/con/mechababs.git@main
+source .mechababs/campaigns/<label>/env.sh
 ```
 
-Clones the two code pins into `code/`, builds `.venv` with `uv`, makes the
-directory a datalad dataset (`datalad create --force` over the populated tree),
-registers the code clones as subdatasets, and editable-installs the pinned
-`babs` + `mechababs` + campaign extras (`requirements-campaign.txt`) into the
-venv. Afterwards the pinned tools run *by construction*.
+Before acting, a command checks that it is running the selected campaign's own venv and that the venv matches the campaign's committed `uv.lock` (`uv sync --check`).
+It refuses on either mismatch and names `campaign update-env` as the fix.
+The two exceptions are `campaign init`, which runs before the venv exists, and `campaign update-env`, whose job is to run when the check fails.
 
-`REF` must be a branch or tag name (not a bare commit sha) — `git clone --branch`
-is how the pin is set.
+## `campaign init`
 
-`URL` is anything `git clone` accepts, a local path included. So
-`--babs /path/to/babs-checkout@my-branch` pins a branch that exists only on disk,
-and a fix can be exercised through a whole campaign before it is pushed anywhere.
-The pin records that path, so it is for development rather than for a campaign
-whose provenance has to resolve elsewhere later.
-
-### 2. `mechababs {configure,add-dataset,iterate,test-cluster,status,jobs,retire-derivative}` — operate (run from the campaign venv)
+Create a campaign inside an existing study, or at a superstudy.
+This is the one command that runs before the campaign environment exists, so it runs ephemerally with `uvx`; nothing is installed on `PATH`.
 
 ```bash
-cd my-campaign
-source .venv/bin/activate
-
-# bind an ordered pipeline-set to a cluster: copy the named configs into the
-# campaign's pipelines/ + clusters/, vendor containers, write the mechababs config
-# + the empty ledger. Guards that THIS process is the campaign venv's python (the
-# check that prevents the wrong, unpinned babs from running).
-mechababs configure \
-    --pipelines code/mechababs/examples/pipelines/MRIQC-24.0.2.yaml \
-    --cluster code/mechababs/examples/clusters/dartmouth.yaml \
-    [--limit N]              # cap each dataset's inclusion to the first N eligible subjects
-
-# register a dataset by URL (append a ledger row). Derives processing_level
-# from OpenNeuroStudies metadata (has-sessions -> session).
-mechababs add-dataset https://github.com/OpenNeuroDatasets/ds005896
-
-# advance the campaign one reconciler tick (see below)
-mechababs iterate [--batch N] [--dry-run]
-
-# validate a cluster config end to end: runs the e2e scenario in a throwaway study
-# (campaign init -> add-dataset -> iterate: scaffold -> submit -> merge) and asserts
-# a real derivative landed. A stronger check than `babs check-setup`.
-mechababs test-cluster --cluster your-site.yaml   # by path; configs are not looked up by name
-                 --scratch-path DIR              # where the fixture studies + caches go
-                 [--mechababs URL@REF]           # default: the mechababs running this command
-                 [--babs URL@REF]                # default: what a user's campaign gets
-                 [-- -k test_spine]              # after `--`, args go to pytest
-
-# read-only: one row per CELL — the statefile as it is, plus live babs counts for
-# the cells that are running. At a superstudy the rows span every member.
-mechababs status [--study study-ds000001]      # at a superstudy, one member
-                 [--app MRIQC-24.0.2]          # one app config, by its stem
-
-# read-only: one row per JOB — the drill-down under status's cells, with each job's
-# sub/ses, SLURM id, state, times, and the directory its logs are in.
-mechababs jobs   [--study study-ds000001] [--app MRIQC-24.0.2]
-                 [--failed]         # only jobs babs marks failed
-                 [--no-refresh]     # read babs's cache instead of recomputing it
-
-# retire a derivative that has to be redone: move it out of its study into
-# derivative-attempts/ and reset its ledger cell, so iterate re-scaffolds it
-mechababs retire-derivative studies/study-ds004044/derivatives/fMRIPrep-25.2.5+minimal
-                 [--dry-run]
+uvx --from git+https://github.com/con/mechababs@<ref> mechababs campaign init <label> \
+    [-d PATH | --superstudy NAME] \
+    --apps PATH|URL[,PATH|URL…] [--apps …] \
+    --cluster PATH|URL \
+    [--limit N] [--babs URL@REF] [--mechababs URL@REF]
 ```
 
-`test-cluster` **recreates the environment it was called from, in a throwaway study.**
-A campaign lives inside a study, so there is nothing standalone to point it at: the
-scenario builds its own fixture study under `--scratch-path` and runs `campaign init`
-there. Real studies are never touched.
+It copies the named app and cluster configs into `.mechababs/campaigns/<label>/`, pins mechababs and babs into a `pyproject.toml` plus `uv.lock`, builds the campaign's venv from that lock, writes `env.sh`, and commits the result.
+Which source datasets the campaign acts on is a separate step, `add-dataset`.
 
-The two pins get there differently. With no `--mechababs`, `campaign init` pins
-whichever mechababs is running the command — so what is validated is the code you
-invoked, by the same path a user's own `campaign init` takes. babs cannot mirror the
-caller, because babs is not a mechababs dependency at all: it is a dependency of the
-*generated campaign*, frozen by that campaign's lock, so the fixture campaign gets
-what a user's campaign would get. Both are overridable, which is how a branch gets
-tested.
+- `<label>` is the campaign's identity: its directory name, and what `MECHABABS_CAMPAIGN` selects.
+- `-d PATH` names the study to create the campaign in, the way datalad's `-d` does (default: the current directory).
+  `--superstudy NAME` instead creates the campaign at a superstudy of that name, creating the superstudy if it is not there yet and adopting it if it is.
+  The two are mutually exclusive.
+- `--apps` takes app configs by path or URL, comma-separated and repeatable; their order is the bundle's order.
+  `--cluster` takes one cluster config by path or URL.
+  Configs are yours; `examples/` in the mechababs repo holds starters to copy (see [Configuration](#configuration)).
+- `--limit N` caps each source dataset's inclusion to the first N eligible subjects (default: all). It is recorded in the campaign's `campaign.yaml`.
+- `--babs URL@REF` pins babs to a git checkout instead of the default, the latest babs release, frozen to an exact version by the lock.
+  `URL` is anything git clones, a local checkout included, which is how a babs branch gets run through a campaign.
+  The released babs cannot resolve an image out of a ReproNim/containers dataset (`PennLINC/babs#399` is merged but in no release), so a campaign whose app configs point at one pins babs by ref, for example `--babs https://github.com/PennLINC/babs.git@main`.
+- `--mechababs URL@REF` pins a different mechababs (default: the one running the command, pinned by its resolved commit).
 
-The suite runs as `sys.executable -m pytest`, so pytest has to be installed beside
-the mechababs you invoke — it cannot come from the fixture campaign's venv, which
-does not exist yet when pytest starts. Hence the `test` extra:
+Init never clobbers, and it does not scaffold input studies.
+What it does is decided by what is at the target: nothing there, and `--superstudy` given, creates the superstudy as a datalad dataset and the campaign inside it (a study is never created this way); an existing datalad dataset gains a `.mechababs/` at its root, with any campaigns already there untouched; a non-empty directory that is not a dataset is refused; a campaign with this label already present is refused, by name.
+
+At a superstudy, `campaign init` touches only the superstudy's own campaign dir.
+A member study gets its copy of the campaign (configs, `pyproject.toml`, `uv.lock`, an empty statefile) when `add-dataset` first selects a source dataset in it; the venv and `env.sh` exist only at the superstudy.
+
+## `add-dataset`
+
+Select a source dataset that is already in the study into the campaign.
+
+```bash
+mechababs add-dataset --sourcedata PATH [--study PATH|URL]
+```
+
+`--sourcedata` is a path inside the study, such as `sourcedata/ds000001`; it is refused if it is outside the study, absent, or not a directory.
+`add-dataset` reads the study's per-subject metadata to fill the cell's identity columns, then writes one row per app in the campaign's bundle into the study's statefile, each cell empty and unscaffolded.
+It does not install data, and it does not generate the subject inclusion; that happens at scaffold.
+
+At a superstudy, `--study` is required and names the member study holding the source dataset, as a path relative to the superstudy or as a URL to clone one in.
+`--sourcedata` is then relative to that member.
+Cloning a member in is the one case where a selection verb brings something into the tree; source data itself is never fetched.
+The superstudy records the member and source dataset in its study catalog, and writes the member's campaign copy if this is the member's first selection.
+For a study campaign `--study` is refused, since there is no member to name.
+
+Two refusals to know about.
+A dataset that already has any cell in the statefile is refused whole: nothing is rewritten and nothing duplicated, and the app bundle is fixed at `campaign init`, so more apps means a new campaign.
+An app whose `depends_on` names a producer that is not in the statefile is refused, so the producer's config must be in the bundle.
+
+## `iterate`
+
+Advance the campaign's cells by at most one transition each: one tick of the reconciler.
+
+```bash
+mechababs iterate [--batch N] [--app STEM] [--study MEMBER] [--dry-run]
+```
+
+Each cell is routed on its statefile columns:
+
+| `babs` | `merged` | Cell state | What the tick does |
+|---|---|---|---|
+| empty | empty | not started | **scaffold**: generate the inclusion, compose the babs config, `babs init`, pin the inclusion, record the derivative path in `babs` |
+| set | empty | active | read `babs status` and decide from the counts: not all submitted, **submit**; still in flight, wait; all ended with failures, **flag**, do not merge; all done, **merge** |
+| set | set | merged | skip |
+
+A cell whose `depends_on` producer is not yet merged is noted as waiting and passed over, not blocked on; the next tick re-checks.
+A cell whose jobs failed is flagged rather than merged, and the other cells keep going.
+Nothing is remembered between ticks: every tick re-reads the statefile and the live babs state, so you run `iterate` again and again until every cell is merged.
+
+- `--batch N` advances at most N cells this tick (default: all). A cell that is already done, waiting, or still running does not count against it.
+- `--app STEM` narrows to one app config's cells, by its filename stem (`MRIQC-24.0.2`).
+- `--study MEMBER`, at a superstudy, advances only that member study. Composable with `--app`.
+- `--dry-run` routes every cell for real and prints the transitions it would dispatch, without dispatching them.
+
+At a superstudy the tick runs over every installed member in study catalog order, and `--batch` is the whole tick's budget rather than each member's, so `--batch 5` advances the five cells that come first across the superstudy.
+A member study that has been uninstalled is skipped, never reinstalled.
+
+Scaffold and merge are recorded with `datalad run` at the study, so the study's git history carries the command that produced each derivative; submit changes nothing tracked and is not recorded.
+A tick takes the level's single-writer lock, and refuses to start on a dirty tree.
+
+## `status`
+
+One row per cell of the selected campaign, read-only.
+
+```bash
+mechababs status [--study MEMBER] [--app STEM]
+```
+
+Columns: `source_dataset`, `app`, `level`, `subjects`, `sessions`, `state`, `jobs`.
+`state` is `not started`, `waiting` (its producer is not merged yet), `active`, `merged`, or `FAILED`, the last for an active cell whose live counts say jobs ended without results; `jobs` carries the live `babs status` counts for active cells.
+The table goes to stdout and the summary line to stderr, so `status | grep FAILED` sees rows and only rows.
+`status` takes no lock, so it can be run while a tick is in progress.
+
+At a superstudy the rows span every member study, computed from their statefiles at the moment you look, and gain two leading columns: `study`, and `installed`.
+`installed` is `yes` only when the member and that cell's derivative are both on disk, so a finished cell whose output has since been offloaded reads `merged` plus `no`.
+A member with no working tree on disk cannot be read; its cells show the study catalog's lifecycle in `state`, or `unknown`.
+
+- `--study MEMBER` narrows to one member. It is matched against the study catalog, so a directory that was never selected in is an error rather than an empty table.
+- `--app STEM` narrows to one app config. It is checked against the campaign's declared apps, so a typo is refused even when nothing is installed to compare against.
+
+## `jobs`
+
+One row per job babs is tracking, read-only: the drill-down under `status`.
+
+```bash
+mechababs jobs [--study MEMBER] [--app STEM] [--failed] [--no-refresh]
+```
+
+Columns: `source_dataset`, `app`, `sub_id`, `ses_id`, `job_id`, `state`, `time_used`, `time_limit`, `failed`, `logs`, with a leading `study` at a superstudy.
+`job_id` is `<job>_<task>`, SLURM's own array addressing, so it pastes straight into `sacct -j`.
+`logs` is the cell's log directory, resolved from where you are standing.
+A cell with nothing submitted has no jobs yet and is left out.
+
+`jobs` reads each derivative's `code/job_status.csv`, which babs recomputes from the scheduler, and refreshes it first.
+Reading the file as it stands can be wrong rather than merely stale: babs rewrites a resubmitted row's job id without clearing the previous attempt's failure mark, so a running job can show as failed.
+`--study` and `--app` narrow before the refresh, so scoping keeps it fast.
+
+- `--failed` shows only jobs babs marks failed (ended without results).
+- `--no-refresh` reads `job_status.csv` as it stands. Faster, and an explicit choice; the header then says the table was not refreshed.
+
+## `retire-derivative`
+
+Take a derivative out of its study and reset the cell that made it, so the next `iterate` re-scaffolds it.
+
+```bash
+mechababs retire-derivative PATH (--path DEST | --remove)
+```
+
+`babs init` refuses an existing path, so a cell that has to be redone (a resource change, a tool bug, a config fix) cannot be re-scaffolded until its derivative leaves.
+`PATH` is the derivative, campaign-relative or absolute: `derivatives/<name>` at a study, `<member>/derivatives/<name>` at a superstudy.
+Where it goes is a required choice, because keeping the evidence and throwing it away are different decisions.
+
+- `--path DEST` archives it at `DEST/<study>-<derivative>-attempt-<N>`, first free N, keeping its logs, git history and run records.
+  `DEST` must be outside the study, and outside the whole superstudy when the campaign is operated at one, checked on the resolved path; a study is a published object, and a retired attempt inside it would travel with it.
+- `--remove` deletes the derivative outright, for a cell whose evidence is worth nothing.
+
+The cell is reset in the same transition, so there is no window where the derivative is gone but the reconciler still routes it as in-progress.
+Only the derived columns are blanked; the cell's identity stays, and so does its membership at a superstudy.
+A derivative no cell claims is refused before anything moves.
+
+An archived derivative is evidence, not a resumable babs project.
+babs bakes absolute RIA paths in at init, so after the move its `input` and `output` siblings still name the old location: babs commands will not operate on it, and neither will `datalad get` or `push` through those siblings.
+Read its logs, history and content; retire a cell you mean to redo from scratch, not one you mean to continue.
+
+## `campaign update-env`
+
+Converge the campaign's environment on its declaration.
+
+```bash
+mechababs campaign update-env [--upgrade PKG]… [--study MEMBER]
+```
+
+It re-resolves `pyproject.toml` into `uv.lock`, installs exactly that into the campaign venv, and commits both if either moved.
+What it does follows from the declaration.
+Untouched, the lock does not move and the venv is rebuilt from it: a fresh clone, a wiped site, a historical checkout during reproduction.
+Edited, the change re-resolves and installs: the deliberate mid-campaign bump.
+To bump, edit `.mechababs/campaigns/<label>/pyproject.toml` (the pins are `rev` lines under `[tool.uv.sources]`) and run this.
+
+A bump reaches only cells that have not been scaffolded yet; a scaffolded cell keeps the job scripts babs baked at init.
+To move a scaffolded cell onto the new environment, retire it and let `iterate` re-scaffold.
+Completed cells keep the lock that produced them, and the campaign becomes deliberately heterogeneous, recorded in the lock's git history.
+
+- `--upgrade PKG` re-resolves PKG to the newest thing its declaration allows without editing the declaration: the case with nothing to hand-edit, a pin tracking a branch whose tip moved. Repeatable; touches only the lock.
+- `--study MEMBER`, at a superstudy, also copies the resulting lock into that member's campaign dir as its own commit.
+  A member whose lock copy is behind the superstudy's is refused by the inner verbs until this is done, so moving a member's remaining work onto the new environment is an explicit act.
+  The lock only; the member's configs are never touched.
+
+It is committed as a plain save rather than a `datalad run`: `uv lock` resolves against the live world, so recording it as re-executable would be a false promise.
+The lock file is the reproducible artifact.
+
+## `test-cluster`
+
+Validate a cluster config end to end, in a throwaway study.
 
 ```bash
 uvx --from 'git+https://github.com/con/mechababs@<ref>#egg=mechababs[test]' \
-    mechababs test-cluster \
-    --cluster ~/config/your-site.yaml \
-    --scratch-path /your/cluster/scratch
+    mechababs test-cluster --cluster PATH --scratch-path DIR \
+    [--babs URL@REF] [--mechababs URL@REF] [-- PYTEST_ARGS]
 ```
 
-The [cluster config & testing tutorial](cluster-config-and-testing-tutorial.md) is
-the full walk-through.
+It runs the packaged e2e scenario against your cluster config: `campaign init`, `add-dataset`, then `iterate` through scaffold, submit and merge, asserting a real derivative landed.
+A stronger check than `babs check-setup`, because it proves the config produces output on this scheduler.
+The scenario builds its own fixture study under `--scratch-path` and works there; real studies are never touched.
 
-`retire-derivative` exists because a cell that must be redone (a resource change, a
-tool bug, a config fix) leaves a derivative that is no longer wanted in the study but
-is still worth keeping — its logs, git history, and `datalad run` records are the
-evidence for *why* it was redone. It moves the dataset to
-`derivative-attempts/<dataset_id>-<derivative>-attempt-<N>` (the dataset prefix
-avoids a path collision between two datasets retiring the same pipeline; `attempt-N`
-covers the same cell being retired twice) and **resets the ledger cell in the same
-transition** — so there is no window where the derivative is gone but the cell is
-still routed as in-progress, and no hand-edit to forget. The move preserves the
-dataset's `datalad-id`, so it is the same dataset relocated, not a copy.
+- `--cluster PATH` is the cluster config to validate, by path.
+- `--scratch-path DIR` is where the fixture studies, the container dataset they resolve as their sibling, and the caches go. Put it on fast cluster scratch, never home or `/tmp`.
+- `--mechababs URL@REF` overrides the mechababs the fixture campaign pins. Unset, it pins whichever mechababs is running the command, so what is validated is the code you invoked, by the same path a user's own `campaign init` takes.
+- `--babs URL@REF` overrides the babs. Unset, the fixture campaign gets what a user's campaign would get: the latest release, frozen by the campaign's lock. babs is not a mechababs dependency, so it cannot mirror the caller.
+- Arguments after a literal `--` pass through to pytest, for example `-- -k test_spine`.
 
-**A retired derivative is an archive, not a resumable babs project.** babs bakes
-absolute RIA paths in at init (the same reason babs projects can't be relocated), so
-after the move its `input`/`output` siblings still point at the old
-`studies/study-<id>/derivatives/<name>/.babs/…` path. No data is lost — the RIA
-stores live under `.babs/` and move with it — but those references dangle, so **babs
-commands won't operate on it, and neither will `datalad get`/`push` through those
-siblings**. Read its logs, history and content; retire a cell you mean to redo from
-scratch, not one you mean to continue.
+The suite runs with the invoking interpreter's pytest, which is why the invocation installs the `test` extra; it cannot come from the fixture campaign's venv, which does not exist when pytest starts.
+The [cluster config and testing tutorial](cluster-config-and-testing-tutorial.md) is the full walk-through.
 
-`status` and `jobs` are the two read-only views, and they answer different
-questions: `status` says how each **cell** is doing, `jobs` says which subject's
-**job** failed and where to look. Neither takes the campaign lock, so either can be
-run while a tick is in progress — which is precisely when you want to look. Both put
-the table on stdout and the summary line on stderr, so `status | grep FAILED` sees
-rows and only rows.
+## Selection and inclusion
 
-**At a superstudy the rollup is computed, never stored.** `status` reads each
-member's shard at the moment you look; the superstudy commits membership and no
-per-cell state, so there is no cache here to drift out of agreement with what it
-summarizes. Rows gain a `study` column and an `installed` one.
+Which subjects a cell's jobs run over is decided at scaffold, from the app config's `selection:` rule and the study's per-subject metadata TSV (per subject or session: `datatypes`, `t1w_num`, `bold_num`), as OpenNeuroStudies provides.
 
-`installed` is a separate axis from `state`, not a value of it. It is `yes` only if
-the member study **and** that cell's derivative are on disk, so a cell whose work is
-finished and whose output has since been offloaded reads `merged` + `no` — folding
-them into one column would report it as neither. Dropping annexed *content* does not
-show up here: `datalad drop` leaves the derivative dataset in place, and the campaign
-dir carries `* annex.largefiles=nothing`, so the shard stays readable in git and the
-state stays correct. Only a member with no working tree at all is opaque, and its
-cells read `unknown` — never `not started`, which would assert something false about
-work that may well be finished.
+```yaml
+mechababs:
+  selection:
+    require_datatypes: [anat, func]   # every one present
+    require_positive: [t1w_num, bold_num]   # every one > 0
+```
 
-`--app` is checked against the campaign's **declared** app bundle rather than
-against the apps visible in the rows. The two differ in one situation and it is the
-one that matters: with every member uninstalled there is not a readable cell to
-compare a name against, so a typo would otherwise render as a page of `unknown`
-instead of being refused.
+The rule names TSV columns directly, so a new app's needs are config, not code.
+The eligible list is sorted, truncated to the campaign's `--limit` (a reproducible first N), formatted to the cell's `processing_level` (`sub_id`, or `sub_id` and `ses_id`), and handed to `babs init --list-sub-file`, which defines the job universe.
+babs inner-joins it with the subjects present in the data and records the result as `processing_inclusion.csv` inside the derivative.
 
-`jobs` reads each babs project's `code/job_status.csv` — which carries no dataset or
-app column and names every job `bid` — and adds the context babs has no way to know:
-which study, source dataset and app each row came from. The job id is `<job>_<task>`,
-SLURM's own array addressing, so it can be pasted straight into `sacct -j`. The log
-column is the cell's log *directory*, resolved from where you are standing.
+mechababs also pins the requested list beside the statefile, at `.mechababs/campaigns/<label>/inclusions/<sourcedata>_<app>.csv`, where `<sourcedata>` is the study-relative path with `/` mapped to `-` and `<app>` is the config's filename stem.
+The pin is written inside the cell's `datalad run`, so it travels with the study; its diff against babs's `processing_inclusion.csv` is what catches a selected subject the data does not have.
 
-That CSV is a cache babs recomputes from the scheduler, so `jobs` refreshes it first.
-Reading it as-is can be actively wrong rather than merely stale: babs's submit path
-rewrites a resubmitted row's `job_id` without clearing the previous attempt's
-`is_failed`, so a running job can show as failed. `--study`/`--app` narrow
-*before* the refresh, so scoping keeps it fast, and `--no-refresh` makes accepting a
-possibly-wrong row an explicit choice (the header then says the table was not
-refreshed).
-
-`configure` refuses to overwrite an existing ledger — resetting a campaign is
-"delete `desc-mechababs_datasets.tsv`, re-run `configure`" (containers already
-vendored are reused).
-
-## Selection & inclusion
-
-Selection lives on the **pipeline axis**, generated per `(dataset, pipeline)` at
-deploy time — the only point where both axes (and, for downstream stages,
-upstream passers) are known. `mechababs/select.py` fetches the OpenNeuroStudies
-per-study TSV (which carries per-subject `datatypes` / `t1w_num` / `bold_num`, so
-no clone or annex content is needed) and applies the pipeline's eligibility rule:
-
-| Pipeline | Rule |
-|---|---|
-| `mriqc` | `'anat' in datatypes` AND `t1w_num > 0` |
-| `fmriprep` | anat + func present AND `t1w_num > 0` AND `bold_num > 0` |
-
-The eligible list is sorted and truncated to `--limit N` (a reproducible
-"first N"), formatted to match the ledger's `processing_level` (`sub_id` vs
-`sub_id,ses_id`), and passed to `babs init --list-sub-file`, which defines the
-job *universe*. babs inner-joins it with the subjects actually present in the
-data and records that as its own `processing_inclusion.csv` inside the derivative;
-mechababs also pins the requested list on the *campaign* at
-`.mechababs/inclusions/<dataset>_<pipeline>.csv` (orchestration provenance lives
-where mechababs is pinned) as a diagnostic record of intent — its diff against
-babs's `processing_inclusion.csv` catches a selected subject the data doesn't have.
-
-For a smoke test, hand-write a one-row inclusion and drop it at the pin path;
-`iterate` uses a present pin as-is (no `select`):
+If a file already exists at the pin path when the cell scaffolds, it is used as-is and selection is skipped.
+So a one-row file there before the first tick runs a one-subject smoke test of the whole cell:
 
 ```bash
-mkdir -p .mechababs/inclusions
-printf "sub_id\nsub-CSI1\n" > .mechababs/inclusions/dsXXXXXX_<short>.csv
+mkdir -p .mechababs/campaigns/<label>/inclusions
+printf "sub_id\nsub-01\n" > .mechababs/campaigns/<label>/inclusions/sourcedata-ds000001_MRIQC-24.0.2.csv
 mechababs iterate --batch 1
 ```
 
-Or, for a pass-through pipeline (`selection: {}`), cap the job universe at
-`configure` time with `--limit 1` and let `iterate` generate the inclusion.
-
-## Responding to failures & applying changes
-
-When a cell fails for a reason a human has to fix, or you need to change an
-already-scaffolded cell, see [interventions.md](interventions.md) — repairing a
-derivative in place, and updating the pinned code.
-
-## Manual shims (temporary, automated later)
-
-Steps done by hand for now, each with a matching `TODO(manual step):` comment at
-the code location that needs it (grep `TODO(manual step)`):
-
-- **Container shim.** Vanilla babs locates a container image at babs's hardcoded
-  default path; the ReproNim/containers layout is only resolved by a babs fork
-  branch. So `tmp-repronim-container-shim.sh` builds a persistent,
-  out-of-campaign shim dataset once (a sibling of your campaigns); pipelines
-  reference it relatively (`container.source: ../repronim-containers-shim`) and
-  `configure` vendors it into `code/`. Drop the shim and swap `container.source`
-  to the ReproNim GitHub link when `PennLINC/babs#383` lands.
-
 ## Configuration
 
-Configs are **campaign-owned**: they live in the campaign's own `pipelines/` and
-`clusters/`, so the config that produced a run is committed alongside it. `configure`
-copies the config you name into the campaign and resolves it by name (a name already
-there resolves in place). The files under `examples/` are starters to copy from.
+A campaign holds two kinds of config, and they are separate because they change for different reasons.
+An **app config** is the BIDS App's flags, container and zip layout, reviewed as science; a **cluster config** is the site's resources and job preamble, often private.
+Never bake a cluster detail into an app config or the reverse: the same app runs on another site by swapping one file.
+For each cell, mechababs composes app config × cluster config × source dataset into the single YAML `babs init --container-config` takes, in a temporary file; babs keeps the resolved copy that ran at the derivative's `.babs/babs_init_config.yaml`.
 
-- **Pipeline YAMLs** hold the `container` block, BIDS-app flags, and zip
-  foldernames; the filename stem is the pipeline's identity (the ledger column
-  prefix, unique per campaign — there is no `short_name` key). Flags are the ground
-  truth for what runs — the *why* behind each choice lives in the
-  `OpenNeuroDerivatives/fmriprepDerivatives` opinions repo.
-- **Cluster YAMLs** — how to activate the campaign venv and where per-job scratch
-  lives; see the
-  [cluster config & testing tutorial](cluster-config-and-testing-tutorial.md) for
-  the full walk-through of adding your own cluster.
+Both are yours, given to `campaign init` by path or URL and copied into the campaign dir (`bids-app-configs/`, `clusters/`).
+Edit them there and commit; a change reaches only cells not yet scaffolded, since babs bakes the job scripts at init.
+`examples/bids-app-configs/` and `examples/clusters/` in the mechababs repo are starters to copy, with the site paths to edit marked `SITE`.
 
-To add a pipeline: copy an existing `examples/pipelines/*.yaml` to a
-uniquely-named file (its stem is the pipeline's identity), change container + flags.
-To add a cluster: copy
-`examples/clusters/dartmouth.yaml`, adjust the `script_preamble` + scratch roots,
-and validate it by running the e2e suite on your cluster (see the tutorial).
+### App configs
+
+The filename stem is the app's identity: what `--app` takes, what `depends_on` names, and part of the derivative's name (`MRIQC-24.0.2+ds000001`).
+The `mechababs:` block at the top is read by mechababs and stripped before the config reaches babs; everything else is babs container-config, passed through.
+
+```yaml
+mechababs:
+  selection: {…}                  # the eligibility rule, above
+  depends_on: fMRIPrep-25.2.5+anat   # optional: the producer's stem; ordering only
+  container:
+    source: https://github.com/ReproNim/containers.git   # URL, or a path (absolute, or relative to the study root)
+    name: bids-fmriprep
+```
+
+- `container.source` is a ReproNim/containers dataset, handed to `babs init --container-ds` as-is; babs installs it into every derivative it inits, so a path to a local clone saves a fresh clone per cell.
+  `name` is the image's datalad-containers name.
+- `depends_on` delays this app's cell until the named producer's cell for the same source dataset is merged.
+  It wires nothing.
+  A stage that consumes the producer's output also declares it under babs's `input_datasets`, keyed by the producer's stem and with no `origin_url`: the producer's output store does not exist until it has merged, so scaffold injects it per run.
+  A QC gate names its producer once, in `depends_on` only.
+- `analysis_path`, `input_ria_path` and `output_ria_path` place the babs RIA stores under `.babs/` so the derivative root is the derivative.
+  They must match across every app config in a campaign.
+- `zip_foldernames` is keyed by this config's stem, which names the output folder babs zips and is the handle a downstream stage's `input_datasets` chains onto.
+- `script_preamble` and the other job-level keys belong to the cluster config; resource requests (`cluster_resources`) are parked in the app configs for now (con/mechababs#3, #97).
+
+### Cluster configs
+
+```yaml
+script_preamble: |
+  source "{{MECHABABS_VENV}}/bin/activate"
+  export JOB_TMP="/scratch/${USER}/sjob-tmp/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+  mkdir -p "${JOB_TMP}"
+  trap 'rm -rf "${JOB_TMP}"' EXIT
+job_compute_space: "/scratch/${USER}"
+# env_constraints:      # optional, verbatim PEP 508 caps for a site whose glibc is old
+#   - scipy<=1.15.3
+```
+
+- `script_preamble` runs at the top of every job. It must put the campaign venv, `git` (2.25 or newer) and `git-annex` on the job's `PATH`; `{{MECHABABS_VENV}}` is replaced with the venv's real path when the babs config is composed, so no absolute path is committed.
+  `$JOB_TMP` is the per-job scratch the app configs bind to the container's `/tmp`.
+- `job_compute_space` is where babs clones the derivative for each job. Fast scratch, and outside any quota a running sweep could fill.
+- `env_constraints` caps package versions the campaign environment may install, as uv `constraint-dependencies`; a modern cluster declares none.
+  When `campaign init` still hits a package with no installable wheel, it fails naming that package and pointing here.
+
+The [cluster config and testing tutorial](cluster-config-and-testing-tutorial.md) walks through adapting a starter to your site and validating it with `test-cluster`.
