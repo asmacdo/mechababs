@@ -372,7 +372,7 @@ def test_the_campaign_flock_is_held_across_the_whole_update(study, saves, monkey
 
     update_env.run_update_env(study)
 
-    assert held[0] == campaign_mod.flock_path(study, "nprep")
+    assert held[0] == campaign_mod.flock_path(study)
     assert held[-1] == "released"
     assert len([h for h in held if h != "released"]) == 1, "taken exactly once"
 
@@ -397,4 +397,4 @@ def test_the_flock_is_taken_at_the_operated_level(
 
     update_env.run_update_env(root, member="study-ds000001")
 
-    assert taken == [campaign_mod.flock_path(root, "nprep")]
+    assert taken == [campaign_mod.flock_path(root)]

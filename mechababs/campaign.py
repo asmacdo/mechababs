@@ -61,11 +61,13 @@ CAMPAIGNS_DIRNAME = "campaigns"
 
 CONFIG_FILENAME = "campaign.yaml"
 STATE_FILENAME = "sourcedata+derivatives.tsv"
-# The single-writer flock (spec: the campaign, not the study, is the writer unit).
-# Beside the statefile it guards, and gitignored from inside the campaign dir — a
-# lock left in the tree would otherwise dirty the study every `iterate`. Named for
-# the file lock it is, NOT `UV_LOCK_FILENAME`: that is uv.lock, three lines down.
-FLOCK_FILENAME = "." + STATE_FILENAME + ".lock"
+# The single-writer flock (spec: the writer unit is the study or superstudy, not
+# the campaign — campaigns coexist under one level but never operate at once).
+# One per level, directly under .mechababs/, so every campaign at that level takes
+# the same lock; gitignored from there, since a lock left in the tree would dirty
+# the study every `iterate`. Named for the kind of lock it is — an fcntl flock —
+# NOT `UV_LOCK_FILENAME`: that is uv.lock, a resolved environment, two lines down.
+FLOCK_FILENAME = ".single-writer.flock"
 # The superstudy's counterpart to the statefile, and the whole of the asymmetry:
 # a study's campaign dir carries per-cell STATE, a superstudy's carries MEMBERSHIP.
 # Per-cell detail shards to the members and the rollup is computed on demand, so
@@ -342,8 +344,15 @@ def require_statefile(study, label):
     return path
 
 
-def flock_path(root, label):
-    return campaign_dir(root, label) / FLOCK_FILENAME
+def flock_path(root):
+    """The level's single-writer lock: one per study or superstudy, not per campaign."""
+    return Path(root) / MECHABABS_DIR / FLOCK_FILENAME
+
+
+def level_gitignore_path(root):
+    """The ``.gitignore`` that hides the lock — at ``.mechababs/`` itself, one per level
+    like the lock, shared by every campaign there."""
+    return Path(root) / MECHABABS_DIR / ".gitignore"
 
 
 def apps_dir(root, label):

@@ -343,17 +343,17 @@ def add(sourcedata, member_arg=None):
             else None
         )
         save = stack.enter_context(utils.campaign_save_scope(study, scope_target))
-        # Inside the scope, and before the flock: the footprint carries the campaign
-        # dir's .gitignore, which is what keeps the lock file out of the commit.
+        # Inside the scope: the footprint is part of what this add-dataset commits
+        # at the member. (The lock lives at the super, already ignored there by
+        # init, so nothing here has to precede taking it.)
         if superstudy:
             write_member_footprint(superstudy, study, label)
-        # The campaign's single-writer guarantee, spanning the whole
-        # read-modify-write of the shard. Taken at `root` — the level the campaign
-        # is operated from — and not at the member: this writes the member's shard
-        # AND the super's catalog, so a member-keyed lock would leave two
-        # concurrent `--study` selections serialized on nothing while they both
-        # rewrite the catalog.
-        with utils.flocked(campaign_mod.flock_path(root, label)):
+        # The level's single-writer guarantee, spanning the whole read-modify-write
+        # of the shard. Taken at `root` — the level the campaign is operated from —
+        # and not at the member: this writes the member's shard AND the super's
+        # catalog, so a member-keyed lock would leave two concurrent `--study`
+        # selections serialized on nothing while they both rewrite the catalog.
+        with utils.flocked(campaign_mod.flock_path(root)):
             rows = campaign_mod.read_state(study, label)
             # The bundle is fixed at init, so a dataset is selected whole or not at
             # all — re-adding refuses. To run more apps on this data, start a new

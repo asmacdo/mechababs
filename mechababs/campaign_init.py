@@ -575,8 +575,12 @@ def init(
         sys.exit("--apps must name at least one BIDS-App config")
 
     # Everything that writes runs inside the scope: it checks the target is clean
-    # first, and commits what the block produced as one attributable node.
-    with campaign_save_scope(study, campaign) as save:
+    # first, and commits what the block produced as one attributable node. Two paths
+    # declared: the campaign dir, and the level's .gitignore under .mechababs/ —
+    # shared by every campaign at this level, so a second init finds it committed
+    # and the save has nothing to record for it.
+    level_gitignore = campaign_mod.level_gitignore_path(study)
+    with campaign_save_scope(study, [campaign, level_gitignore]) as save:
         campaign.mkdir(parents=True)
 
         # First file in, before anything it has to govern: git-annex reads the
@@ -584,14 +588,16 @@ def init(
         # younger than a save that could reach these paths.
         (campaign / ".gitattributes").write_text(GITATTRIBUTES)
 
-        # The venv is ephemeral and rebuilt from the lock; the flock is a runtime
-        # artifact. Ignore both from INSIDE the campaign dir, so mechababs' whole
+        # Two runtime artifacts, ignored from where each lives, so mechababs' whole
         # footprint stays under .mechababs/ and the study's own .gitignore is left
-        # alone. Untracked-but-not-ignored files here would dirty the study, which
-        # the clean-in guards read as unattributable work.
-        (campaign / ".gitignore").write_text(
-            f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.FLOCK_FILENAME}\n"
-        )
+        # alone — untracked-but-not-ignored files would dirty the study, which the
+        # clean-in guards read as unattributable work. The flock belongs to the
+        # LEVEL (every campaign here takes the same one), so it is ignored from
+        # .mechababs/ itself; written idempotently, since .mechababs/ may already
+        # carry earlier campaigns. The venv is this campaign's, ephemeral and
+        # rebuilt from the lock, and is ignored from inside its own dir.
+        level_gitignore.write_text(f"{campaign_mod.FLOCK_FILENAME}\n")
+        (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
 
         apps = resolve_apps(campaign / campaign_mod.APPS_DIRNAME, app_args)
         cluster_file = stage_config(
