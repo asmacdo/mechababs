@@ -1,7 +1,8 @@
 # mechababs output structure
 
 **The goal.** This is the **target** shape for the objects mechababs works on and produces: a **study**, the derivatives it gains, and — when many studies run together — the **superstudy** that groups them.
-It is not what we produce today, and the study-first shape below is under active design.
+The study and superstudy layout below is what mechababs produces today; the `prov/` record is not yet.
+The words used here are defined in the [glossary](glossary.md).
 Where today's output deviates from this target, there is an open issue for the gap — or this document is wrong and should change.
 
 ## Everything is a dataset
@@ -36,7 +37,7 @@ study-<id>/
     <Tool>-<Ver>+<stage>/      # a new babs derivative (see "a derivative dataset")
   .mechababs/                  # mechababs' record — bidsignored, NOT a dataset
     campaigns/
-      <label>/                 # one campaign's footprint in this study
+      <label>/                 # one campaign's record in this study
         campaign.yaml          #   the BIDS-App-config bundle (+ depends_on chain) + cluster choice
         bids-app-configs/      #   the individual app configs (mriqc, fmriprep-anat, ...)
         clusters/              #   cluster config(s)
@@ -87,10 +88,10 @@ So a study has `+state / −membership` (it *is* one study); a superstudy has `+
 The one committed state at the super is deliberately coarse: a per-member lifecycle status (`registered` / `active` / `merged`) alongside the membership, recomputed from the member's shard on any tick that advances it and committed only when it changed — never a commit of its own.
 
 `mechababs campaign init` is the same command at either level.
-At a superstudy it touches only the superstudy's own campaign dir — no members are selected yet, so there is nothing to fan out to.
-A member's campaign footprint (config copy, lock, empty statefile shard) is written when `add-dataset` first selects a source dataset in it; a member added later gets its footprint the same way, so there is no separate catch-up step.
+At a superstudy it touches only the superstudy's own campaign dir — no member studies are selected yet, so there is nothing to fan out to.
+A member study's campaign dir (config copy, lock, empty statefile shard) is written when `add-dataset` first selects a source dataset in it; a member study added later gets its campaign dir the same way, so there is no separate catch-up step.
 
-**Homing a superstudy is optional.** The orchestration provenance lives in the studies (each study's git history, its `datalad run` records, its copied-down config), so the superstudy holds nothing durable the members don't — it can be re-derived from them. It *can* be published to a durable home (be OpenNeuroStudies, or a dedicated superdataset) but does not have to be.
+**Homing a superstudy is optional.** The orchestration provenance lives in the studies (each study's git history, its `datalad run` records, its copied-down config), so the superstudy holds nothing durable the member studies don't — it can be re-derived from them. It *can* be published to a durable home (be OpenNeuroStudies, or a dedicated superdataset) but does not have to be.
 
 The root `studies.tsv` / `studies+derivatives.tsv` are OpenNeuroStudies' own authoritative indexes, present when the superstudy is OpenNeuroStudies (or another catalog-keeping superdataset); mechababs never writes them.
 mechababs' catalog is the campaign's `studies+sourcedata.tsv` under `.mechababs/` — a distinct file with a distinct owner, so the names do not collide.
@@ -105,7 +106,7 @@ This is the babs project: `babs init` targets this path, and its root is the der
 The BIDS app writes `dataset_description.json` and `sub-*` here.
 
 ```
-<Tool>-<Ver>+<stage>/          # e.g. fMRIPrep-25.1.1+anat
+<Tool>-<Ver>+<stage>/          # e.g. fMRIPrep-25.1.1+anat; fMRIPrep-25.1.1+anat+ds000001 when the source dataset is named
   dataset_description.json     # DatasetType "derivative"; GeneratedBy [<bids_app>]
   .bidsignore                  # containers/, logs/, prov/
   sub-*                        # unzipped derivative content
