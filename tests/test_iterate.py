@@ -367,7 +367,7 @@ def test_a_derivative_that_matches_nothing_is_a_typo_not_an_empty_tick(study, ti
 def test_the_flock_is_taken_exactly_once_around_the_whole_tick(
     study, tick, monkeypatch
 ):
-    """One lock, held across every cell: the campaign is the single-writer unit. It
+    """One lock, held across every cell: the level is the single-writer unit. It
     must not be taken per cell (and never inside a verb this tick dispatches — an
     flock is per open-file-description, so that would deadlock against this one).
 
