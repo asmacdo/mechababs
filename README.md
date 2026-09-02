@@ -1,50 +1,44 @@
 # mechababs
 
-Automation glue for running BIDS apps across many OpenNeuro datasets on HPC clusters using [BABS](https://github.com/PennLINC/babs).
+Run BIDS Apps over many studies on an HPC cluster, with [BABS](https://github.com/PennLINC/babs) running the jobs.
 
-mechababs is an end-to-end harness for running BABS across clusters and many datasets.
-It runs **vanilla** BABS by default (`PennLINC/babs` main, or a PR branch under test), and can use a babs fork when one is needed.
-The unit of work is a **campaign**: a self-contained datalad dataset that holds its inputs, its outputs, its config, its state ledger, and the exact `babs` + `mechababs` code that produced everything.
-
-Every run composes three axes — **a dataset** × **a pipeline** (`pipelines/*.yaml`) × **a cluster** (`clusters/*.yaml`) — and `mechababs iterate` reconciles the campaign toward the state you declared, one tick at a time.
+mechababs works on a BIDS study, adding derivatives to it, and records how each one was made inside the study itself: the exact `mechababs` and `babs` that ran, pinned in a lock, and every orchestration step as a `datalad run` record.
+A **campaign** is one such run's recipe, your app and cluster configs plus that locked environment, and `mechababs iterate` moves the study toward what you declared, one tick at a time.
+A **superstudy** groups many studies so one campaign sweeps them all.
 
 ## Quickstart
 
 ```bash
-# 1. Build a campaign (needs only git + uv on PATH; run once per campaign).
-curl -sSL https://raw.githubusercontent.com/con/mechababs/main/bootstrap.sh \
-  | bash -s -- my-campaign
-
-cd my-campaign
-source .venv/bin/activate
-
-# 2. Bind an ordered pipeline-set to a cluster (configure copies the named configs into the campaign).
-mechababs configure --pipelines code/mechababs/examples/pipelines/MRIQC-24.0.2.yaml --cluster code/mechababs/examples/clusters/dartmouth.yaml [--limit N]
-
-# 3. Register datasets by URL.
-mechababs add-dataset https://github.com/OpenNeuroDatasets/ds005896
-
-# 4. Advance the campaign one reconciler tick at a time until it's done.
-mechababs iterate
+datalad clone https://github.com/OpenNeuroStudies/study-ds000001 && cd study-ds000001
+uvx --from git+https://github.com/con/mechababs@main mechababs campaign init demo \
+    --apps ~/config/SimBIDS-0.0.3.yaml --cluster ~/config/your-site.yaml \
+    --babs https://github.com/PennLINC/babs.git@main --limit 2
+source .mechababs/campaigns/demo/env.sh
+mechababs add-dataset --sourcedata sourcedata/ds000001
+mechababs iterate      # repeat until every cell is merged
 ```
 
-New to a cluster? Get the prerequisites in place ([installation.md](docs/installation.md)), then validate your HPC config by running the e2e suite on it — see the [cluster config & testing tutorial](docs/cluster-config-and-testing-tutorial.md).
+The [quickstart](docs/quickstart.md) walks through it, configs included.
+New cluster? Put the prerequisites in place ([installation.md](docs/installation.md)), then validate your cluster config with `mechababs test-cluster` ([tutorial](docs/cluster-config-and-testing-tutorial.md)).
 
 ## Docs
 
-- [docs/overview.md](docs/overview.md) — the concepts: the three axes, the campaign as a self-contained provenance object, and the reconciler tick.
-- [docs/installation.md](docs/installation.md) — HPC prerequisites: PATH tools, scratch, the container shim, and the campaign venv.
-- [docs/reference.md](docs/reference.md) — CLI reference, selection & inclusion, and the config files.
-- [docs/interventions.md](docs/interventions.md) — recovering from failures and changing a running campaign, provenance-safely.
-- [docs/cluster-config-and-testing-tutorial.md](docs/cluster-config-and-testing-tutorial.md) — add your cluster and validate it by running the e2e suite on it.
-- [docs/output_structure.md](docs/output_structure.md) — the target on-disk shape of a campaign and everything it produces.
-- [CLAUDE.md](CLAUDE.md) — project conventions, the pipeline, terminology, and milestones.
+- [docs/quickstart.md](docs/quickstart.md) — one study through one campaign, end to end.
+- [docs/overview.md](docs/overview.md) — the concepts: the study as the unit, the campaign as a recipe recorded in it, the reconciler tick.
+- [docs/glossary.md](docs/glossary.md) — the words, defined once.
+- [docs/reference.md](docs/reference.md) — every command and flag, selection, and the two config files.
+- [docs/interventions.md](docs/interventions.md) — when a cell fails: find it, repair it in place, or redo it.
+- [docs/installation.md](docs/installation.md) — HPC prerequisites: PATH tools, scratch, the container dataset.
+- [docs/cluster-config-and-testing-tutorial.md](docs/cluster-config-and-testing-tutorial.md) — add your cluster and validate it.
+- [docs/output_structure.md](docs/output_structure.md) — the on-disk shape of a study, a superstudy, a campaign, and a derivative.
+- [docs/spec.md](docs/spec.md) — the design decisions of record, and [docs/use_cases.md](docs/use_cases.md), the user stories they answer to.
 - [CONTRIBUTORS.md](CONTRIBUTORS.md) — developing and testing mechababs itself.
-- Open work + milestones live in the GitHub tracker.
+- [CLAUDE.md](CLAUDE.md) — contributor conventions and issue tracking.
+- Open work and milestones live in the GitHub tracker.
 
 ## Upstream
 
-- [OpenNeuroStudies](https://github.com/OpenNeuroStudies/OpenNeuroStudies) — the superdataset mechababs feeds
+- [OpenNeuroStudies](https://github.com/OpenNeuroStudies/OpenNeuroStudies) — the superstudy mechababs feeds
 - [OpenNeuroDerivatives](https://github.com/OpenNeuroDerivatives/OpenNeuroDerivatives) — derivative mirrors + the fmriprep opinions repo
 - [BABS](https://github.com/PennLINC/babs) — the execution engine
 - [ReproNim/containers](https://github.com/ReproNim/containers) — container datasets
