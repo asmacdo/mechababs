@@ -1,0 +1,99 @@
+# fMRIPrep 25.2.5, --level full, chained on the anat-only stage.
+# Resampled BOLD in every requested output space, CIFTI, and confounds. More
+# expensive than minimal (every volume is resampled into each space and projected
+# to surfaces), by a ratio that has not been measured here. Copy it, then edit the
+# site paths marked SITE.
+
+mechababs:
+  # mechababs-only namespace, stripped before the config reaches babs.
+  selection:
+    require_datatypes: [anat, func]
+    require_positive: [t1w_num, bold_num]
+  # The orchestration edge, mechababs-owned and separate from babs's
+  # `input_datasets` below: names the producer by STEM, so this cell is not
+  # scaffolded until the anat cell for the same source dataset is merged.
+  # Ordering only; the wiring is `input_datasets`.
+  depends_on: fMRIPrep-25.2.5+anat
+  container:
+    # A ReproNim/containers dataset, in its native layout: babs resolves the image
+    # from its datalad-containers registration (images/bids/bids-fmriprep--25.2.5.sif).
+    # A URL is portable but pays a fresh clone per cell; a path (absolute, or
+    # relative to the STUDY root) to a local clone avoids that.
+    source: https://github.com/ReproNim/containers.git
+    name: bids-fmriprep
+
+# BIDS-study layout: the babs project root IS the derivative, so the RIA stores go
+# under .babs/. Must match across every app config in a campaign.
+analysis_path: "."
+input_ria_path: ".babs/input_ria"
+output_ria_path: ".babs/output_ria"
+
+# The flag set follows the OpenNeuroDerivatives/fmriprepDerivatives opinions repo,
+# which holds the reasoning behind each choice; do not restate it here.
+bids_app_args:
+  $SUBJECT_SELECTION_FLAG: "--participant-label"
+  # babs expands this token to the absolute path of the job's own work dir.
+  -w: "$BABS_TMPDIR"
+  --level: "full"
+  --output-spaces: "MNI152NLin2009cAsym:res-2:res-native MNI152NLin6Asym:res-2:res-native fsaverage"
+  --cifti-output: "91k"
+  --random-seed: "12345"
+  --skull-strip-fixed-seed: ""
+  --skull-strip-t1w: "force"
+  --use-syn-sdc: "warn"
+  --me-output-echos: ""
+  --notrack: ""
+  --md-only-boilerplate: ""
+  --skip-bids-validation: ""
+  --stop-on-first-crash: ""
+  # The HOST path to your FreeSurfer license. babs rewrites the value to
+  # /SGLR/FREESURFER_HOME/license.txt in the generated invocation and binds it there.
+  --fs-license-file: "/path/to/freesurfer/license.txt"   # SITE
+  # Inside the unzipped anat input. The double nesting is real: path_in_babs is
+  # sourcedata/fMRIPrep-25.2.5+anat, and the zip's top folder is also
+  # fMRIPrep-25.2.5+anat/.
+  --fs-subjects-dir: '"${PWD}"/sourcedata/fMRIPrep-25.2.5+anat/fMRIPrep-25.2.5+anat/sourcedata/freesurfer'
+  # Reuse the anat stage's precomputed derivatives (fmriprep --derivatives
+  # PACKAGE=PATH) instead of recomputing them: the anat derivative root
+  # (sub-*/anat + dataset_description.json). --fs-subjects-dir stays; FreeSurfer
+  # reuse is a separate mechanism.
+  --derivatives: 'anat="${PWD}"/sourcedata/fMRIPrep-25.2.5+anat/fMRIPrep-25.2.5+anat'
+  --nprocs: "4"
+  --omp-nthreads: "2"
+  --mem-mb: "32000"
+
+singularity_args:
+  - --containall
+  # Route the container's /tmp to real scratch. $JOB_TMP is created and
+  # trap-cleaned by the cluster config's script_preamble.
+  - -B $JOB_TMP:/tmp
+  - -B /path/to/templateflow:/templateflow   # SITE
+  - --env TEMPLATEFLOW_HOME=/templateflow
+
+# The anat stage's output, as a babs input. The key matches the producer's
+# zip_foldernames key (its filename stem). origin_url is deliberately absent: the
+# producer's output store does not exist until that cell has merged, so scaffold
+# resolves it per run and injects it.
+input_datasets:
+  fMRIPrep-25.2.5+anat:
+    required_files:
+      - "*fMRIPrep-25.2.5+anat*.zip"
+    is_zipped: true
+    path_in_babs: sourcedata/fMRIPrep-25.2.5+anat
+
+# Resource requests belong on the cluster axis and are parked here for now
+# (con/mechababs#3, #97).
+cluster_resources:
+  interpreting_shell: "/bin/bash"
+  hard_runtime_limit: "24:00:00"
+  customized_text: |
+    #SBATCH --cpus-per-task=8
+    #SBATCH --mem=40G
+    #SBATCH --nodes=1
+    #SBATCH --ntasks=1
+
+all_results_in_one_zip: true
+zip_foldernames:
+  # Key == this app config's filename stem: the output folder the app writes into
+  # and babs zips.
+  fMRIPrep-25.2.5+full: "25-2-5"

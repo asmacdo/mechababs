@@ -1,0 +1,64 @@
+# MRIQC 24.0.2 — a starter app config. Copy it, then edit the two site paths
+# marked SITE below. The filename stem (MRIQC-24.0.2) is the app's identity: it is
+# what `--app` takes, what a `depends_on` names, and part of the derivative's name.
+
+mechababs:
+  # mechababs-only namespace, stripped before the config reaches babs.
+  # selection = the eligibility rule scaffold applies to the study's per-subject
+  # metadata when it builds the inclusion; container = which image `babs init`
+  # gets (--container-ds / --container-name).
+  selection:
+    require_datatypes: [anat]
+    require_positive: [t1w_num]
+  container:
+    # A ReproNim/containers dataset, in its native layout: babs resolves the image
+    # from its datalad-containers registration (images/bids/bids-mriqc--24.0.2.sif).
+    # A URL is portable but pays a fresh clone per cell, because babs installs this
+    # dataset into every derivative it inits; a path (absolute, or relative to the
+    # STUDY root) to a local clone avoids that. Either form is passed to babs as-is.
+    source: https://github.com/ReproNim/containers.git
+    name: bids-mriqc
+
+# BIDS-study layout: the babs project root IS the derivative, so the RIA stores go
+# under .babs/ rather than babs's default top-level input_ria/output_ria. Passed
+# straight through to babs. Must match across every app config in a campaign.
+analysis_path: "."
+input_ria_path: ".babs/input_ria"
+output_ria_path: ".babs/output_ria"
+
+bids_app_args:
+  --no-datalad-get: ""
+  $SUBJECT_SELECTION_FLAG: "--participant-label"
+  # babs expands this token to the absolute path of the job's own work dir.
+  -w: "$BABS_TMPDIR"
+  --n_cpus: "4"
+  --mem_gb: "16"
+  -vv: ""
+  --no-sub: ""
+
+singularity_args:
+  - --containall
+  # Route the container's /tmp to real scratch. $JOB_TMP is created and
+  # trap-cleaned by the cluster config's script_preamble.
+  - -B $JOB_TMP:/tmp
+  # mriqc pulls MNI152NLin2009cAsym for its anatomical IQM workflow; bind a
+  # pre-populated templateflow cache so it needs no writable download target.
+  - -B /path/to/templateflow:/templateflow   # SITE
+  - --env TEMPLATEFLOW_HOME=/templateflow
+
+# Resource requests belong on the cluster axis and are parked here for now
+# (con/mechababs#3, #97). 40G: synthstrip has been observed peaking near 37 GiB,
+# and OOMs at 24G; one session still exceeded 40G, so treat this as a floor that
+# usually works, not a ceiling.
+cluster_resources:
+  interpreting_shell: "/bin/bash"
+  hard_runtime_limit: "24:00:00"
+  customized_text: |
+    #SBATCH --cpus-per-task=4
+    #SBATCH --mem=40G
+    #SBATCH --nodes=1
+    #SBATCH --ntasks=1
+
+all_results_in_one_zip: true
+zip_foldernames:
+  mriqc: "24-0-2"

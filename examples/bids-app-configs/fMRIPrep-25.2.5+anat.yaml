@@ -1,0 +1,75 @@
+# fMRIPrep 25.2.5, --anat-only — the first stage of the staged fmriprep chain.
+# Produces the anatomical scaffold plus FreeSurfer recon-all (under
+# sourcedata/freesurfer/ inside the zipped output); the full stage declares
+# `depends_on` this stage and takes its output as an input.
+# Copy it, then edit the site paths marked SITE.
+
+mechababs:
+  # mechababs-only namespace, stripped before the config reaches babs.
+  selection:
+    require_datatypes: [anat]
+    require_positive: [t1w_num]
+  container:
+    # A ReproNim/containers dataset, in its native layout: babs resolves the image
+    # from its datalad-containers registration (images/bids/bids-fmriprep--25.2.5.sif).
+    # A URL is portable but pays a fresh clone per cell; a path (absolute, or
+    # relative to the STUDY root) to a local clone avoids that.
+    source: https://github.com/ReproNim/containers.git
+    name: bids-fmriprep
+
+# BIDS-study layout: the babs project root IS the derivative, so the RIA stores go
+# under .babs/. Must match across every app config in a campaign.
+analysis_path: "."
+input_ria_path: ".babs/input_ria"
+output_ria_path: ".babs/output_ria"
+
+# The flag set follows the OpenNeuroDerivatives/fmriprepDerivatives opinions repo,
+# which holds the reasoning behind each choice; do not restate it here.
+bids_app_args:
+  $SUBJECT_SELECTION_FLAG: "--participant-label"
+  # babs expands this token to the absolute path of the job's own work dir.
+  -w: "$BABS_TMPDIR"
+  --anat-only: ""
+  --output-spaces: "MNI152NLin2009cAsym:res-2:res-native MNI152NLin6Asym:res-2:res-native fsaverage"
+  --cifti-output: "91k"
+  --random-seed: "12345"
+  --skull-strip-fixed-seed: ""
+  --skull-strip-t1w: "force"
+  --notrack: ""
+  --md-only-boilerplate: ""
+  --skip-bids-validation: ""
+  --stop-on-first-crash: ""
+  # The HOST path to your FreeSurfer license. babs rewrites the value to
+  # /SGLR/FREESURFER_HOME/license.txt in the generated invocation and binds it there.
+  --fs-license-file: "/path/to/freesurfer/license.txt"   # SITE
+  --nprocs: "2"
+  --omp-nthreads: "2"
+  --mem-mb: "16000"
+
+singularity_args:
+  - --containall
+  # Route the container's /tmp to real scratch. $JOB_TMP is created and
+  # trap-cleaned by the cluster config's script_preamble.
+  - -B $JOB_TMP:/tmp
+  - -B /path/to/templateflow:/templateflow   # SITE
+  - --env TEMPLATEFLOW_HOME=/templateflow
+
+# anat-only is dominated by FreeSurfer recon-all, which is largely
+# single-threaded: 4 cores for 2 nprocs x 2 omp-nthreads, no oversubscription.
+# Resource requests belong on the cluster axis and are parked here for now
+# (con/mechababs#3, #97).
+cluster_resources:
+  interpreting_shell: "/bin/bash"
+  hard_runtime_limit: "36:00:00"
+  customized_text: |
+    #SBATCH --cpus-per-task=4
+    #SBATCH --mem=24G
+    #SBATCH --nodes=1
+    #SBATCH --ntasks=1
+
+all_results_in_one_zip: true
+zip_foldernames:
+  # Key == this app config's filename stem. It names the output folder the app
+  # writes into and babs zips, AND is the key a downstream stage's `input_datasets`
+  # uses to take this output as an input. One name, so the chain assembles by name.
+  fMRIPrep-25.2.5+anat: "25-2-5"
