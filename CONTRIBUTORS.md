@@ -1,108 +1,86 @@
 # Contributing to mechababs
 
-## e2e testing
+## Unit tests and lint
 
-The e2e harness drives the **real** campaign CLI end to end:
-`bootstrap.sh` → `configure` → `add-dataset` → `iterate` (scaffold → submit → merge).
-It asserts on the resulting ledger, babs project, and produced derivative.
-The BIDS-app used is [simbids](https://github.com/PennLINC/simbids) as a fast stand-in BIDS app so a full submit→merge runs in minutes instead of hours.
-
-## Two modes: local container vs real cluster
-
-The same test body runs two ways:
-
-- **against a local container running slurm** — for development, and the natural
-  candidate for CI when there is one. That's the rest of this doc.
-- **against a real cluster** — a user-facing feature to validate an HPC's config
-  (and exercise our portability), exposed as `mechababs test-cluster`. That path is a
-  tutorial in its own right:
-  [docs/cluster-config-and-testing-tutorial.md](docs/cluster-config-and-testing-tutorial.md).
-
-Because it is user-facing, the suite ships inside the package
-(`mechababs/testing/e2e/`) rather than in `tests/`: `test-cluster` has to find it
-wherever mechababs is installed, not only in a checkout. `tests/` is the unit suite,
-which never leaves the repo.
-
-## Running the tests (local container)
-
-The suite lives in `mechababs/testing/e2e/` (inside the package, so it ships with an install). Set `MECHABABS_E2E_WORKDIR` to a scratch dir where
-the campaign and the container shim live as siblings.
-
-TEMPORARY PREREQUISITE: BUILD REPRONIM_CONTAINERS_SHIM
-You should only need to build this shim once.
-This shim is a fork of ReproNim/containers that includes simbids, and modifies the paths to workaround a babs RFE.
+The unit suite lives in `tests/` and runs in a checkout's own environment:
 
 ```bash
-REPRONIM=$MECHABABS_E2E_WORKDIR/repronim-containers-shim tmp-repronim-container-shim.sh bids-simbids
+uv sync --extra test
+uv run python -m pytest tests/ -q
 ```
 
-NOTE: the mechababs `campaigns` and the container shim live **as siblings** (a pipeline resolves its container as
-`../repronim-containers-shim`, so the two must share a parent).
+Lint is ruff, at the exact version `pyproject.toml` pins (`[tool.ruff] required-version`); CI installs the same one, so a green local run means a green CI run.
 
-### Local container (much faster!)
+```bash
+uvx ruff@0.16.4 check . && uvx ruff@0.16.4 format --check .
+```
 
-Runs the e2e scenario under rootless podman on a container with working SLURM.
+## The e2e scenario
 
-Host prerequisites: `podman`, `apptainer` (for the one-time shim build), and
-`/dev/fuse` (podman is invoked with `--device /dev/fuse` so in-container singularity
-can mount the SIF).
+The e2e drives the **real** CLI end to end, in a throwaway study: `campaign init`, `add-dataset`, then `iterate` through scaffold, submit and merge, asserting a real derivative landed.
+The BIDS App is [SimBIDS](https://github.com/PennLINC/simbids), a fast stand-in, so a full submit-to-merge runs in minutes instead of hours.
 
-1. Pick a scratch dir outside the repo:
+The same scenario runs two ways:
+
+- **against a real cluster**, as `mechababs test-cluster`, the user-facing way to validate a cluster config. That path is its own tutorial: [docs/cluster-config-and-testing-tutorial.md](docs/cluster-config-and-testing-tutorial.md).
+- **against a local container running SLURM**, for development. The rest of this doc.
+
+Because it is user-facing, the suite ships inside the package (`mechababs/testing/e2e/`) rather than in `tests/`: `test-cluster` has to find it wherever mechababs is installed, not only in a checkout.
+
+There is no dev-only route into the scenario.
+Dev and prod differ only in the values handed to it: which mechababs, which babs, which cluster config, and the container wrapped around them.
+
+## Running the e2e locally (podman)
+
+`mechababs/testing/e2e/run_in_podman.sh` runs the scenario under rootless podman, inside `pennlinc/slurm-docker-ci`, against `examples/clusters/test-docker.yaml`.
+It installs your checkout into the container and hands the scenario `--mechababs /mechababs@<your ref>`, so the campaign the scenario builds pins the code under test.
+
+Host prerequisites: `podman`, `datalad`, and `/dev/fuse` (in-container singularity mounts the SIF through FUSE).
+
+1. Pick a scratch dir outside the repo. The fixture study, the container dataset, and the caches all land here, at the same absolute path inside the container.
 
    ```bash
    export MECHABABS_E2E_WORKDIR=~/mechababs-e2e-scratch
    ```
 
-2. Build the container shim **once** (clones ReproNim/containers and builds the
-   simbids SIF from Docker Hub — several minutes; reused thereafter):
+   Give the resolved path, not a symlink: the path is baked into what the fixtures build, and the container mounts only the resolved one.
+
+2. Seed the container dataset once. The app configs resolve it as `../containers` beside each fixture study; local rather than the GitHub URL because babs installs it into every derivative it inits.
 
    ```bash
-   REPRONIM=$MECHABABS_E2E_WORKDIR/repronim-containers-shim \
-       tmp-repronim-container-shim.sh bids-simbids
+   datalad clone https://github.com/ReproNim/containers.git $MECHABABS_E2E_WORKDIR/containers
+   datalad -C $MECHABABS_E2E_WORKDIR/containers get images/bids/bids-simbids--0.0.3.sif
    ```
 
-   This is the temporary manual container shim (drops when `PennLINC/babs#383` lands);
-   see the reference doc's "Manual shims" section.
-
-3. Run the suite (extra args pass through to `mechababs test-cluster`, so pytest args
-   go after a literal `--`, exactly as when you run `test-cluster` by hand):
+3. Run the suite. Arguments pass through to pytest.
 
    ```bash
    mechababs/testing/e2e/run_in_podman.sh
-   # or a single test:
-   mechababs/testing/e2e/run_in_podman.sh -- -k test_full_run
+   mechababs/testing/e2e/run_in_podman.sh -k test_spine      # one test
    ```
 
-**What it does — the same two steps a user runs.** Inside the container it bootstraps a
-*dev campaign* whose mechababs pin is your checkout, then runs
-`mechababs test-cluster --cluster examples/clusters/test-docker.yaml` from it. There is no
-dev-only way into the scenario, so the provisioning code a user's `test-cluster` runs is
-the code your run exercises. Because bootstrap *clones* your branch, the script refuses a
-dirty tree — commit first, or you would be testing your last commit — and needs a branch
-or tag checked out (a bare detached commit is not something `git clone --branch` can pin).
+**The tree must be clean, on a branch or tag.** The scenario pins your checkout by ref and clones it, so uncommitted work is not what runs; the script refuses a dirty tree rather than pass while testing your last commit.
 
-The fake BIDS input generates itself on the first run into `$MECHABABS_E2E_WORKDIR/e2e-cache/`
-(reused after, and visible on the host through the workdir mount).
-Both campaigns — the dev campaign and the throwaway one `test-cluster` provisions beside
-it — are built on the host workdir mount, at the same absolute path they have inside the
-container, so they outlive the run as real, operable datasets (babs bakes absolute RIA
-paths at init, so an identical host==container path is what keeps them resolvable). They
-accumulate; clean up with:
+**babs under test.** The scenario's campaign gets the released babs by default, frozen by the campaign's lock.
+To run against a branch, set `BABS_SPEC`; it takes anything `git clone` accepts, a local clone under the workdir included.
 
 ```bash
-rm -rf $MECHABABS_E2E_WORKDIR/dev-campaign-* $MECHABABS_E2E_WORKDIR/test-campaign-*
+export BABS_SPEC=https://github.com/PennLINC/babs.git@main
 ```
 
-`MECHABABS_E2E_KEEP=1` additionally keeps the *container*, for post-mortem of the
-container itself.
+Today that pin is required rather than optional: the released babs predates `PennLINC/babs#399`, without which the image cannot be resolved out of the ReproNim/containers clone.
 
-**Ctrl-C aborts the run.** It stops the container and exits 130. The campaigns built so
-far stay on the host workdir, half-finished; clean them up the same way.
+**Reading the result.** The script's exit code is pytest's, so trust it; do not append `; echo` or anything else that would overwrite it.
+The verdict is the `N passed` / `N failed` line.
 
-**babs under test.** The suite runs on babs `main` by default. To test against an
-unmerged babs fix, pin a babs ref — the dev campaign pins it, and the scenario's campaign
-inherits it from those pins:
+**What persists.** The fixture studies and the campaigns inside them stay on the host under the workdir after the run, as real datalad datasets you can inspect with host `git` and `datalad`.
+Their `.venv` was built inside the container and does not run from the host.
+They accumulate; delete them from the workdir when done.
+`MECHABABS_E2E_KEEP=1` additionally keeps the container for a post-mortem.
+Ctrl-C stops the container and exits 130, leaving whatever was built half-finished.
 
-```bash
-export BABS_SPEC=https://github.com/<owner>/babs.git@<branch>
-```
+## Docs
+
+The docs describe the tool as it is now.
+`docs/spec.md` is the design contract, `docs/use_cases.md` the user stories it answers to, and `docs/output_structure.md` the resulting layout; a behavior change updates them alongside the code.
+New markdown is written one sentence per line, unwrapped.
