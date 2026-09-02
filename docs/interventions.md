@@ -1,38 +1,62 @@
 # mechababs — interventions
 
-The reconciler ([overview.md](overview.md)) advances a cell that is going well —
-and **stops** when one isn't. It does not paper over a problem or silently retry
-its way past it. Recovery is a human act, and mechababs' job is to make that act
-**provenance-safe**: the intervention is *recorded*, not smoothed away. That is
-the point — messy science is unavoidable, so the campaign captures the mess
-honestly instead of pretending the run was clean.
+The reconciler ([overview.md](overview.md)) advances a cell that is going well, and leaves one alone when it is not.
+It does not paper over a problem or retry its way past it.
+Recovery is a human act, and mechababs' job is to make that act provenance-safe: the intervention is recorded, not smoothed away.
+Messy science is unavoidable, so the study captures the mess honestly instead of pretending the run was clean.
 
-These are the two things you do when a cell isn't going well, and they differ in
-an important way: one repairs a derivative in place, the other cannot reach an
-existing one at all.
+Three things you do when a cell is not going well: find out what failed, repair the derivative in place, or change the code or config and redo the cell.
 
-## Per-job surgery — repair a derivative in place
+## Finding the failure
 
-When a cell fails for a reason a human has to fix — an OOM needing more memory, a wrong flag — the derivative is repaired rather than redone:
+When a cell's jobs end without results, the tick says so and does not merge:
 
-1. Edit the run config inside the derivative (e.g. `code/participant_job.sh`, `#SBATCH --mem=24G` → `40G`).
-2. `datalad save -r -d . <derivative-path>` from the campaign root.
-   Path-scoped, so the change lands as one commit per level (derivative → study → campaign) and clean sibling cells are untouched.
-3. `babs submit <derivative>` — resubmits only the jobs without results, leaving the successful ones alone.
-4. `mechababs iterate` re-derives the cell's state on the next tick; a previous `fail` is a per-tick decision, not a persisted flag.
+```
+!! sourcedata/ds000001 / MRIQC-24.0.2: 3 job(s) FAILED — NOT merging.
+```
 
-**Provenance consequence:** the *recorded* config no longer reproduces the run, and the derivative is deliberately heterogeneous (some subjects at the old setting, some at the new).
-That is what makes the intervention itself worth recording — see `prov/` in the [output structure](output_structure.md).
+Nothing is written; the flag is this tick's reading of babs's live counts, and the next tick reads them again.
+`mechababs status` shows the cell as `FAILED`, and `mechababs jobs --failed` lists each failed job with its subject, SLURM id, and the directory its logs are in.
+Read the log, decide what happened, then pick one of the two repairs below.
 
-## Updating the pinned code
+## Per-job surgery: repair a derivative in place
 
-The campaign vendors `code/babs` and `code/mechababs` as submodules; the submodule commit **is** the pin, so advancing it is the provenance record:
+When a job failed for a reason a human has to fix, such as an out-of-memory kill needing more memory, the derivative is repaired rather than redone.
 
-1. `git -C code/<babs|mechababs>` fetch and check out the new ref.
-   Merge rather than rebase if the campaign's clone carries local commits.
-2. `datalad save` the campaign — that save *is* the record of which code now runs.
-3. A **babs** update only reaches cells that have not been `babs init`ed yet, because babs bakes the job scripts at init.
-4. To apply a babs change to an already-scaffolded cell: `mechababs retire-derivative <path>` (archives it to `derivative-attempts/` and resets the ledger cell in the same transition), then `mechababs iterate` re-scaffolds it from the fixed templates.
+1. Edit the job script inside the derivative: in `derivatives/<name>/code/participant_job.sh`, `#SBATCH --mem=24G` becomes `40G`.
+2. From the study root, `datalad save -r -d . derivatives/<name>`.
+   Path-scoped, so the change lands as one commit in the derivative and one in the study, and clean sibling cells are untouched.
+3. `babs submit derivatives/<name>` resubmits only the jobs without results, leaving the successful ones alone.
+4. `mechababs iterate` re-derives the cell's state on the next tick; the earlier flag was a per-tick reading, not a persisted state, so once the jobs succeed the cell merges.
 
-So a mechababs bump takes effect on the next tick, while a babs bump needs retire + re-scaffold.
+This works for the SBATCH-level settings babs reads from the job script when it submits.
+Changing the app's own invocation is a different kind of change and is not covered here.
+
+**Provenance consequence:** the derivative is deliberately heterogeneous, some subjects at the old setting and some at the new, and the recorded config no longer reproduces every job.
+That is what makes the intervention worth recording, and why the edit is a commit in the derivative's own history rather than a hand fix.
+
+## Changing the code or config, and redoing a cell
+
+The campaign's environment and configs are mutable through git history: edit, commit, and the change reaches every cell scaffolded from then on.
+A cell that is already scaffolded keeps what babs baked into it at init, so a change does not reach it until it is redone.
+
+**To bump mechababs or babs**, edit the pin in `.mechababs/campaigns/<label>/pyproject.toml` (the `rev` lines under `[tool.uv.sources]`) and run `mechababs campaign update-env`.
+It re-resolves the lock, installs it into the campaign venv, and commits both; the lock's history is the record of which code ran when.
+At a superstudy, follow it with `campaign update-env --study <member>` for each member study whose remaining work should move onto the new environment.
+
+**To change an app or cluster config**, edit the copy in `.mechababs/campaigns/<label>/` and commit it.
+
+**To redo a cell** under the new code or config, retire its derivative and let the next tick re-scaffold it:
+
+```bash
+mechababs retire-derivative derivatives/<name> --path /scratch/retired   # keep the evidence
+mechababs retire-derivative derivatives/<name> --remove                  # or discard it
+mechababs iterate
+```
+
+`--path` archives the derivative, with its logs, history and run records, at a directory that must be outside the study; `--remove` deletes it.
+Either way the cell is reset in the same transition, and its next scaffold uses whatever the campaign now declares.
+The details of both flags are in the [reference](reference.md#retire-derivative).
+
+So a mechababs bump takes effect on the next tick for cells not yet scaffolded, while reaching a scaffolded cell always means retire and re-scaffold.
 That asymmetry is not visible from the layout, and it is the step most often missed.
