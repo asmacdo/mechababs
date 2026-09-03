@@ -46,7 +46,6 @@ log_cli_level = "INFO"
 log_cli_format = "%(asctime)s  %(message)s"
 log_cli_date_format = "%H:%M:%S"
 
-# Only the mechababs package is installed; the root bootstrap.sh is run directly.
 # `mechababs.testing` carries the e2e scenario, so `test-cluster` can run it from a
 # campaign wherever mechababs is installed — see mechababs/testing/__init__.py.
 [tool.setuptools]
