@@ -536,9 +536,11 @@ def _stage_fanout_submit_and_merge(superstudy):
 
     # The anchor merged but the chain has not, so the member's coarse lifecycle is
     # still `active` and the catalog is not rewritten to what it already says. With no
-    # lifecycle change to lead with, the subject is what happened to the cells.
+    # lifecycle change to lead with, the subject is the tick: the cell and what was
+    # done to it.
     assert _git(superstudy, "log", "-1", "--format=%s").strip() == (
-        f"mechababs iterate: {MEMBER} merged 1 cell (campaign {LABEL!r})"
+        f"mechababs iterate: {MEMBER} merged {SOURCEDATA} / {ANCHOR} "
+        f"(campaign {LABEL!r})"
     ), _git(superstudy, "log", "-1", "--format=%s")
     assert _git(superstudy, "show", "--pretty=", "--name-only", "HEAD").split() == [
         MEMBER
