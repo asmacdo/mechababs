@@ -51,7 +51,7 @@ A **cell** is one source dataset × one app config, and it produces one derivati
 The campaign's statefile has one row per cell, with two derived columns: `babs`, set once the derivative is scaffolded, and `merged`, set once the results are merged in.
 There is no status enum; a cell's state is read off those two columns.
 
-`iterate` is one **tick** of a reconciler.
+`iterate` is one pass of a reconciler, and each cell it advances by one transition is a **tick**.
 It advances every cell by at most one transition: an unscaffolded cell is scaffolded (`babs init`); a scaffolded cell is asked what babs says about its jobs, and is submitted, waited on, merged, or flagged; a merged cell is skipped.
 You run it again and again until everything is merged.
 
@@ -59,7 +59,7 @@ An app config may declare `depends_on` another: its cell waits until the produce
 That is how a staged pipeline is expressed, one app config per stage, and it is ordering only; how a stage consumes the producer's output is babs's input wiring.
 
 You declare intent (`campaign init`, `add-dataset`) and `iterate` moves reality toward it.
-The tick is **level-triggered**: it re-reads ground truth every time, rather than reacting to events as they happen.
+`iterate` is **level-triggered**: it re-reads ground truth every time, rather than reacting to events as they happen.
 A missed event in an event-driven system is permanent drift; a level-triggered loop simply picks up where things stand, which is what lets a long, interrupted campaign converge.
 
 ## Provenance
@@ -74,7 +74,7 @@ That is the [STAMPED](https://github.com/stamped-principles/stamped-paper) payof
 ## Failures stop
 
 Only durable facts are stored: scaffolded, merged.
-Everything volatile, including job status, `waiting`, and `FAILED`, is re-read from babs each tick, so nothing goes stale and a flag clears itself once the cause is fixed.
+Everything volatile, including job status, `waiting`, and `FAILED`, is re-read from babs each iterate, so nothing goes stale and a flag clears itself once the cause is fixed.
 When jobs fail for a reason a human has to decide about, the cell is flagged and left alone; the other cells keep going.
 Recovery is a human act, and the campaign records it rather than smoothing it away.
 See [interventions.md](interventions.md).

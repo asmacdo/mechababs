@@ -99,7 +99,7 @@ As a user who has run a campaign on more than one cluster, I want the member stu
 What comes together is the **results** — derivative data, portable in git/annex — not running machinery; it may amount to a `git merge`, with conflicts hand-resolved.
 
 ## Add a dataset to a running campaign
-As a user, I can add a dataset to a campaign after it has started, and the reconciler picks it up on the next tick.
+As a user, I can add a dataset to a campaign after it has started, and the reconciler picks it up on the next iterate.
 This covers each shape of adding: a source dataset already in my study, another source dataset of a study the campaign already works on, and bringing a whole existing study in to point at a source dataset inside it.
 
 ## Start a campaign in a superstudy that has run campaigns before
@@ -112,7 +112,7 @@ Member studies that were part of the earlier sweep are not automatically part of
 As a user running a large sweep, when a bug is found and fixed in a new release, I can bump the campaign's pinned version without discarding completed work: finished derivatives stay as they are, new work uses the new version, and I can selectively redo the cells the bug affected.
 
 ## Handle a source dataset gaining subjects or sessions
-As a user, when new subjects or sessions are added to a source dataset after processing has started, the reconciler picks them up on a later tick and processes them alongside the rest.
+As a user, when new subjects or sessions are added to a source dataset after processing has started, the reconciler picks them up on a later iterate and processes them alongside the rest.
 This is the additive case: no already-produced derivative is invalidated, so it is the same shape as adding a dataset to a running campaign, one grain finer.
 
 ## Handle a source dataset's data changing after processing

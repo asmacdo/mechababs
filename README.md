@@ -3,7 +3,7 @@
 Run BIDS Apps over many studies on an HPC cluster, with [BABS](https://github.com/PennLINC/babs) running the jobs.
 
 mechababs works on a BIDS study, adding derivatives to it, and records how each one was made inside the study itself: the exact `mechababs` and `babs` that ran, pinned in a lock, and every orchestration step as a `datalad run` record.
-A **campaign** is one such run's recipe, your app and cluster configs plus that locked environment, and `mechababs iterate` moves the study toward what you declared, one tick at a time.
+A **campaign** is one such run's recipe, your app and cluster configs plus that locked environment, and `mechababs iterate` moves the study toward what you declared, one pass at a time.
 A **superstudy** groups many studies so one campaign sweeps them all.
 
 ## Quickstart
@@ -24,7 +24,7 @@ New cluster? Put the prerequisites in place ([installation.md](docs/installation
 ## Docs
 
 - [docs/quickstart.md](docs/quickstart.md) — one study through one campaign, end to end.
-- [docs/overview.md](docs/overview.md) — the concepts: the study as the unit, the campaign as a recipe recorded in it, the reconciler tick.
+- [docs/overview.md](docs/overview.md) — the concepts: the study as the unit, the campaign as a recipe recorded in it, the reconciler.
 - [docs/glossary.md](docs/glossary.md) — the words, defined once.
 - [docs/reference.md](docs/reference.md) — every command and flag, selection, and the two config files.
 - [docs/interventions.md](docs/interventions.md) — when a cell fails: find it, repair it in place, or redo it.
