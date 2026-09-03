@@ -9,6 +9,7 @@ the study it lives in, and runs from that campaign's own venv. The action verbs
 """
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -117,6 +118,10 @@ def cmd_iterate(args):
     campaign is the env var's answer, not a flag's. The clean check raises rather
     than exits (it is a library guard the verbs share), so it is turned into a plain
     message here: its text is already the explanation, and a traceback would bury it.
+
+    A mechababs inner command that fails is the same case: its own output is
+    already on stderr below the `+ <command>` echo, so what is left to say is that
+    iterate stopped there, and that everything advanced before it stands recorded.
     """
     try:
         iterate_mod.run_iterate(
@@ -128,6 +133,13 @@ def cmd_iterate(args):
         )
     except RuntimeError as e:
         sys.exit(str(e))
+    except subprocess.CalledProcessError as e:
+        sys.exit(
+            f"mechababs iterate stopped: `{' '.join(map(str, e.cmd))}` exited "
+            f"{e.returncode} (its output is above).\n"
+            "Every cell advanced before it is recorded; fix the cause and run "
+            "iterate again."
+        )
     return 0
 
 

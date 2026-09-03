@@ -10,6 +10,7 @@ sets `merged`), because the tick re-reads it between cells — so a stub that on
 recorded the call would make the multi-cell cases lie.
 """
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -996,6 +997,37 @@ def test_a_failure_mid_member_leaves_the_super_as_far_as_the_last_success(
     assert len(saves) == 1, saves
     assert f"scaffolded  {SOURCEDATA} / SimBIDS-0.0.3+anchor" in saves[0][2]
     assert lifecycles(root)["study-dsA"] == campaign_mod.LIFECYCLE_ACTIVE
+
+
+def test_a_failed_inner_command_is_a_message_at_the_cli_not_a_traceback(
+    superstudy, tick, monkeypatch
+):
+    """The inner command's own output is already on stderr; what the CLI adds is
+    that iterate stopped there and that the cells advanced before it stand
+    recorded."""
+    import subprocess
+
+    from mechababs import cli
+
+    root, members, saves = superstudy
+    write(members[0], [cell(ANCHOR), cell(CHAIN)])
+    real_scaffold = iterate_mod.dispatch.scaffold
+
+    def scaffold_then_die(study_arg, label, source_dataset, app_config, **kw):
+        if app_config == CHAIN:
+            raise subprocess.CalledProcessError(1, ["mechababs-inner", "scaffold"])
+        return real_scaffold(study_arg, label, source_dataset, app_config, **kw)
+
+    monkeypatch.setattr(iterate_mod.dispatch, "scaffold", scaffold_then_die)
+    monkeypatch.setattr(sys, "argv", ["mechababs", "iterate", "--study", "study-dsA"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    message = str(excinfo.value)
+    assert "mechababs iterate stopped: `mechababs-inner scaffold` exited 1" in message
+    assert "advanced before it is recorded" in message
+    assert len(saves) == 1, saves
 
 
 def test_a_dry_run_writes_no_lifecycle(superstudy, tick):
