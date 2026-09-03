@@ -1,0 +1,149 @@
+name: Tests
+
+# Three jobs, one per suite, because they need different things from the runner:
+#   unit         `pytest`              plain directories + a real datalad/git-annex
+#   uv-contract  `pytest -m uv_build`  a real uv resolving real (tiny, local) packages
+#   e2e          run_in_podman.sh      the slurm-docker-ci image, rootless podman, and
+#                                      a ReproNim/containers clone holding the simbids SIF
+# Splitting them keeps a 90-second unit failure from waiting on a 6-minute e2e, and
+# makes the e2e's infrastructure dependencies (image, container dataset) visible as
+# their own steps rather than buried in one long log.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A hosted runner has no git identity, and every suite commits: the unit tests
+# build real datalad datasets, the e2e seeds a git-annex clone, and datalad's own
+# `git annex init` writes a commit. Without these git refuses with "empty ident
+# name" and the runs die before the first assertion. The env vars reach git,
+# git-annex and datalad alike, and cover every job in one place.
+env:
+  GIT_AUTHOR_NAME: mechababs-ci
+  GIT_AUTHOR_EMAIL: mechababs-ci@example.invalid
+  GIT_COMMITTER_NAME: mechababs-ci
+  GIT_COMMITTER_EMAIL: mechababs-ci@example.invalid
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # datalad is a runtime dependency and needs git-annex on PATH. Two unit tests
+      # skip without it (they prove a file was NOT annexed), and a skip in CI is a
+      # silent green — so install it rather than let them skip.
+      - name: Install git-annex
+        run: sudo apt-get update -q && sudo apt-get install -y -q git-annex
+
+      - name: Install mechababs
+        run: pip install -e .[test]
+
+      # pyproject's addopts deselects `uv_build`; that suite is its own job below.
+      # -rs lists any skip in the summary, so a quietly-skipped test is visible.
+      - name: pytest
+        run: pytest -rs
+
+  uv-contract:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history, not the default depth-1: one test pins this checkout as a
+      # `git+file://…@<branch>` source, and uv (0.12.9) cannot resolve a branch out
+      # of a SHALLOW repo — the fetch succeeds but neither the branch nor the tag ref
+      # lands, and it reports "failed to find branch or tag". Reproduced locally
+      # against a `git clone --depth 1`; a full clone resolves fine.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The campaign these tests build pins THIS checkout at `rev-parse --abbrev-ref
+      # HEAD`. On pull_request that is a detached merge commit, so the ref reads as
+      # the literal `HEAD`, which uv then tries to fetch as a branch or tag named HEAD.
+      # Same workaround as the e2e job below.
+      - name: Put HEAD on a branch for the campaign pin
+        run: git switch -c ci-under-test
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install mechababs
+        run: pip install -e .[test]
+
+      # The tests that really run `uv lock` + `uv sync`. Their fixtures are tiny
+      # local git repos, so the only network they reach is a build backend.
+      - name: pytest -m uv_build
+        run: pytest -m uv_build -rs
+
+  e2e:
+    runs-on: ubuntu-latest
+    # ~6 min on a hosted runner, image pull and SIF fetch included (4 tests in ~4 min).
+    # Generous, not tight.
+    timeout-minutes: 60
+    env:
+      # The fixture studies, the container dataset, and the uv cache all live here.
+      # run_in_podman.sh bind-mounts it at the SAME path inside the container.
+      MECHABABS_E2E_WORKDIR: /tmp/mechababs-e2e
+    steps:
+      # Full history: the scenario's campaign `git clone`s this checkout as its
+      # mechababs pin, and setuptools_scm derives the version from tags.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # On pull_request, actions/checkout leaves a DETACHED merge commit, and
+      # run_in_podman.sh refuses a detached HEAD: the campaign pin is `URL@REF`, and
+      # `git clone --branch` takes a branch or tag, not a sha. Give it a branch.
+      - name: Put HEAD on a branch for the campaign pin
+        run: git switch -c ci-under-test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The host needs datalad + git-annex for ONE thing: seeding the container dataset
+      # below. The suite itself runs inside the slurm-docker-ci container.
+      - name: Install git-annex + datalad (host-side, for seeding)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q git-annex
+          pip install datalad
+
+      # The simbids SIF is the same bytes every run; cache the clone that holds it so
+      # a run fetches it only when the key changes. Keyed on the image name, so bumping
+      # the image in the app configs invalidates the cache by construction.
+      - name: Cache the ReproNim/containers clone
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MECHABABS_E2E_WORKDIR }}/containers
+          key: repronim-containers-bids-simbids--0.0.3
+
+      # Host-prep, exactly as run_in_podman.sh's header describes it. The suite SKIPS
+      # (does not fail) when the SIF is missing, so the trailing test -e is what turns
+      # a failed seed into a red job instead of a green one that ran nothing.
+      # TODO: the suite could take the containers dataset by URL for CI, with the local
+      # clone as an env-var override — then this step goes away.
+      - name: Seed the container dataset (simbids SIF)
+        run: |
+          set -eu
+          C="$MECHABABS_E2E_WORKDIR/containers"
+          SIF=images/bids/bids-simbids--0.0.3.sif
+          [ -d "$C" ] || datalad clone https://github.com/ReproNim/containers.git "$C"
+          datalad -C "$C" get "$SIF"
+          test -e "$C/$SIF"
+
+      # Pulled as its own step so the pull time and any registry failure are
+      # attributed to the image, not to the suite.
+      - name: Pull slurm-docker-ci
+        run: podman pull docker.io/pennlinc/slurm-docker-ci:0.14
+
+      # Extra args pass straight through to pytest. The script's exit code IS
+      # pytest's, so nothing may follow it on the line.
+      - name: e2e
+        run: mechababs/testing/e2e/run_in_podman.sh -rs
