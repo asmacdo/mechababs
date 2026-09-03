@@ -19,8 +19,8 @@ its pipeline YAML; a new study just needs to carry the metadata TSV.
 
 TSV disambiguation — several "tsv/csv" artifacts are in play; this one is the
 per-study metadata (per subject/session: ``datatypes``, ``t1w_num``, ``bold_num``),
-NOT OpenNeuro's all-studies ``studies.tsv``, our ledger ``desc-mechababs_datasets.tsv``, or
-babs's in-project ``processing_inclusion.csv``.
+NOT OpenNeuro's all-studies ``studies.tsv``, the campaign statefile
+``sourcedata+derivatives.tsv``, or babs's in-project ``processing_inclusion.csv``.
 """
 
 import csv

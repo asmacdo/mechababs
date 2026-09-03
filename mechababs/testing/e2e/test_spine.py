@@ -248,8 +248,8 @@ def _run_record(study):
 def _iterate(study, *args):
     """One iterate, run the way a user runs it: sourced env.sh, then `iterate`.
 
-    No `--campaign-path` and no cell named: where you stand is the study, the env var
-    is the campaign, and which cell moves is the reconciler's decision, not ours. That
+    No path and no cell named: where you stand is the study, the env var is the
+    campaign, and which cell moves is the reconciler's decision, not ours. That
     is the whole difference between this and `_dispatch`.
     """
     return _in_campaign(study, LABEL, "iterate", *args)
