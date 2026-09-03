@@ -14,6 +14,17 @@ on:
   push:
     branches: [main]
 
+# A hosted runner has no git identity, and every suite commits: the unit tests
+# build real datalad datasets, the e2e seeds a git-annex clone, and datalad's own
+# `git annex init` writes a commit. Without these git refuses with "empty ident
+# name" and the runs die before the first assertion. The env vars reach git,
+# git-annex and datalad alike, and cover every job in one place.
+env:
+  GIT_AUTHOR_NAME: mechababs-ci
+  GIT_AUTHOR_EMAIL: mechababs-ci@example.invalid
+  GIT_COMMITTER_NAME: mechababs-ci
+  GIT_COMMITTER_EMAIL: mechababs-ci@example.invalid
+
 jobs:
   unit:
     runs-on: ubuntu-latest
@@ -46,6 +57,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # The campaign these tests build pins THIS checkout at `rev-parse --abbrev-ref
+      # HEAD`. On pull_request that is a detached merge commit, so the ref reads as
+      # the literal `HEAD`, which uv then tries to fetch as a branch or tag named HEAD.
+      # Same workaround as the e2e job below.
+      - name: Put HEAD on a branch for the campaign pin
+        run: git switch -c ci-under-test
 
       - uses: astral-sh/setup-uv@v5
 
