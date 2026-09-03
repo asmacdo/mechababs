@@ -5,7 +5,7 @@ name: Tests
 #   uv-contract  `pytest -m uv_build`  a real uv resolving real (tiny, local) packages
 #   e2e          run_in_podman.sh      the slurm-docker-ci image, rootless podman, and
 #                                      a ReproNim/containers clone holding the simbids SIF
-# Splitting them keeps a 45-second unit failure from waiting on a 20-minute e2e, and
+# Splitting them keeps a 90-second unit failure from waiting on a 6-minute e2e, and
 # makes the e2e's infrastructure dependencies (image, container dataset) visible as
 # their own steps rather than buried in one long log.
 
@@ -52,7 +52,14 @@ jobs:
   uv-contract:
     runs-on: ubuntu-latest
     steps:
+      # Full history, not the default depth-1: one test pins this checkout as a
+      # `git+file://…@<branch>` source, and uv (0.12.9) cannot resolve a branch out
+      # of a SHALLOW repo — the fetch succeeds but neither the branch nor the tag ref
+      # lands, and it reports "failed to find branch or tag". Reproduced locally
+      # against a `git clone --depth 1`; a full clone resolves fine.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -77,8 +84,8 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    # Local runs take ~3.5 min after the image and SIF are on disk; the first CI run
-    # also pulls a 4.3 GB image and fetches a 330 MB SIF. Generous, not tight.
+    # ~6 min on a hosted runner, image pull and SIF fetch included (4 tests in ~4 min).
+    # Generous, not tight.
     timeout-minutes: 60
     env:
       # The fixture studies, the container dataset, and the uv cache all live here.
