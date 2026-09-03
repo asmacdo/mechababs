@@ -377,7 +377,7 @@ def test_study_narrows_to_one_member(superstudy, queried, capsys):
 
 
 def test_study_refuses_a_directory_that_was_never_selected_in(superstudy, queried):
-    """Matched against the catalog, not the filesystem — the same rule a tick uses, so
+    """Matched against the catalog, not the filesystem — the same rule `iterate` uses, so
     a typo is an error rather than a quietly empty table."""
     with pytest.raises(SystemExit) as excinfo:
         status_mod.run_status(study="study-dsZ")

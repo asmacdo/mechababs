@@ -445,8 +445,8 @@ def _stage_fanout_scaffold(superstudy):
     derivative in its final home inside the member, a run record in the member saying
     which command put it there, and the superstudy recording that the member moved.
     """
-    ticked = _at_super(superstudy, "iterate", "--batch", "1")
-    assert "superstudy tick over 1 member(s)" in ticked.stderr, ticked.stderr
+    run = _at_super(superstudy, "iterate", "--batch", "1")
+    assert "superstudy iterate over 1 member(s)" in run.stderr, run.stderr
 
     member = superstudy / MEMBER
     derivative = f"derivatives/{ANCHOR}+{DATASET_ID}"
@@ -488,7 +488,7 @@ def _stage_fanout_scaffold(superstudy):
 
 
 def _stage_fanout_submit_and_merge(superstudy):
-    """Ticks alone carry the cell to merged, and a real derivative lands in the member.
+    """`iterate` alone carries the cell to merged, and a real derivative lands in the member.
 
     The stage that proves the fan-out produces something rather than just moving
     bookkeeping. Nobody names a verb: the reconciler reads the member's shard, decides
@@ -501,7 +501,7 @@ def _stage_fanout_submit_and_merge(superstudy):
     project = member / "derivatives" / f"{ANCHOR}+{DATASET_ID}"
     anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
 
-    # --- tick: the cell is scaffolded and nothing is submitted -> submit ------
+    # --- iterate: the cell is scaffolded and nothing is submitted -> submit ---
     head = _git(superstudy, "rev-parse", "HEAD").strip()
     _at_super(superstudy, "iterate", "--batch", "1")
     status = _babs_status(superstudy, project)
@@ -510,13 +510,13 @@ def _stage_fanout_submit_and_merge(superstudy):
         f"the fan-out's submit left jobs undeployed: {status}"
     )
     # Submit changes nothing tracked, at either level — so the superstudy has nothing
-    # to record, and must not invent a commit for a tick that moved no state.
+    # to record, and must not invent a commit for a tick that moved no git state.
     assert _git(superstudy, "rev-parse", "HEAD").strip() == head, (
         "the superstudy committed for a submit, which changes nothing tracked"
     )
     _assert_every_level_clean(superstudy, "the fan-out submit", MEMBER)
 
-    # --- wait, then tick: all done -> merge -----------------------------------
+    # --- wait, then iterate: all done -> merge --------------------------------
     final = _wait_for_jobs(superstudy, project)
     assert babs_status.decide(final) == "merge", (
         f"the jobs did not all succeed, so there is nothing to merge: {final}"
@@ -552,7 +552,7 @@ def _stage_a_second_member_and_narrowing(superstudy, study_template):
     Membership is what the fan-out iterates, so a second member is the first time the
     catalog is doing any work. Two claims are checked, and they are the ones that make
     the catalog a priority interface rather than a list: `--study` advances one member
-    and leaves the other exactly as it was, and `--batch` bounds the **whole tick**
+    and leaves the other exactly as it was, and `--batch` bounds the **whole iterate**
     rather than each member.
     """
     _clone_member(superstudy, study_template, MEMBER_2)
@@ -570,22 +570,22 @@ def _stage_a_second_member_and_narrowing(superstudy, study_template):
     first_before = _git(superstudy / MEMBER, "rev-parse", "HEAD").strip()
 
     # --- narrowing: name the second member, and only it moves ------------------
-    ticked = _at_super(superstudy, "iterate", "--study", MEMBER_2, "--batch", "1")
-    assert "superstudy tick over 1 member(s)" in ticked.stderr, ticked.stderr
+    run = _at_super(superstudy, "iterate", "--study", MEMBER_2, "--batch", "1")
+    assert "superstudy iterate over 1 member(s)" in run.stderr, run.stderr
     assert (second / "derivatives" / f"{ANCHOR}+{DATASET_ID}").is_dir(), (
-        "the narrowed tick did not advance the member it named"
+        "the narrowed iterate did not advance the member it named"
     )
     assert _git(superstudy / MEMBER, "rev-parse", "HEAD").strip() == first_before, (
-        "a tick narrowed to one member advanced the other"
+        "an iterate narrowed to one member advanced the other"
     )
 
     # A member that was never selected is an error, not a silent no-op — a typo'd
-    # --study must not report a successful tick over nothing.
+    # --study must not report a successful iterate over nothing.
     refused = _at_super(superstudy, "iterate", "--study", "study-nope", check=False)
     assert refused.returncode != 0, "--study accepted a non-member"
     assert "is not a member" in refused.stderr, refused.stderr
 
-    _assert_every_level_clean(superstudy, "the narrowed tick", MEMBER, MEMBER_2)
+    _assert_every_level_clean(superstudy, "the narrowed iterate", MEMBER, MEMBER_2)
 
 
 def _stage_a_drifted_member_is_refused_until_acknowledged(superstudy):
@@ -649,9 +649,9 @@ def _stage_a_drifted_member_is_refused_until_acknowledged(superstudy):
         f"the refusal does not name the acknowledgment command:\n{refused.stderr}"
     )
     assert _git(member, "rev-parse", "HEAD").strip() == member_before, (
-        "the refused tick still advanced the member"
+        "the refused iterate still advanced the member"
     )
-    _assert_every_level_clean(superstudy, "the refused tick", MEMBER, MEMBER_2)
+    _assert_every_level_clean(superstudy, "the refused iterate", MEMBER, MEMBER_2)
 
     # --- the acknowledgment, typed exactly as the refusal printed it ------------
     super_before = _git(superstudy, "rev-parse", "HEAD").strip()
@@ -685,11 +685,11 @@ def _stage_a_drifted_member_is_refused_until_acknowledged(superstudy):
     )
 
     # --- and the work resumes ---------------------------------------------------
-    ticked = _at_super(superstudy, "iterate", "--study", MEMBER, "--batch", "1")
+    run = _at_super(superstudy, "iterate", "--study", MEMBER, "--batch", "1")
     assert (member / "derivatives" / f"{CHAIN}+{DATASET_ID}").is_dir(), (
-        f"the acknowledged member did not advance:\n{ticked.stderr}"
+        f"the acknowledged member did not advance:\n{run.stderr}"
     )
-    _assert_every_level_clean(superstudy, "the tick after acknowledgment", MEMBER)
+    _assert_every_level_clean(superstudy, "the iterate after acknowledgment", MEMBER)
 
     # MEMBER_2 is left drifted on purpose: acknowledgment is per-member, so refreshing
     # one must not quietly move the others onto tools they have not been given.

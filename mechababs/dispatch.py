@@ -9,7 +9,7 @@ list of re-executable orchestration steps, not a list of adjectives.
 study, so they go through `dispatch`. `submit` only sbatches — babs's job
 bookkeeping is gitignored inside the derivative — so it goes through `plain`, which
 runs the same verb with no run record because there is no change to record. Wrapping
-it anyway would put an empty node in the study's history for every tick that deploys
+it anyway would put an empty node in the study's history for every iterate that deploys
 jobs, which is noise pretending to be provenance. `plain` re-checks the study
 afterwards, so the claim is enforced rather than asserted.
 

@@ -246,7 +246,7 @@ def _run_record(study):
 
 
 def _iterate(study, *args):
-    """One reconciler tick, run the way a user runs it: sourced env.sh, then `iterate`.
+    """One iterate, run the way a user runs it: sourced env.sh, then `iterate`.
 
     No `--campaign-path` and no cell named: where you stand is the study, the env var
     is the campaign, and which cell moves is the reconciler's decision, not ours. That
@@ -428,7 +428,7 @@ def _stage_add_dataset(study):
         assert row["n_sessions"] == "", (
             "a subject-level dataset reported a session count"
         )
-        # Derived columns empty is what makes the next tick scaffold the cell.
+        # Derived columns empty is what makes the next iterate scaffold the cell.
         assert row["babs"] == "" and row["merged"] == "", row
 
     assert anchor["depends_on"] == "", "the anchor app declares no dependency"
@@ -764,9 +764,9 @@ def _stage_update_env_bumps_the_environment(study):
     #    against the venv it just built, so this is the first proof that the two
     #    halves of the bump agree — a lock that moved without its venv would refuse
     #    every verb from here on.
-    tick = _iterate(study, "--dry-run")
-    assert tick.returncode == 0, tick.stderr
-    assert "does not match" not in tick.stderr, tick.stderr
+    run = _iterate(study, "--dry-run")
+    assert run.returncode == 0, run.stderr
+    assert "does not match" not in run.stderr, run.stderr
 
     # 5. And an inner verb still dispatches under the new lock. Re-dispatching merge
     #    on the merged anchor is the safe way to ask: if the study-local env check
@@ -782,14 +782,14 @@ def _stage_update_env_bumps_the_environment(study):
         )
         _assert_clean(study, "the inner verb dispatched under the bumped lock")
 
-    # The stage that follows drives the chain cell's whole life with real ticks, and
+    # The stage that follows drives the chain cell's whole life with real iterates, and
     # now does so under THIS lock — so the campaign ends deliberately heterogeneous,
     # one cell produced before the bump and one after, which is the honest record the
     # design is after rather than a defect.
 
 
 def _stage_iterate_drives_the_chain_cell(study):
-    """The reconciler, end to end: one cell's whole life, driven by ticks alone.
+    """The reconciler, end to end: one cell's whole life, driven by `iterate` alone.
 
     Every stage above dispatched a transition by hand, because that is how a verb is
     tested. This is the other half — nobody chooses the transition. `iterate` reads
@@ -797,7 +797,7 @@ def _stage_iterate_drives_the_chain_cell(study):
     says "again".
 
     So the chain cell is deliberately left unscaffolded by the stages above, and gets
-    its scaffold, its submit and its merge from three ticks. That also makes this the
+    its scaffold, its submit and its merge from three iterates. That also makes this the
     first run of the input-wiring path (the dependent's `input_datasets` entry names
     the producer's app, so scaffold resolves it to that cell's merged output store and
     hands babs the URL the YAML cannot carry) — asserted here, where it happens.
@@ -814,15 +814,15 @@ def _stage_iterate_drives_the_chain_cell(study):
     assert _status_row(table, ANCHOR)["state"] == "merged", table
     assert _status_row(table, CHAIN)["state"] == "not started", table
 
-    # --- tick 1: the gate is open, so the cell is scaffolded ---------------
-    tick = _iterate(study)
-    assert "not started -> scaffold" in tick.stderr, tick.stderr
+    # --- iterate 1: the gate is open, so the cell is scaffolded ------------
+    run = _iterate(study)
+    assert "not started -> scaffold" in run.stderr, run.stderr
 
     assert (derivative / ".babs").is_dir(), f"no babs project at {derivative}"
     rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
     assert rows[chain_app]["babs"] == f"derivatives/{CHAIN}+{DATASET_ID}", rows
 
-    # The tick dispatched a real `datalad run` — iterate itself is a plain
+    # The tick was a real `datalad run` — iterate itself is a plain
     # coordinator, so what lands in the study is the verb's record, not iterate's.
     subject = _git(study, "log", "-1", "--format=%s").strip()
     assert subject.startswith("[DATALAD RUNCMD] mechababs scaffold"), subject
@@ -848,33 +848,33 @@ def _stage_iterate_drives_the_chain_cell(study):
     assert f"sourcedata/{ANCHOR}" in (derivative / ".gitmodules").read_text(), (
         "babs did not register the producer's output as this cell's input"
     )
-    _assert_clean(study, "the tick that scaffolded the chain cell")
+    _assert_clean(study, "the iterate that scaffolded the chain cell")
 
-    # --- tick 2: the cell is active with nothing submitted, so submit ------
+    # --- iterate 2: the cell is active with nothing submitted, so submit ---
     head = _git(study, "rev-parse", "HEAD").strip()
-    tick = _iterate(study)
-    assert "-> submit" in tick.stderr, tick.stderr
+    run = _iterate(study)
+    assert "-> submit" in run.stderr, run.stderr
 
     status = _babs_status(study, derivative)
     assert status["total"] > 0, f"babs knows of no jobs for the chain cell: {status}"
     assert status["submitted"] == status["total"], (
-        f"the tick left jobs undeployed: {status}"
+        f"the iterate left jobs undeployed: {status}"
     )
     assert _git(study, "rev-parse", "HEAD").strip() == head, (
-        "the submitting tick committed — submit is dispatched plainly because it "
+        "the submitting iterate committed — submit is dispatched plainly because it "
         "changes nothing tracked"
     )
-    _assert_clean(study, "the tick that submitted")
+    _assert_clean(study, "the iterate that submitted")
 
-    # The in-flight tick — jobs running, so the cell is skipped — is deliberately NOT
-    # asserted here: whether the jobs have ended by the time a tick lands is the
+    # The in-flight iterate — jobs running, so the cell is skipped — is deliberately NOT
+    # asserted here: whether the jobs have ended by the time an iterate lands is the
     # scheduler's business, so the e2e version of that assertion is a race. It is a
     # unit test (`test_jobs_still_in_flight_are_left_alone`), where the counts are ours.
     _wait_for_jobs(study, derivative)
 
-    # --- tick 3: everything ended successfully, so merge -------------------
-    tick = _iterate(study)
-    assert "-> merge" in tick.stderr, tick.stderr
+    # --- iterate 3: everything ended successfully, so merge ----------------
+    run = _iterate(study)
+    assert "-> merge" in run.stderr, run.stderr
 
     rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
     assert rows[chain_app]["merged"] == "true", rows[chain_app]
@@ -887,9 +887,9 @@ def _stage_iterate_drives_the_chain_cell(study):
         if p.startswith("sub-") and p.endswith(".zip")
     ]
     assert produced, "the chain cell's derivative carries no per-subject results"
-    _assert_clean(study, "the tick that merged")
+    _assert_clean(study, "the iterate that merged")
 
-    # --- the terminal state: every cell merged, and a tick is a no-op ------
+    # --- the terminal state: every cell merged, and an iterate is a no-op --
     done = _iterate(study)
     assert "0 cell(s) advanced" in done.stderr, done.stderr
     table = _status(study)
@@ -897,11 +897,11 @@ def _stage_iterate_drives_the_chain_cell(study):
         "merged",
         "merged",
     ], table
-    _assert_clean(study, "the tick with nothing left to do")
+    _assert_clean(study, "the iterate with nothing left to do")
 
 
 def _stage_retire_clears_a_cell_so_it_can_be_redone(study):
-    """A derivative leaves the study, its cell reopens, and a tick really redoes it.
+    """A derivative leaves the study, its cell reopens, and an iterate really redoes it.
 
     Both modes, because they are different promises. `--path` has to leave a readable
     archive OUTSIDE the study — same dataset relocated, not a copy — while `--remove`
@@ -988,11 +988,11 @@ def _stage_retire_clears_a_cell_so_it_can_be_redone(study):
     ), changed
     _assert_clean(study, "retire --path")
 
-    # --- the reset is real: a tick scaffolds the cell again ---------------------
-    tick = _iterate(study, "--batch", "1", "--app", ANCHOR)
-    assert "not started -> scaffold" in tick.stderr, tick.stderr
+    # --- the reset is real: an iterate scaffolds the cell again ----------------
+    run = _iterate(study, "--batch", "1", "--app", ANCHOR)
+    assert "not started -> scaffold" in run.stderr, run.stderr
     assert (derivative / ".babs").is_dir(), "the cell was not re-scaffolded"
-    _assert_clean(study, "the tick that re-scaffolded the retired cell")
+    _assert_clean(study, "the iterate that re-scaffolded the retired cell")
 
     # --- --remove: nothing is kept ---------------------------------------------
     _in_campaign(study, LABEL, "retire-derivative", derivative_rel, "--remove")

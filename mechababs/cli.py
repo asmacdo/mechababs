@@ -112,7 +112,7 @@ def cmd_add_dataset(args):
 
 
 def cmd_iterate(args):
-    """One reconciler tick: advance each cell of the selected campaign by one step.
+    """One iterate: advance each cell of the selected campaign by at most one transition.
 
     Runs from the campaign root — the study — like every operating verb; which
     campaign is the env var's answer, not a flag's. The clean check raises rather
@@ -355,13 +355,13 @@ def main():
         "iterate",
         help="advance the selected campaign's cells by one transition each",
         description=(
-            "One reconciler tick over this study's cells for the selected campaign. "
+            "Advance the selected campaign's cells by at most one transition each. "
             "Each cell advances by AT MOST ONE transition, routed on the statefile's "
             "columns: not started -> scaffold; scaffolded and not merged -> what the "
             "live `babs status` counts say (submit / wait / merge / flag a failure); "
             "merged -> skipped. A cell waiting on an unmerged producer is noted and "
             "passed over, not blocked on, and a cell whose jobs failed is flagged "
-            "rather than merged. Nothing is remembered between ticks: every tick "
+            "rather than merged. Nothing is remembered between runs: every iterate "
             "re-reads ground truth, so run it again and again until the campaign is "
             "done."
         ),
@@ -370,7 +370,7 @@ def main():
         "--batch",
         type=int,
         default=None,
-        help="advance at most N cells this tick (default: all). A cell that is "
+        help="advance at most N cells (default: all). A cell that is "
         "already done, waiting, or still running does not count against it.",
     )
     pi.add_argument(
@@ -507,7 +507,7 @@ def main():
             "are running, the live `babs status` counts. At a superstudy the rows "
             "span every member, computed from their shards at the moment you look, "
             "with a column saying which members are on disk. Read-only, and it takes "
-            "no lock, so it can be run while a tick is in progress. The table goes to "
+            "no lock, so it can be run while an iterate is in progress. The table goes to "
             "stdout and the summary to stderr, so it stays pipeable."
         ),
     )

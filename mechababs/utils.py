@@ -17,7 +17,7 @@ and each commits only what that level can see.
 
 **Checking is deliberately shallow.** `shallow_status` compares submodule gitlinks
 without walking their worktrees, which is what keeps a check over a study with real
-source data cheap enough to run every tick — and a dirty submodule *worktree* is
+source data cheap enough to run every iterate — and a dirty submodule *worktree* is
 never this layer's business, while a moved submodule *pointer* always is.
 """
 
@@ -72,7 +72,7 @@ def campaign_save_scope(root, paths):
     (``eval_submodule_state="commit"``): the super's record of a member is which
     commit it points at, and descending into the member's worktree would both cost
     a walk and pull that member's own uncommitted work into a commit at this level.
-    Stray content inside a subdataset is the once-per-tick shallow check's to catch.
+    Stray content inside a subdataset is the once-per-iterate shallow check's to catch.
 
     **Clean in.** ``path`` must be clean *before* the block writes, so the commit is
     attributable — everything in it is this block's work, and no pre-existing edit is
@@ -111,7 +111,7 @@ def require_clean_paths(root, paths):
 
     The clean-in half, split out because not every writer wants it wrapped *around*
     its work. ``iterate`` at a superstudy checks the super once at the top of the
-    tick — before any member is touched — and then records each member as it
+    iterate — before any member is touched — and then records each member as it
     advances, so its check and its saves are separated by the actions they bracket.
     """
     ds = Dataset(str(root))
@@ -188,17 +188,17 @@ def require_clean_gitlink(root, member):
     """Refuse unless ``root``'s recorded pointer to ``member`` is up to date.
 
     The superstudy's whole stake in a member it is about to advance. The member's
-    own tree is not this check's business — ``tick`` checks it there, and again
+    own tree is not this check's business — ``iterate`` checks it there, and again
     before each transition it dispatches. What only the super can see is whether its
     gitlink still matches the member's HEAD, and a stale one matters because the
     follow-up save would then commit somebody else's advance as ours.
 
-    This is the **only** check of a member's gitlink: the super's own once-per-tick
+    This is the **only** check of a member's gitlink: the super's own once-per-iterate
     check ignores the members precisely so each is asked about once, here, right
     before it is touched. It costs the same in a superstudy of a thousand as in one
     of two.
 
-    A stale gitlink **stops the tick** rather than skipping the member. A member
+    A stale gitlink **stops the iterate** rather than skipping the member. A member
     moving underneath us is a bug or an intervention, not a condition to reconcile
     past — unlike a failed cell, which is a known outcome the reconciler notes and
     works around.
@@ -210,12 +210,12 @@ def require_clean_gitlink(root, member):
             f"{rel} has moved since {root} last recorded it, and mechababs did "
             f"not move it.\n" + "\n".join(f"  {line}" for line in dirty) + "\n"
             "Commit or reset it at the superstudy, then run again — otherwise "
-            "this tick would record that advance as its own."
+            "this iterate would record that advance as its own."
         )
 
 
 def require_clean_shallow(root, *, what="this operation", ignore=()):
-    """Refuse unless ``root`` is clean at its own level. Cheap enough for a tick.
+    """Refuse unless ``root`` is clean at its own level. Cheap enough for every iterate.
 
     The backstop for `datalad run --explicit`, and it is the *only* one: explicit
     mode does not check the dataset at all (verified — plain `datalad run` refuses a

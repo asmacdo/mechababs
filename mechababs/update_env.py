@@ -197,7 +197,7 @@ def run_update_env(root=".", *, upgrade=(), member=None):
     # The level's single-writer guarantee, spanning everything that follows: the
     # resolve, the install, the save, and (with --study) the member's copy. This
     # mutates the campaign's uv.lock -- the file `iterate` dispatches work against
-    # -- so a tick must not be reading it mid-rewrite, and two update-envs must not
+    # -- so an iterate must not be reading it mid-rewrite, and two update-envs must not
     # resolve into it at once. Taken at `root`, which `require_campaign_level` has
     # already established IS the operated level.
     #

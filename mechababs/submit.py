@@ -15,7 +15,7 @@ on trust — see ``dispatch.plain``, which fails loudly if a submit ever does mo
 tracked state.
 
 Submitted-ness is likewise not a column. It is volatile, babs owns it, and the
-reconciler asks for it live (``babs status --json``) every tick rather than keeping
+reconciler asks for it live (``babs status --json``) every iterate rather than keeping
 a mirror to drift.
 """
 

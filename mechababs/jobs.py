@@ -26,7 +26,7 @@ explicit choice. Scoping narrows *before* the refresh, so ``--study`` on one mem
 costs one member's queries rather than the whole superstudy's.
 
 Read-only and lock-free, exactly as ``status`` is: looking at a campaign must never
-block behind a tick. Refreshing writes only inside babs's own project — no campaign
+block behind an iterate. Refreshing writes only inside babs's own project — no campaign
 state, so observability still costs no provenance.
 """
 

@@ -1,15 +1,17 @@
-"""iterate.py — the reconciler tick.
+"""iterate.py — the reconciler.
 
 Every verb in a cell's life exists on its own (scaffold, submit, merge), and each one
 refuses a cell that is not in the state it advances from. ``iterate`` is what decides
-*which* verb a cell is owed, and dispatches it: one tick reads the statefile shard,
-advances each cell by **at most one transition**, and stops.
+*which* verb a cell is owed, and dispatches it: one ``iterate`` reads the statefile
+shard and visits every cell once, advancing each by **at most one transition**. One
+cell advancing is a **tick**; a cell that is passed over is not one, and does not
+count against ``--batch``.
 
-**Level-triggered, not edge-triggered.** A tick never remembers what the last one did.
-It re-reads ground truth — the shard's columns, plus a live ``babs status`` for any
-cell that is running — and re-derives what each cell needs from that alone. So a
-crashed tick, a hand-edited shard, or a cell repaired by hand between ticks all
-converge on the next pass instead of accumulating drift. This is also why there is no
+**Level-triggered, not edge-triggered.** An ``iterate`` never remembers what the last
+one did. It re-reads ground truth — the shard's columns, plus a live ``babs status``
+for any cell that is running — and re-derives what each cell needs from that alone.
+So a crashed ``iterate``, a hand-edited shard, or a cell repaired by hand between
+runs all converge on the next one instead of accumulating drift. This is also why there is no
 status enum: state is *read off* ``babs``/``merged``, and anything volatile is asked
 of babs at the moment it is needed.
 
@@ -23,11 +25,11 @@ The routing, which is the whole of the reconciler's opinion:
 ===================  ==========================================================
 
 **Gating is noting, not blocking.** A dependent cell whose producer has not merged is
-not a halt: the tick says so and goes on to the next cell. The next tick re-checks.
+not a halt: ``iterate`` says so and goes on to the next cell. The next one re-checks.
 
 **A failure is flagged, never merged, and never persisted.** When the live counts say
 jobs failed, the cell is marked loudly and left alone — merging a partial set would
-quietly produce a derivative that looks complete. The flag is this tick's reading, not
+quietly produce a derivative that looks complete. The flag is this ``iterate``'s reading, not
 a column, so a repair-and-resubmit (docs/interventions.md) takes effect with nothing
 to clear.
 
@@ -35,7 +37,7 @@ to clear.
 dispatches one run per advancing cell, so runs never nest at the same level — and it
 writes no statefile columns: the verbs do that, inside their own runs. The single
 writer is enforced by the campaign flock, taken in exactly one place: around the whole
-tick, at the level the campaign is operated from.
+``iterate``, at the level the campaign is operated from.
 """
 
 import sys
@@ -49,7 +51,7 @@ from mechababs import study as study_mod
 from mechababs import utils
 from mechababs.utils import require_clean_shallow
 
-# Every line iterate writes about its own reasoning carries this. A tick interleaves
+# Every line iterate writes about its own reasoning carries this. An iterate interleaves
 # mechababs' decisions with datalad's, babs's and git's output, and the old reconciler's
 # were indistinguishable from the noise around them — so the prefix is here from the
 # start rather than retrofitted. The `+ <command>` echoes from the verbs are left
@@ -65,7 +67,8 @@ SCAFFOLD = "scaffold"
 
 # What a cell was just *done to*, which is a different thing from what state it is in:
 # these name the transition that happened, in the past tense a save message wants. A
-# tick returns these, never a count, so the save at the super can say what it recorded.
+# tick is recorded as one of these, never as a count, so the save at the super can say
+# what it recorded.
 SCAFFOLDED = "scaffolded"
 SUBMITTED = "submitted"
 MERGED = "merged"
@@ -140,7 +143,7 @@ def route(rows, row):
     producer = producer_row(rows, row)
     if producer is None:
         # add-dataset refuses to write a cell whose producer has no row, so this is a
-        # hand-edited shard. One broken cell must not take the tick down: say what is
+        # hand-edited shard. One broken cell must not take the iterate down: say what is
         # wrong and let the others advance.
         return WAITING, f"{stem} (no cell for it in this shard)"
     if not producer.get("merged"):
@@ -157,7 +160,7 @@ def source_lifecycle(rows, source_dataset):
 
     Derived, never accumulated — so it is a stored view of the shard, not a tally the
     transitions keep. What it is NOT is a repair pass: mechababs is the single writer
-    and a dirty tree stops the tick, so this recomputes the value rather than hunting
+    and a dirty tree stops the iterate, so this recomputes the value rather than hunting
     for drift behind the tool.
     """
     states = [
@@ -252,7 +255,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
         return None
 
     if state == WAITING:
-        note(f"{where}: waiting on {detail} — not scaffolded this tick")
+        note(f"{where}: waiting on {detail} — passed over")
         return None
 
     if state == SCAFFOLD:
@@ -261,7 +264,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
         return SCAFFOLDED
 
     # ACTIVE: the one state whose next step is not knowable from the shard. Ask babs,
-    # every tick, rather than mirroring a job status into a column that could drift.
+    # every iterate, rather than mirroring a job status into a column that could drift.
     status = babs_status.read_status(Path(study) / detail)
     action = babs_status.decide(status)
     note(f"{where}: {describe_counts(status)} -> {action}")
@@ -270,7 +273,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
         return None
     if action == "fail":
         # Loud, and stopping at this cell only: the campaign keeps reconciling, and a
-        # human decides what happened here. Nothing is written — the next tick
+        # human decides what happened here. Nothing is written — the next iterate
         # re-derives this from the same live counts.
         note(
             f"!! {where}: {status['failed']} job(s) FAILED — NOT merging. "
@@ -286,7 +289,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
 
 
 def work_list(rows, app=None):
-    """The cells this tick will consider, in shard order, as ``(source, app)`` keys.
+    """The cells this iterate will consider, in shard order, as ``(source, app)`` keys.
 
     Row order is the ordering mechanism — there is no priority scheme — so this
     preserves it. ``app`` narrows to one app config's cells by its stem; naming
@@ -404,7 +407,7 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
         at_super = campaign_mod.is_superstudy_campaign(root, label)
         if at_super:
             members = member_studies(root, label, study)
-            note(f"superstudy tick over {len(members)} member(s) in {root}")
+            note(f"superstudy iterate over {len(members)} member(s) in {root}")
             # Clean in at the super, once, before any member is touched — but only
             # the super's OWN tree: its campaign dir, its catalog, anything stray at
             # its root. The members are excluded because each is asked about
@@ -413,15 +416,13 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
             # fan-out. What is left here is the dirt only this level can see, and the
             # same contract applied one level down: anything uncommitted is not
             # mechababs' and must not be committed as ours.
-            require_clean_shallow(
-                root, what="a superstudy iterate tick", ignore=members
-            )
+            require_clean_shallow(root, what="a superstudy iterate", ignore=members)
             studies = [Path(root) / name for name in members]
         else:
             if study:
                 sys.exit(
                     f"campaign {label!r} here is configured at a study, so there are "
-                    f"no members to select between.\n--study narrows a superstudy tick."
+                    f"no members to select between.\n--study narrows a superstudy iterate."
                 )
             studies = [Path(root)]
 
@@ -433,7 +434,7 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
             if budget is not None and budget <= 0:
                 note(
                     f"--batch {batch} reached — {len(studies) - i} member(s) left for "
-                    f"the next tick"
+                    f"the next iterate"
                 )
                 break
             if at_super:
@@ -459,16 +460,16 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
             # did not come from mechababs — and a run recorded on top of it would not
             # describe the tree it ran in. Cheap: a gitlink compare, no descent into
             # submodule worktrees.
-            require_clean_shallow(study_path, what="an iterate tick")
+            require_clean_shallow(study_path, what="an iterate")
 
             cells = work_list(campaign_mod.read_state(study_path, label), app)
             scope = f" ({app})" if app else ""
-            note(f"tick over {len(cells)} cell(s) in {study_path}{scope}")
+            note(f"iterate over {len(cells)} cell(s) in {study_path}{scope}")
             for j, key in enumerate(cells):
                 if budget is not None and budget <= 0:
                     note(
                         f"--batch {batch} reached — {len(cells) - j} cell(s) left for "
-                        f"the next tick"
+                        f"the next iterate"
                     )
                     break
                 # Re-read: the verbs write the shard themselves, so a copy taken
@@ -496,8 +497,8 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
         if dry_run:
             note(
                 f"DRY-RUN: {len(advanced)} cell(s) would advance. Nothing changed, so "
-                f"no cell's state moved — a real tick may advance more."
+                f"no cell's state moved — a real iterate may advance more."
             )
         else:
-            note(f"tick done: {len(advanced)} cell(s) advanced.")
+            note(f"iterate done: {len(advanced)} cell(s) advanced.")
         return advanced

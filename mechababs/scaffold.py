@@ -225,7 +225,7 @@ def resolve_inclusion(study, label, row, app_config_data, limit):
     """This cell's subject list: the pin if one is already there, else generated.
 
     A pin present is used **as-is** and selection is skipped entirely — that is the
-    smoke-test affordance (hand-write a one-row file before the first tick and the
+    smoke-test affordance (hand-write a one-row file before the first iterate and the
     whole pipeline runs on one subject), and it is also how a re-scaffold reuses
     exactly what the first attempt requested.
 
@@ -369,7 +369,7 @@ def scaffold(study, label, source_dataset, app_config):
         subprocess.run([str(c) for c in cmd], cwd=str(study), check=True)
 
     # The cell's durable fact: a babs project exists, and where. Its presence is
-    # what routes the next tick to the active branch instead of back through here.
+    # what routes the next iterate to the active branch instead of back through here.
     row["babs"] = project
     campaign_mod.write_state(study, label, rows)
     return project

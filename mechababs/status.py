@@ -26,7 +26,7 @@ calls "waiting on X" and ``status`` called "not started" would be a bug that onl
 shows up when it matters.
 
 **Read-only, and never in the way.** It takes no flock: the campaign lock is
-exclusive, so holding it here would make looking at a campaign block until the tick
+exclusive, so holding it here would make looking at a campaign block until the iterate
 finished — precisely when you most want to look. The cost is a torn read if a verb
 rewrites the shard in the same instant, which fixes itself on the next invocation.
 Nothing here writes campaign state, so observability costs no provenance.
@@ -299,7 +299,7 @@ def run_status(root=".", *, study=None, app=None):
     Resolves the level exactly the way ``iterate`` does — where you stand gives the
     level, ``study`` narrows *within* it — so the two commands agree about what a
     campaign contains. **No flock, at either level**: see the module docstring.
-    Looking at a superstudy must not block behind a tick that is fanning out across
+    Looking at a superstudy must not block behind an iterate that is fanning out across
     its members, which is precisely when you want to look.
     """
     selected = campaign_mod.require_selected_campaign(root)
@@ -346,13 +346,13 @@ def report_superstudy(superstudy, label, *, study=None, app=None):
     """Render every member's cells for ``label``, in catalog order. A CLI exit code.
 
     The rollup is **computed, never stored** — read out of the member shards at the
-    moment you look, the same way ``iterate`` re-reads ground truth each tick. The
+    moment you look, the same way ``iterate`` re-reads ground truth each run. The
     superstudy commits membership and nothing else, so there is no cached per-cell
     state here that could drift out of agreement with the shards it summarizes.
 
     ``member_studies`` does the narrowing, so ``study`` matches the catalog rather
     than the filesystem, and naming a directory that was never selected into this
-    campaign is an error here exactly as it is for a tick.
+    campaign is an error here exactly as it is for ``iterate``.
     """
     members = iterate.member_studies(superstudy, label, study)
     catalog = campaign_mod.read_members(superstudy, label)

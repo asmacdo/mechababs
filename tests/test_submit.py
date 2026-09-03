@@ -132,7 +132,7 @@ def test_a_cell_that_is_not_in_the_shard_is_refused(study, babs_calls):
 
 def test_a_failing_babs_submit_propagates(study, monkeypatch):
     """`check=True`, so a scheduler refusal is an error the reconciler sees — not a
-    silent tick that reports the cell advanced."""
+    silent iterate that reports the cell advanced."""
 
     def boom(cmd, **kwargs):
         raise subprocess.CalledProcessError(1, cmd)
