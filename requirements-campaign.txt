@@ -1,5 +1,0 @@
-# Extra runtime tools a campaign needs beyond the babs + mechababs packages.
-# Installed by bootstrap.sh into the campaign venv. Pin as needed.
-con-duct
-visidata  # interactive TSV viewer for the state-file ledger
-pytest  # runs the packaged e2e scenario behind `mechababs test-cluster`

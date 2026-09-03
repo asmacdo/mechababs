@@ -42,40 +42,6 @@ from mechababs import testing
 WORKDIR_ENV = "MECHABABS_E2E_WORKDIR"
 
 
-class RefError(Exception):
-    """A checkout is not on anything ``git clone --branch`` could re-clone."""
-
-
-def clone_ref(clone):
-    """The branch or tag a checkout is on, as something re-clonable.
-
-    A code pin is set with `git clone --branch <ref>`, which takes a branch or a tag,
-    so the ref handed back has to be one of those. A tag pin leaves the clone on a
-    detached HEAD, where `rev-parse --abbrev-ref HEAD` reports the literal "HEAD";
-    passing that on fails later with "Remote branch HEAD not found". So fall back to
-    the exact tag, and raise when it is neither.
-    """
-    ref = subprocess.run(
-        ["git", "-C", str(clone), "rev-parse", "--abbrev-ref", "HEAD"],
-        check=True,
-        text=True,
-        capture_output=True,
-    ).stdout.strip()
-    if ref != "HEAD":
-        return ref
-    tag = subprocess.run(
-        ["git", "-C", str(clone), "describe", "--tags", "--exact-match"],
-        text=True,
-        capture_output=True,
-    )
-    if tag.returncode == 0 and tag.stdout.strip():
-        return tag.stdout.strip()
-    raise RefError(
-        f"{clone} is on a detached HEAD with no exact tag, so there is no branch or "
-        f"tag to re-clone; check out a branch or tag first"
-    )
-
-
 def resolve_cluster(arg):
     """The cluster config to validate, as a path that exists.
 
