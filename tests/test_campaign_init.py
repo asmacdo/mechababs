@@ -133,15 +133,17 @@ def test_campaign_yaml_records_the_bundle_order_cluster_and_limit(
     }
 
 
-def test_the_venv_and_the_flock_are_gitignored_from_inside_the_campaign(
+def test_the_venv_and_the_flock_are_gitignored_from_inside_mechababs_dir(
     study, configs, stub_env
 ):
     # mechababs' footprint stays under .mechababs/; the study's own .gitignore is
-    # upstream's and is not touched
+    # upstream's and is not touched. The venv is the campaign's, the flock is the
+    # level's (one lock for every campaign here), so each is ignored from its own
+    # home.
     campaign = init(study, configs)
-    assert (campaign / ".gitignore").read_text().split() == [
-        ".venv/",
-        campaign_mod.FLOCK_FILENAME,
+    assert (campaign / ".gitignore").read_text().split() == [".venv/"]
+    assert campaign_mod.level_gitignore_path(study).read_text().split() == [
+        campaign_mod.FLOCK_FILENAME
     ]
     assert not (study / ".gitignore").exists()
 
@@ -157,8 +159,13 @@ def test_env_sh_selects_the_campaign_and_activates_its_venv(study, configs, stub
 
 def test_the_campaign_is_saved_into_the_study(study, configs, stub_env):
     campaign = init(study, configs)
-    saved_study, message, path = stub_env["save"]
-    assert (saved_study, path) == (study, campaign)
+    saved_study, message, paths = stub_env["save"]
+    # Two declared paths: the campaign, and the level's .gitignore — shared by every
+    # campaign here, so it is committed with the first and a no-op for the rest.
+    assert (saved_study, paths) == (
+        study,
+        [campaign, campaign_mod.level_gitignore_path(study)],
+    )
     assert "campaign init nprep" in message
 
 

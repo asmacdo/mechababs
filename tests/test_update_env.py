@@ -346,8 +346,8 @@ def test_update_env_runs_without_the_env_match_guard(study, uv_calls, saves):
 
 
 def test_the_campaign_flock_is_held_across_the_whole_update(study, saves, monkeypatch):
-    """The campaign is the single-writer unit, and this rewrites its lock — the very
-    file `iterate` dispatches work against. So a tick must not read it mid-rewrite,
+    """The level's single-writer lock, held because this rewrites the campaign's
+    uv.lock — the very file `iterate` dispatches work against. So a tick must not read it mid-rewrite,
     and two update-envs must not resolve into it at once.
 
     Held across everything, not just the save: the window that matters opens at
@@ -372,7 +372,7 @@ def test_the_campaign_flock_is_held_across_the_whole_update(study, saves, monkey
 
     update_env.run_update_env(study)
 
-    assert held[0] == campaign_mod.flock_path(study, "nprep")
+    assert held[0] == campaign_mod.flock_path(study)
     assert held[-1] == "released"
     assert len([h for h in held if h != "released"]) == 1, "taken exactly once"
 
@@ -397,4 +397,4 @@ def test_the_flock_is_taken_at_the_operated_level(
 
     update_env.run_update_env(root, member="study-ds000001")
 
-    assert taken == [campaign_mod.flock_path(root, "nprep")]
+    assert taken == [campaign_mod.flock_path(root)]

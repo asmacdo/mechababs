@@ -194,16 +194,16 @@ def run_update_env(root=".", *, upgrade=(), member=None):
     cluster_file = staged_cluster(root, label)
     upgrade = list(upgrade)
 
-    # The campaign's single-writer guarantee, spanning everything that follows: the
-    # resolve, the install, the save, and (with --study) the member's copy. The
-    # campaign is the writer unit, and this mutates its lock -- the file `iterate`
-    # dispatches work against -- so a tick must not be reading it mid-rewrite, and
-    # two update-envs must not resolve into it at once. Taken at `root`, which
-    # `require_campaign_level` has already established IS the operated level.
+    # The level's single-writer guarantee, spanning everything that follows: the
+    # resolve, the install, the save, and (with --study) the member's copy. This
+    # mutates the campaign's uv.lock -- the file `iterate` dispatches work against
+    # -- so a tick must not be reading it mid-rewrite, and two update-envs must not
+    # resolve into it at once. Taken at `root`, which `require_campaign_level` has
+    # already established IS the operated level.
     #
     # Nothing under this lock dispatches an inner verb, so there is no
     # per-open-file-description deadlock of the kind iterate has to avoid.
-    with utils.flocked(campaign_mod.flock_path(root, label)):
+    with utils.flocked(campaign_mod.flock_path(root)):
         _converge(root, label, campaign, upgrade, uv, cluster_file)
         if target:
             copy_lock_to_member(root, target, label)

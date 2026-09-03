@@ -423,7 +423,7 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
     # Not in `dispatch` and not in the verbs: an flock is per open-file-description,
     # so a lock taken inside a verb this tick dispatches would deadlock against the
     # one held here.
-    with utils.flocked(campaign_mod.flock_path(selected.operated_at, label)):
+    with utils.flocked(campaign_mod.flock_path(selected.operated_at)):
         if not campaign_mod.is_superstudy_campaign(root, label):
             if study:
                 sys.exit(

@@ -41,10 +41,11 @@ def write_campaign(root, label="nprep", *, superstudy=False, lock="lock-v1\n"):
     """A campaign footprint, written the way `campaign init` leaves one."""
     campaign = campaign_mod.campaign_dir(root, label)
     campaign.mkdir(parents=True)
-    (campaign / ".gitattributes").write_text(campaign_init.GITATTRIBUTES)
-    (campaign / ".gitignore").write_text(
-        f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.FLOCK_FILENAME}\n"
+    campaign_mod.level_gitignore_path(root).write_text(
+        f"{campaign_mod.FLOCK_FILENAME}\n"
     )
+    (campaign / ".gitattributes").write_text(campaign_init.GITATTRIBUTES)
+    (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
     campaign_mod.config_path(root, label).write_text(
         yaml.safe_dump({"label": label, "cluster": "clusters/dartmouth.yaml"})
     )
@@ -100,9 +101,7 @@ def superstudy(tmp_path, monkeypatch):
     campaign = campaign_mod.campaign_dir(member, "nprep")
     campaign.mkdir(parents=True)
     (campaign / ".gitattributes").write_text(campaign_init.GITATTRIBUTES)
-    (campaign / ".gitignore").write_text(
-        f"{campaign_mod.VENV_DIRNAME}/\n{campaign_mod.FLOCK_FILENAME}\n"
-    )
+    (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
     campaign_mod.config_path(member, "nprep").write_text(
         f"label: nprep\n{campaign_mod.SUPERSTUDY_KEY}: {Dataset(str(root)).id}\n"
     )

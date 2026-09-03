@@ -367,7 +367,7 @@ def test_a_derivative_that_matches_nothing_is_a_typo_not_an_empty_tick(study, ti
 def test_the_flock_is_taken_exactly_once_around_the_whole_tick(
     study, tick, monkeypatch
 ):
-    """One lock, held across every cell: the campaign is the single-writer unit. It
+    """One lock, held across every cell: the level is the single-writer unit. It
     must not be taken per cell (and never inside a verb this tick dispatches — an
     flock is per open-file-description, so that would deadlock against this one).
 
@@ -386,8 +386,8 @@ def test_the_flock_is_taken_exactly_once_around_the_whole_tick(
     iterate_mod.run_iterate(str(study))
 
     assert tick.locks == 1, f"the flock was taken {tick.locks} times"
-    assert tick.lock_paths == [campaign_mod.flock_path(study, LABEL)]
-    assert campaign_mod.flock_path(study, LABEL).exists()
+    assert tick.lock_paths == [campaign_mod.flock_path(study)]
+    assert campaign_mod.flock_path(study).exists()
 
 
 def test_the_clean_check_runs_once_per_tick(study, tick):
@@ -663,9 +663,9 @@ def test_one_lock_at_the_super_covers_the_whole_fan_out(superstudy, tick):
     iterate_mod.run_iterate(str(root))
 
     assert tick.locks == 1, f"the flock was taken {tick.locks} times for 2 members"
-    assert tick.lock_paths == [campaign_mod.flock_path(root, LABEL)]
+    assert tick.lock_paths == [campaign_mod.flock_path(root)]
     for member in members:
-        assert not campaign_mod.flock_path(member, LABEL).exists(), (
+        assert not campaign_mod.flock_path(member).exists(), (
             f"{member.name} was locked as if it were its own single-writer unit"
         )
 

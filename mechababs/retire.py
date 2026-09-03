@@ -388,10 +388,10 @@ def run_retire(path, *, dest=None, remove=False, root="."):
         )
     )
 
-    # The campaign's single writer, at the level it is operated from, held across the
-    # whole read-modify-write. Nothing here dispatches an inner verb, so there is no
-    # per-open-file-description deadlock of the kind `iterate` has to avoid.
-    with utils.flocked(campaign_mod.flock_path(selected.operated_at, label)):
+    # The level's single writer, at the level the campaign is operated from, held
+    # across the whole read-modify-write. Nothing here dispatches an inner verb, so
+    # there is no per-open-file-description deadlock of the kind `iterate` avoids.
+    with utils.flocked(campaign_mod.flock_path(selected.operated_at)):
         _retire(root, study, label, study_rel, derivative_rel, target)
 
     if target is None:
