@@ -47,6 +47,7 @@ Which source datasets the campaign acts on is a separate step, `add-dataset`.
 
 Init never clobbers, and it does not scaffold input studies.
 What it does is decided by what is at the target: nothing there, and `--superstudy` given, creates the superstudy as a datalad dataset and the campaign inside it (a study is never created this way); an existing datalad dataset gains a `.mechababs/` at its root, with any campaigns already there untouched; a non-empty directory that is not a dataset is refused; a campaign with this label already present is refused, by name.
+Init commits at the study or superstudy root, so it holds the level's single-writer lock like every other command that does, and cannot land while an iterate there is mid-save.
 
 At a superstudy, `campaign init` touches only the superstudy's own campaign dir.
 A member study gets its copy of the campaign (configs, `pyproject.toml`, `uv.lock`, an empty statefile) when `add-dataset` first selects a source dataset in it; the venv and `env.sh` exist only at the superstudy.

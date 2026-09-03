@@ -43,7 +43,7 @@ from datalad.api import Dataset
 
 from mechababs import campaign as campaign_mod
 from mechababs import study as study_mod
-from mechababs.utils import campaign_save_scope
+from mechababs.utils import campaign_save_scope, flocked
 
 # Runtime tools a campaign needs beyond mechababs + babs themselves. A literal rather
 # than a requirements file in the repo, because this command may run from an ephemeral
@@ -574,13 +574,23 @@ def init(
     if not app_args:
         sys.exit("--apps must name at least one BIDS-App config")
 
+    # The level's single-writer lock, held across the write and the save: init
+    # commits at the study root, where a tick or an add-dataset may be mid-save.
+    # The lock lives under .mechababs/, so on a fresh study that dir is created
+    # first; the lock file itself is not yet ignored at that moment, but the scope
+    # below is path-scoped to what init declares, so it is neither checked nor
+    # swept in.
+    level_gitignore = campaign_mod.level_gitignore_path(study)
+    level_gitignore.parent.mkdir(exist_ok=True)
     # Everything that writes runs inside the scope: it checks the target is clean
     # first, and commits what the block produced as one attributable node. Two paths
     # declared: the campaign dir, and the level's .gitignore under .mechababs/ —
     # shared by every campaign at this level, so a second init finds it committed
     # and the save has nothing to record for it.
-    level_gitignore = campaign_mod.level_gitignore_path(study)
-    with campaign_save_scope(study, [campaign, level_gitignore]) as save:
+    with (
+        flocked(campaign_mod.flock_path(study)),
+        campaign_save_scope(study, [campaign, level_gitignore]) as save,
+    ):
         campaign.mkdir(parents=True)
 
         # First file in, before anything it has to govern: git-annex reads the
@@ -593,10 +603,12 @@ def init(
         # alone — untracked-but-not-ignored files would dirty the study, which the
         # clean-in guards read as unattributable work. The flock belongs to the
         # LEVEL (every campaign here takes the same one), so it is ignored from
-        # .mechababs/ itself; written idempotently, since .mechababs/ may already
-        # carry earlier campaigns. The venv is this campaign's, ephemeral and
-        # rebuilt from the lock, and is ignored from inside its own dir.
-        level_gitignore.write_text(f"{campaign_mod.FLOCK_FILENAME}\n")
+        # .mechababs/ itself — written by the first init here and left alone by
+        # every later one: the file is shared, and may carry a user's own lines.
+        # The venv is this campaign's, ephemeral and rebuilt from the lock, and is
+        # ignored from inside its own dir.
+        if not level_gitignore.exists():
+            level_gitignore.write_text(f"{campaign_mod.FLOCK_FILENAME}\n")
         (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
 
         apps = resolve_apps(campaign / campaign_mod.APPS_DIRNAME, app_args)

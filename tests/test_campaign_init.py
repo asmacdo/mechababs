@@ -169,6 +169,54 @@ def test_the_campaign_is_saved_into_the_study(study, configs, stub_env):
     assert "campaign init nprep" in message
 
 
+def test_init_holds_the_level_flock_across_the_save(
+    study, configs, stub_env, monkeypatch
+):
+    """Init commits at the study root, where a tick or an add-dataset may be
+    mid-save, so it is a writer like the rest and takes the level's lock — around
+    the save, not just the writes, since the save is the collision."""
+    events = []
+    real_flocked = campaign_init.flocked
+
+    @contextmanager
+    def watching_flock(lock):
+        with real_flocked(lock):
+            events.append(("locked", Path(lock)))
+            yield
+            events.append(("released", Path(lock)))
+
+    stubbed_save = campaign_init.campaign_save_scope
+
+    @contextmanager
+    def watching_save(root, paths):
+        with stubbed_save(root, paths) as save:
+            yield save
+        events.append(("saved", root))
+
+    monkeypatch.setattr(campaign_init, "flocked", watching_flock)
+    monkeypatch.setattr(campaign_init, "campaign_save_scope", watching_save)
+
+    init(study, configs)
+
+    lock = campaign_mod.flock_path(study)
+    assert events == [("locked", lock), ("saved", study), ("released", lock)]
+
+
+def test_a_later_init_leaves_the_level_gitignore_alone(study, configs, stub_env):
+    """The level's .gitignore is shared by every campaign here and may carry a
+    user's own lines: the first init writes it, later ones do not touch it."""
+    init(study, configs, label="first")
+    gitignore = campaign_mod.level_gitignore_path(study)
+    gitignore.write_text(f"{campaign_mod.FLOCK_FILENAME}\nmy-scratch/\n")
+
+    campaign = init(study, configs, label="second")
+
+    assert gitignore.read_text() == f"{campaign_mod.FLOCK_FILENAME}\nmy-scratch/\n"
+    # still declared: a user's uncommitted edit to it is refused, not swept in
+    _, _, paths = stub_env["save"]
+    assert paths == [campaign, gitignore]
+
+
 # --- git routing ------------------------------------------------------------
 
 
