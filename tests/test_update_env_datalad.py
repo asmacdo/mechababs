@@ -4,7 +4,7 @@ The unit tests stub the saves to pin *which* paths and messages are asked for. T
 build real datasets, because the two properties worth proving cannot be stubbed: that
 a commit lands at each level, and that **every level is left clean**. A save that
 half-lands — the member advanced, the superstudy's gitlink still pointing at the old
-commit — reads as clean at the member and dirty at the super, and the next tick then
+commit — reads as clean at the member and dirty at the super, and the next iterate then
 refuses. That is a shape only a real dataset shows.
 
 uv is stubbed here (the real uv is pinned by the `uv_build` contract tests); datalad
@@ -182,7 +182,7 @@ def test_unrelated_work_in_flight_is_not_swept_into_the_commit(study, fake_uv):
 def test_study_commits_at_the_member_then_the_gitlink_at_the_super(superstudy, fake_uv):
     """Every level stays clean — Austin's rule, and the reason the copy is not left
     for publish time. The member commits its lock; the superstudy commits the
-    gitlink that points at that commit. Neither is left dirty for a later tick to
+    gitlink that points at that commit. Neither is left dirty for a later iterate to
     trip over."""
     root, member = superstudy
 

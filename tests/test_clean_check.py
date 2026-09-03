@@ -1,4 +1,4 @@
-"""The once-per-tick shallow clean check — the `--explicit` backstop.
+"""The once-per-iterate shallow clean check — the `--explicit` backstop.
 
 Plain git repos, not datalad datasets: the check is a `git status`, and building
 real datasets here would make a unit test pay for annex init to prove something

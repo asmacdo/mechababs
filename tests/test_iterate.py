@@ -1,15 +1,16 @@
-"""The reconciler tick: the routing table, the gate, the batch, and the flock.
+"""The reconciler: the routing table, the gate, the batch, and the flock.
 
-Everything the tick *dispatches* is stubbed — a real transition needs a real babs, a
+Everything `iterate` *dispatches* is stubbed — a real transition needs a real babs, a
 real scheduler and a real container, which is the e2e's job. What is mechababs' here
 is the decision: given a shard and (for an active cell) a set of live counts, which
 verb does each cell get, and which cells get nothing at all.
 
-The stubs mutate the shard the way the real verbs do (scaffold records `babs`, merge
-sets `merged`), because the tick re-reads it between cells — so a stub that only
+The dispatch_log mutate the shard the way the real verbs do (scaffold records `babs`, merge
+sets `merged`), because `iterate` re-reads it between cells — so a stub that only
 recorded the call would make the multi-cell cases lie.
 """
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -47,25 +48,41 @@ def write(study, rows):
     campaign_mod.write_state(study, LABEL, rows)
 
 
+def select(monkeypatch, root):
+    """Stand `run_iterate` at `root` with the campaign selected, venv check and all.
+
+    `require_selected_campaign` is the configured-level check plus the env guard;
+    what it resolves is stubbed so the tests here stay about the reconciler.
+    """
+    monkeypatch.setattr(
+        campaign_mod,
+        "require_selected_campaign",
+        lambda path=".", **kw: campaign_mod.Selected(
+            root, LABEL, campaign_mod.campaign_dir(root, LABEL), root
+        ),
+    )
+
+
 @pytest.fixture
-def study(tmp_path):
+def study(tmp_path, monkeypatch):
     """A study with a two-cell shard: an anchor, and a chain that depends on it.
 
-    Deliberately NOT the cwd — see `test_the_tick_never_assumes_it_is_standing_in_the_study`.
+    Deliberately NOT the cwd — see `test_iterate_never_assumes_it_is_standing_in_the_study`.
     """
     study = tmp_path / "study-ds999999"
     campaign_mod.campaign_dir(study, LABEL).mkdir(parents=True)
     campaign_mod.state_path(study, LABEL).write_text(campaign_mod.initial_header())
     write(study, [cell(ANCHOR), cell(CHAIN, depends_on=ANCHOR)])
+    select(monkeypatch, study)
     return study
 
 
-class _Tick(list):
-    """The transitions the tick dispatched, in order, plus the knobs the stubs read.
+class _DispatchLog(list):
+    """The ticks, in dispatch order — plus the babs queries — and the knobs the fakes read.
 
     `status` is what `babs status` reports for an active cell (one dict for every
     cell, which is enough: no test here needs two cells active at once with
-    *different* counts). `cleans` counts the once-per-tick clean check; `locks`
+    *different* counts). `cleans` counts the once-per-iterate clean check; `locks`
     counts the flock.
     """
 
@@ -79,9 +96,9 @@ class _Tick(list):
 
 
 @pytest.fixture
-def tick(monkeypatch, study):
+def dispatch_log(monkeypatch):
     """Stub the three dispatches, the babs query, the clean check and the flock."""
-    calls = _Tick()
+    calls = _DispatchLog()
     calls.status = dict(ALL_DONE)
 
     def record(verb, *, column=None, value=""):
@@ -96,7 +113,7 @@ def tick(monkeypatch, study):
                 }
             )
             if column and not dry_run:
-                # The real verbs write the shard themselves, and the tick re-reads it
+                # The real verbs write the shard themselves, and iterate re-reads it
                 # between cells — so the stub has to move the state too.
                 rows = campaign_mod.read_state(study_arg, label)
                 row = campaign_mod.find_cell(rows, source_dataset, app_config)
@@ -193,25 +210,27 @@ def test_the_gate_is_a_shard_local_lookup_on_the_same_source_dataset():
 
 
 # --------------------------------------------------------------------------
-# One tick: what each state gets dispatched
+# One cell: what each state gets dispatched
 # --------------------------------------------------------------------------
 
 
-def test_a_not_started_cell_is_scaffolded(study, tick):
-    iterate_mod.tick(study, LABEL, batch=1)
+def test_a_not_started_cell_is_scaffolded(study, dispatch_log):
+    iterate_mod.run_iterate(str(study), batch=1)
 
-    (call,) = dispatched(tick)
+    (call,) = dispatched(dispatch_log)
     assert call["verb"] == "scaffold"
     assert call["cell"] == (SOURCEDATA, ANCHOR)
     assert call["study"] == str(study)
     assert call["label"] == LABEL
 
 
-def test_a_waiting_cell_is_noted_and_passed_over_not_blocked_on(study, tick, capsys):
-    """Gating is noting: the tick says so and moves on, and the next tick re-checks."""
-    iterate_mod.tick(study, LABEL)
+def test_a_waiting_cell_is_noted_and_passed_over_not_blocked_on(
+    study, dispatch_log, capsys
+):
+    """Gating is noting: iterate says so and moves on, and the next one re-checks."""
+    iterate_mod.run_iterate(str(study))
 
-    assert [c["cell"] for c in dispatched(tick)] == [(SOURCEDATA, ANCHOR)], (
+    assert [c["cell"] for c in dispatched(dispatch_log)] == [(SOURCEDATA, ANCHOR)], (
         "the dependent cell was advanced before its producer merged"
     )
     err = capsys.readouterr().err
@@ -224,93 +243,95 @@ def test_a_waiting_cell_is_noted_and_passed_over_not_blocked_on(study, tick, cap
     [(UNSUBMITTED, "submit"), (ALL_DONE, "merge")],
 )
 def test_an_active_cells_next_step_comes_from_the_live_counts(
-    study, tick, status, verb
+    study, dispatch_log, status, verb
 ):
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT)])
-    tick.status = dict(status)
+    dispatch_log.status = dict(status)
 
-    iterate_mod.tick(study, LABEL)
+    iterate_mod.run_iterate(str(study))
 
-    assert verbs(tick) == ["babs status", verb]
-    assert tick[0]["project"] == str(study / ANCHOR_PROJECT)
+    assert verbs(dispatch_log) == ["babs status", verb]
+    assert dispatch_log[0]["project"] == str(study / ANCHOR_PROJECT)
 
 
-def test_jobs_still_in_flight_are_left_alone(study, tick):
+def test_jobs_still_in_flight_are_left_alone(study, dispatch_log):
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT)])
-    tick.status = dict(STILL_RUNNING)
+    dispatch_log.status = dict(STILL_RUNNING)
 
-    assert iterate_mod.tick(study, LABEL) == []
-    assert dispatched(tick) == [], "a running cell was advanced"
+    assert iterate_mod.run_iterate(str(study)) == []
+    assert dispatched(dispatch_log) == [], "a running cell was advanced"
 
 
-def test_a_failed_cell_is_flagged_loudly_and_never_merged(study, tick, capsys):
+def test_a_failed_cell_is_flagged_loudly_and_never_merged(study, dispatch_log, capsys):
     """Merging a partial set is silent, not loud — babs merges whatever branches it
     finds — so the reconciler refuses and says so unmistakably."""
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN)])
-    tick.status = dict(SOME_FAILED)
+    dispatch_log.status = dict(SOME_FAILED)
 
-    iterate_mod.tick(study, LABEL)
+    iterate_mod.run_iterate(str(study))
 
-    assert "merge" not in verbs(tick), "a failed cell was merged"
+    assert "merge" not in verbs(dispatch_log), "a failed cell was merged"
     err = capsys.readouterr().err
     assert "FAILED" in err and "NOT merging" in err, err
     assert f"babs status {ANCHOR_PROJECT}" in err, "the flag does not say where to look"
 
 
-def test_a_failure_does_not_halt_the_tick(study, tick):
+def test_a_failure_does_not_halt_the_iterate(study, dispatch_log):
     """Level-triggered: one stuck cell must not stop the campaign's other cells."""
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN)])
-    tick.status = dict(SOME_FAILED)
+    dispatch_log.status = dict(SOME_FAILED)
 
-    iterate_mod.tick(study, LABEL)
+    iterate_mod.run_iterate(str(study))
 
-    assert [c["cell"] for c in dispatched(tick)] == [(SOURCEDATA, CHAIN)], (
+    assert [c["cell"] for c in dispatched(dispatch_log)] == [(SOURCEDATA, CHAIN)], (
         "the cells after the failed one never got their turn"
     )
 
 
-def test_a_failure_is_a_per_tick_reading_not_a_column(study, tick):
+def test_a_failure_is_a_per_iterate_reading_not_a_column(study, dispatch_log):
     """Nothing is written, so a repair-and-resubmit takes effect with nothing to clear:
     the same shard routes to `merge` the moment the counts change."""
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT)])
-    tick.status = dict(SOME_FAILED)
+    dispatch_log.status = dict(SOME_FAILED)
     before = campaign_mod.state_path(study, LABEL).read_text()
 
-    iterate_mod.tick(study, LABEL)
+    iterate_mod.run_iterate(str(study))
     assert campaign_mod.state_path(study, LABEL).read_text() == before
 
-    tick.status = dict(ALL_DONE)
-    iterate_mod.tick(study, LABEL)
-    assert "merge" in verbs(tick)
+    dispatch_log.status = dict(ALL_DONE)
+    iterate_mod.run_iterate(str(study))
+    assert "merge" in verbs(dispatch_log)
 
 
-def test_a_merged_cell_is_skipped_without_asking_babs(study, tick):
+def test_a_merged_cell_is_skipped_without_asking_babs(study, dispatch_log):
     """The economy the `merged` column buys: a done cell costs no query at all."""
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT, merged="true")])
 
-    assert iterate_mod.tick(study, LABEL) == []
-    assert tick == [], "a merged cell was queried or advanced"
+    assert iterate_mod.run_iterate(str(study)) == []
+    assert dispatch_log == [], "a merged cell was queried or advanced"
 
 
-def test_each_cell_advances_by_at_most_one_transition(study, tick):
+def test_each_cell_advances_by_at_most_one_transition(study, dispatch_log):
     """A not-started cell scaffolds and stops — it does not go on to submit."""
     write(study, [cell(ANCHOR)])
-    tick.status = dict(UNSUBMITTED)
+    dispatch_log.status = dict(UNSUBMITTED)
 
-    iterate_mod.tick(study, LABEL)
+    iterate_mod.run_iterate(str(study))
 
-    assert verbs(tick) == ["scaffold"]
+    assert verbs(dispatch_log) == ["scaffold"]
 
 
-def test_a_producer_that_merges_mid_tick_opens_its_dependants_gate(study, tick):
-    """The tick re-reads the shard per cell, so ground truth is what routes each one —
-    including a change an earlier cell in this same tick made."""
+def test_a_producer_that_merges_mid_iterate_opens_its_dependants_gate(
+    study, dispatch_log
+):
+    """The shard is re-read per cell, so ground truth is what routes each one —
+    including a change an earlier tick in this same iterate made."""
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN, depends_on=ANCHOR)])
-    tick.status = dict(ALL_DONE)
+    dispatch_log.status = dict(ALL_DONE)
 
-    iterate_mod.tick(study, LABEL)
+    iterate_mod.run_iterate(str(study))
 
-    assert [(c["verb"], c["cell"][1]) for c in dispatched(tick)] == [
+    assert [(c["verb"], c["cell"][1]) for c in dispatched(dispatch_log)] == [
         ("merge", ANCHOR),
         ("scaffold", CHAIN),
     ]
@@ -321,14 +342,14 @@ def test_a_producer_that_merges_mid_tick_opens_its_dependants_gate(study, tick):
 # --------------------------------------------------------------------------
 
 
-def test_batch_bounds_the_cells_that_advance(study, tick):
+def test_batch_bounds_the_cells_that_advance(study, dispatch_log):
     write(study, [cell(ANCHOR), cell(CHAIN)])
 
-    assert len(iterate_mod.tick(study, LABEL, batch=1)) == 1
-    assert [c["cell"][1] for c in dispatched(tick)] == [ANCHOR]
+    assert len(iterate_mod.run_iterate(str(study), batch=1)) == 1
+    assert [c["cell"][1] for c in dispatched(dispatch_log)] == [ANCHOR]
 
 
-def test_a_cell_that_does_not_advance_does_not_consume_batch(study, tick):
+def test_a_cell_that_does_not_advance_does_not_consume_batch(study, dispatch_log):
     """A done, waiting or still-running cell costs nothing to route, so spending the
     budget on it would make `--batch 1` mean "look at one cell" instead of
     "advance one"."""
@@ -341,78 +362,77 @@ def test_a_cell_that_does_not_advance_does_not_consume_batch(study, tick):
         ],
     )
 
-    assert len(iterate_mod.tick(study, LABEL, batch=1)) == 1
-    assert [c["cell"][1] for c in dispatched(tick)] == ["bids-app-configs/Third.yaml"]
+    assert len(iterate_mod.run_iterate(str(study), batch=1)) == 1
+    assert [c["cell"][1] for c in dispatched(dispatch_log)] == [
+        "bids-app-configs/Third.yaml"
+    ]
 
 
-def test_derivative_narrows_to_one_apps_cells(study, tick):
+def test_derivative_narrows_to_one_apps_cells(study, dispatch_log):
     write(study, [cell(ANCHOR), cell(CHAIN)])
 
-    iterate_mod.tick(study, LABEL, app="SimBIDS-0.0.3+chain")
+    iterate_mod.run_iterate(str(study), app="SimBIDS-0.0.3+chain")
 
-    assert [c["cell"][1] for c in dispatched(tick)] == [CHAIN]
+    assert [c["cell"][1] for c in dispatched(dispatch_log)] == [CHAIN]
 
 
-def test_a_derivative_that_matches_nothing_is_a_typo_not_an_empty_tick(study, tick):
+def test_a_derivative_that_matches_nothing_is_a_typo_not_an_empty_iterate(
+    study, dispatch_log
+):
     with pytest.raises(SystemExit, match="no cells for --app"):
-        iterate_mod.tick(study, LABEL, app="MRIQC-24.0.2")
-    assert tick == []
+        iterate_mod.run_iterate(str(study), app="MRIQC-24.0.2")
+    assert dispatch_log == []
 
 
 # --------------------------------------------------------------------------
-# The tick's own guarantees
+# iterate's own guarantees
 # --------------------------------------------------------------------------
 
 
-def test_the_flock_is_taken_exactly_once_around_the_whole_tick(
-    study, tick, monkeypatch
+def test_the_flock_is_taken_exactly_once_around_the_whole_iterate(
+    study, dispatch_log, monkeypatch
 ):
     """One lock, held across every cell: the level is the single-writer unit. It
-    must not be taken per cell (and never inside a verb this tick dispatches — an
+    must not be taken per cell (and never inside a verb this iterate dispatches — an
     flock is per open-file-description, so that would deadlock against this one).
 
-    Driven through `run_iterate`, which is where the lock is taken: a fan-out calls
-    `tick` once per member, so a lock inside `tick` would be released between them.
+    Driven through `run_iterate`, which is where the lock is taken, around the
+    whole fan-out: a lock per member would be released between them.
     """
     write(study, [cell(ANCHOR), cell(CHAIN)])
-    monkeypatch.setattr(
-        campaign_mod,
-        "require_selected_campaign",
-        lambda path=".", **kw: campaign_mod.Selected(
-            study, LABEL, campaign_mod.campaign_dir(study, LABEL), study
-        ),
-    )
 
     iterate_mod.run_iterate(str(study))
 
-    assert tick.locks == 1, f"the flock was taken {tick.locks} times"
-    assert tick.lock_paths == [campaign_mod.flock_path(study)]
+    assert dispatch_log.locks == 1, f"the flock was taken {dispatch_log.locks} times"
+    assert dispatch_log.lock_paths == [campaign_mod.flock_path(study)]
     assert campaign_mod.flock_path(study).exists()
 
 
-def test_the_clean_check_runs_once_per_tick(study, tick):
+def test_the_clean_check_runs_once_per_iterate(study, dispatch_log):
     write(study, [cell(ANCHOR), cell(CHAIN)])
 
-    iterate_mod.tick(study, LABEL)
+    iterate_mod.run_iterate(str(study))
 
-    assert tick.cleans == 1, f"the clean check ran {tick.cleans} times"
+    assert dispatch_log.cleans == 1, f"the clean check ran {dispatch_log.cleans} times"
 
 
-def test_the_clean_check_runs_before_anything_is_dispatched(study, monkeypatch, tick):
+def test_the_clean_check_runs_before_anything_is_dispatched(
+    study, monkeypatch, dispatch_log
+):
     """Uncommitted work at the study is not mechababs', and a run recorded on top of
-    it would not describe the tree it ran in — so the tick refuses before it starts."""
+    it would not describe the tree it ran in — so iterate refuses before it starts."""
 
     def dirty(root, *, what="this operation"):
         raise RuntimeError(f"{root} is not clean — refusing {what}.")
 
     monkeypatch.setattr(iterate_mod, "require_clean_shallow", dirty)
     with pytest.raises(RuntimeError, match="not clean"):
-        iterate_mod.tick(study, LABEL)
-    assert tick == [], "the tick dispatched despite a dirty study"
+        iterate_mod.run_iterate(str(study))
+    assert dispatch_log == [], "iterate dispatched despite a dirty study"
 
 
-def test_the_tick_never_assumes_it_is_standing_in_the_study(
-    study, tick, tmp_path, monkeypatch
+def test_iterate_never_assumes_it_is_standing_in_the_study(
+    study, dispatch_log, tmp_path, monkeypatch
 ):
     """The both-levels lens: at a superstudy the reconciler stands at the super and
     drives member studies, so `study` is a parameter and the cwd is nobody's business.
@@ -421,22 +441,25 @@ def test_the_tick_never_assumes_it_is_standing_in_the_study(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    iterate_mod.tick(study, LABEL, batch=1)
+    iterate_mod.run_iterate(str(study), batch=1)
 
-    (call,) = dispatched(tick)
+    (call,) = dispatched(dispatch_log)
     assert Path(call["study"]) == study
 
 
-def test_a_superstudy_shard_is_refused_with_its_own_message(tmp_path, tick):
-    """A campaign dir with config and no statefile is the superstudy shape; a tick
+def test_a_superstudy_shard_is_refused_with_its_own_message(
+    tmp_path, dispatch_log, monkeypatch
+):
+    """A campaign dir with config and no statefile is the superstudy shape; an iterate
     pointed at it is at the wrong level, which is not the same mistake as a missing
     campaign."""
     super_root = tmp_path / "superstudy"
     campaign_mod.campaign_dir(super_root, LABEL).mkdir(parents=True)
     campaign_mod.config_path(super_root, LABEL).write_text("label: e2e\n")
+    select(monkeypatch, super_root)
 
     with pytest.raises(SystemExit, match="Per-cell state lives in a study"):
-        iterate_mod.tick(super_root, LABEL)
+        iterate_mod.run_iterate(str(super_root))
 
 
 # --------------------------------------------------------------------------
@@ -444,27 +467,29 @@ def test_a_superstudy_shard_is_refused_with_its_own_message(tmp_path, tick):
 # --------------------------------------------------------------------------
 
 
-def test_dry_run_routes_for_real_and_dispatches_nothing(study, tick):
+def test_dry_run_routes_for_real_and_dispatches_nothing(study, dispatch_log):
     """The routing is read-only, so it runs; the dispatches are told not to act."""
     write(study, [cell(ANCHOR, babs=ANCHOR_PROJECT)])
-    tick.status = dict(ALL_DONE)
+    dispatch_log.status = dict(ALL_DONE)
     before = campaign_mod.state_path(study, LABEL).read_text()
 
-    iterate_mod.tick(study, LABEL, dry_run=True)
+    iterate_mod.run_iterate(str(study), dry_run=True)
 
-    assert verbs(tick) == ["babs status", "merge"], "the live query was skipped"
-    assert dispatched(tick)[0]["dry_run"] is True
+    assert verbs(dispatch_log) == ["babs status", "merge"], "the live query was skipped"
+    assert dispatched(dispatch_log)[0]["dry_run"] is True
     assert campaign_mod.state_path(study, LABEL).read_text() == before
 
 
-def test_dry_run_says_it_shows_only_this_ticks_transitions(study, tick, capsys):
-    iterate_mod.tick(study, LABEL, dry_run=True)
+def test_dry_run_says_it_shows_only_this_iterates_transitions(
+    study, dispatch_log, capsys
+):
+    iterate_mod.run_iterate(str(study), dry_run=True)
     assert "DRY-RUN" in capsys.readouterr().err
 
 
 # --- at a superstudy: fanning out to members --------------------------------
 #
-# `tick` was always parameterized on the study, so the level adds a fan-out rather
+# The loop was always parameterized on the study, so the level adds a fan-out rather
 # than a second reconciler. What these pin is the fan-out's shape: catalog order,
 # per-member batching, and the narrowing that does NOT change the level.
 
@@ -478,7 +503,7 @@ def superstudy(tmp_path, monkeypatch):
     for name in ("study-dsA", "study-dsB"):
         member = root / name
         campaign_mod.campaign_dir(member, LABEL).mkdir(parents=True)
-        # Installed — the tick advances only members that are actually here, so a
+        # Installed — iterate advances only members that are actually here, so a
         # fixture member has to look present the way `study.is_study_root` reads it.
         (member / ".datalad").mkdir()
         campaign_mod.state_path(member, LABEL).write_text(campaign_mod.initial_header())
@@ -522,15 +547,15 @@ def superstudy(tmp_path, monkeypatch):
     return root, members, recorded
 
 
-def test_a_superstudy_tick_advances_every_member(superstudy, tick):
+def test_a_superstudy_iterate_advances_every_member(superstudy, dispatch_log):
     root, members, _saves = superstudy
 
     iterate_mod.run_iterate(str(root))
 
-    assert [call["study"] for call in tick] == [str(m) for m in members]
+    assert [call["study"] for call in dispatch_log] == [str(m) for m in members]
 
 
-def test_members_advance_in_catalog_order(superstudy, tick):
+def test_members_advance_in_catalog_order(superstudy, dispatch_log):
     """Catalog order is the ordering interface at the super, the way row order is
     within a shard."""
     root, members, _saves = superstudy
@@ -553,10 +578,13 @@ def test_members_advance_in_catalog_order(superstudy, tick):
 
     iterate_mod.run_iterate(str(root))
 
-    assert [Path(call["study"]).name for call in tick] == ["study-dsB", "study-dsA"]
+    assert [Path(call["study"]).name for call in dispatch_log] == [
+        "study-dsB",
+        "study-dsA",
+    ]
 
 
-def test_a_member_selected_twice_is_advanced_once(superstudy, tick):
+def test_a_member_selected_twice_is_advanced_once(superstudy, dispatch_log):
     """Several source datasets in one member give several catalog rows, one member."""
     root, _, _saves = superstudy
     campaign_mod.write_members(
@@ -578,18 +606,20 @@ def test_a_member_selected_twice_is_advanced_once(superstudy, tick):
 
     iterate_mod.run_iterate(str(root))
 
-    assert [Path(call["study"]).name for call in tick] == ["study-dsA"]
+    assert [Path(call["study"]).name for call in dispatch_log] == ["study-dsA"]
 
 
-def test_study_narrows_to_one_member(superstudy, tick):
+def test_study_narrows_to_one_member(superstudy, dispatch_log):
     root, _, _saves = superstudy
 
     iterate_mod.run_iterate(str(root), study="study-dsB")
 
-    assert [Path(call["study"]).name for call in tick] == ["study-dsB"]
+    assert [Path(call["study"]).name for call in dispatch_log] == ["study-dsB"]
 
 
-def test_a_study_that_is_not_a_member_is_a_typo_not_an_empty_tick(superstudy, tick):
+def test_a_study_that_is_not_a_member_is_a_typo_not_an_empty_iterate(
+    superstudy, dispatch_log
+):
     """Matched against the catalog, not the filesystem: a directory that exists but
     was never selected into this campaign is an error, not a silent no-op."""
     root, _, _saves = superstudy
@@ -600,7 +630,7 @@ def test_a_study_that_is_not_a_member_is_a_typo_not_an_empty_tick(superstudy, ti
     assert "not a member" in str(excinfo.value)
 
 
-def test_batch_bounds_the_whole_tick_not_each_member(superstudy, tick):
+def test_batch_bounds_the_whole_iterate_not_each_member(superstudy, dispatch_log):
     """`--batch N` means one thing at either level: at most N cells advance. At a
     superstudy the budget is spent in catalog order, which is what makes the catalog
     a priority interface — it decides who gets the budget, not only who goes first."""
@@ -608,13 +638,13 @@ def test_batch_bounds_the_whole_tick_not_each_member(superstudy, tick):
 
     iterate_mod.run_iterate(str(root), batch=1)
 
-    assert [call["study"] for call in tick] == [str(members[0])]
+    assert [call["study"] for call in dispatch_log] == [str(members[0])]
 
 
 def test_a_spent_batch_stops_the_fan_out_before_the_next_member_is_touched(
-    superstudy, tick, monkeypatch
+    superstudy, dispatch_log, monkeypatch
 ):
-    """A tick with nothing left to spend must not touch the filesystem to find out."""
+    """An iterate with nothing left to spend must not touch the filesystem to find out."""
     root, _members, _saves = superstudy
     checked = []
     monkeypatch.setattr(
@@ -628,42 +658,37 @@ def test_a_spent_batch_stops_the_fan_out_before_the_next_member_is_touched(
     assert checked == ["study-dsA"]
 
 
-def test_an_unspent_batch_carries_on_to_the_next_member(superstudy, tick):
-    """The budget is the tick's, so what one member does not spend the next can."""
+def test_an_unspent_batch_carries_on_to_the_next_member(superstudy, dispatch_log):
+    """The budget is the iterate's, so what one member does not spend the next can."""
     root, members, _saves = superstudy
 
     iterate_mod.run_iterate(str(root), batch=2)
 
-    assert [call["study"] for call in tick] == [str(m) for m in members]
+    assert [call["study"] for call in dispatch_log] == [str(m) for m in members]
 
 
-def test_study_is_refused_for_a_study_configured_campaign(study, tick, monkeypatch):
-    monkeypatch.setattr(
-        campaign_mod,
-        "require_selected_campaign",
-        lambda path=".", **kw: campaign_mod.Selected(
-            study, LABEL, campaign_mod.campaign_dir(study, LABEL), study
-        ),
-    )
+def test_study_is_refused_for_a_study_configured_campaign(study, dispatch_log):
     with pytest.raises(SystemExit) as excinfo:
         iterate_mod.run_iterate(str(study), study="study-dsA")
     assert "no members to select between" in str(excinfo.value)
 
 
-def test_one_lock_at_the_super_covers_the_whole_fan_out(superstudy, tick):
+def test_one_lock_at_the_super_covers_the_whole_fan_out(superstudy, dispatch_log):
     """The single writer is the campaign, and the campaign is operated at the super.
 
     A per-member lock would be released between members — leaving the gaps it exists
     to close — and would cover none of the super's own writes (the gitlink and the
-    catalog row), which are precisely what a second concurrent tick would collide
+    catalog row), which are precisely what a second concurrent iterate would collide
     with.
     """
     root, members, _ = superstudy
 
     iterate_mod.run_iterate(str(root))
 
-    assert tick.locks == 1, f"the flock was taken {tick.locks} times for 2 members"
-    assert tick.lock_paths == [campaign_mod.flock_path(root)]
+    assert dispatch_log.locks == 1, (
+        f"the flock was taken {dispatch_log.locks} times for 2 members"
+    )
+    assert dispatch_log.lock_paths == [campaign_mod.flock_path(root)]
     for member in members:
         assert not campaign_mod.flock_path(member).exists(), (
             f"{member.name} was locked as if it were its own single-writer unit"
@@ -671,12 +696,12 @@ def test_one_lock_at_the_super_covers_the_whole_fan_out(superstudy, tick):
 
 
 def test_each_member_is_checked_before_it_is_touched_and_scoped_to_itself(
-    superstudy, tick, monkeypatch
+    superstudy, dispatch_log, monkeypatch
 ):
-    """The member's own tree is covered twice already (`tick`, then the transition's
-    `datalad run`), so what is left for the super is whether its gitlink still
-    matches the member's HEAD. Scoped to the one member, the check costs the same in
-    a superstudy of a thousand as in one of two."""
+    """The member's own tree is covered at its own level (the shallow check, then the
+    transition's `datalad run`), so what is left for the super is whether its gitlink
+    still matches the member's HEAD. Scoped to the one member, the check costs the
+    same in a superstudy of a thousand as in one of two."""
     root, members, _saves = superstudy
     order = []
 
@@ -685,31 +710,28 @@ def test_each_member_is_checked_before_it_is_touched_and_scoped_to_itself(
         "require_clean_gitlink",
         lambda root_, member: order.append(("gitlink", member)),
     )
-    real_tick = iterate_mod.tick
     monkeypatch.setattr(
         iterate_mod,
-        "tick",
-        lambda study_arg, *a, **kw: (
-            order.append(("tick", Path(study_arg).name)),
-            real_tick(study_arg, *a, **kw),
-        )[1],
+        "require_clean_shallow",
+        lambda root_, **kw: order.append(("shallow", Path(root_).name)),
     )
 
     iterate_mod.run_iterate(str(root))
 
     assert order == [
+        ("shallow", "my-super"),
         ("gitlink", "study-dsA"),
-        ("tick", "study-dsA"),
+        ("shallow", "study-dsA"),
         ("gitlink", "study-dsB"),
-        ("tick", "study-dsB"),
+        ("shallow", "study-dsB"),
     ]
 
 
 def test_the_super_is_checked_once_before_any_member_is_touched(
-    superstudy, tick, monkeypatch
+    superstudy, dispatch_log, monkeypatch
 ):
     """The per-member check is scoped to a member, so it cannot see dirt in the
-    super's own tree. That is what this one is for, and once per tick is enough."""
+    super's own tree. That is what this one is for, and once per iterate is enough."""
     root, _members, _saves = superstudy
     order = []
 
@@ -730,28 +752,28 @@ def test_the_super_is_checked_once_before_any_member_is_touched(
     assert order.count(("shallow", "my-super")) == 1
 
 
-def test_an_uninstalled_member_is_left_alone(superstudy, tick):
+def test_an_uninstalled_member_is_left_alone(superstudy, dispatch_log):
     """A member the user pushed and uninstalled is skipped, never reinstalled to
-    advance it: reclaiming space is a decision a tick must not quietly reverse."""
+    advance it: reclaiming space is a decision an iterate must not quietly reverse."""
     root, members, _saves = superstudy
     (members[0] / ".datalad").rmdir()
 
     iterate_mod.run_iterate(str(root))
 
-    assert [call["study"] for call in tick] == [str(members[1])]
+    assert [call["study"] for call in dispatch_log] == [str(members[1])]
 
 
-def test_an_uninstalled_member_is_left_alone_even_when_named(superstudy, tick):
+def test_an_uninstalled_member_is_left_alone_even_when_named(superstudy, dispatch_log):
     """Naming it with --study does not override this — it is still not here."""
     root, members, _saves = superstudy
     (members[0] / ".datalad").rmdir()
 
     iterate_mod.run_iterate(str(root), study="study-dsA")
 
-    assert tick == []
+    assert dispatch_log == []
 
 
-def test_an_uninstalled_member_is_not_recorded_at_the_super(superstudy, tick):
+def test_an_uninstalled_member_is_not_recorded_at_the_super(superstudy, dispatch_log):
     """Nothing advanced, so there is no gitlink to register."""
     root, members, saves = superstudy
     (members[0] / ".datalad").rmdir()
@@ -761,7 +783,7 @@ def test_an_uninstalled_member_is_not_recorded_at_the_super(superstudy, tick):
     assert saves == []
 
 
-def test_each_member_is_recorded_at_the_super_as_it_advances(superstudy, tick):
+def test_each_member_is_recorded_at_the_super_as_it_advances(superstudy, dispatch_log):
     """A study-only campaign needs none of this — the transition's own `datalad run`
     commits in the study, which is the operating level. With a super above, that run
     leaves the member's gitlink advanced and only the super can register it."""
@@ -776,7 +798,7 @@ def test_each_member_is_recorded_at_the_super_as_it_advances(superstudy, tick):
     assert all(LABEL in message for _, _, message in saves)
 
 
-def test_a_member_that_does_not_advance_is_not_recorded(superstudy, tick):
+def test_a_member_that_does_not_advance_is_not_recorded(superstudy, dispatch_log):
     """Nothing moved, nothing to register — an empty commit at the super would say
     a member advanced when it did not."""
     root, _members, saves = superstudy
@@ -790,7 +812,7 @@ def test_a_member_that_does_not_advance_is_not_recorded(superstudy, tick):
     assert saves == []
 
 
-def test_a_dry_run_records_nothing_at_the_super(superstudy, tick):
+def test_a_dry_run_records_nothing_at_the_super(superstudy, dispatch_log):
     root, _members, saves = superstudy
 
     iterate_mod.run_iterate(str(root), dry_run=True)
@@ -853,21 +875,21 @@ def lifecycles(root):
     }
 
 
-def test_scaffolding_a_members_first_cell_moves_it_to_active(superstudy, tick):
+def test_scaffolding_a_members_first_cell_moves_it_to_active(superstudy, dispatch_log):
     root, _members, _saves = superstudy
 
     iterate_mod.run_iterate(str(root), study="study-dsA")
 
     assert lifecycles(root)["study-dsA"] == campaign_mod.LIFECYCLE_ACTIVE
     assert lifecycles(root)["study-dsB"] == campaign_mod.LIFECYCLE_REGISTERED, (
-        "a member this tick never touched had its lifecycle rewritten"
+        "a member this iterate never touched had its lifecycle rewritten"
     )
 
 
-def test_merging_a_members_last_cell_moves_it_to_merged(superstudy, tick):
+def test_merging_a_members_last_cell_moves_it_to_merged(superstudy, dispatch_log):
     root, members, saves = superstudy
     write(members[0], [cell(ANCHOR, babs=ANCHOR_PROJECT)])
-    tick.status = dict(ALL_DONE)
+    dispatch_log.status = dict(ALL_DONE)
 
     iterate_mod.run_iterate(str(root), study="study-dsA")
 
@@ -887,54 +909,151 @@ def set_lifecycle(root, study, value):
 
 
 def test_the_catalog_is_written_only_when_the_lifecycle_actually_changed(
-    superstudy, tick
+    superstudy, dispatch_log
 ):
-    """A submit advances a cell without moving the coarse value, so the save carries
-    the gitlink alone — the catalog is not rewritten to the same thing."""
+    """A second scaffold in an already-active member moves the gitlink without
+    moving the coarse value, so the save carries the gitlink alone — the catalog is
+    not rewritten to the same thing."""
     root, members, saves = superstudy
-    write(members[0], [cell(ANCHOR, babs=ANCHOR_PROJECT)])
+    write(members[0], [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN)])
     set_lifecycle(root, "study-dsA", campaign_mod.LIFECYCLE_ACTIVE)
-    tick.status = dict(UNSUBMITTED)
+    dispatch_log.status = dict(STILL_RUNNING)
 
     iterate_mod.run_iterate(str(root), study="study-dsA")
 
-    (_root, paths, message) = saves[0]
+    ((_root, paths, message),) = saves
     assert [Path(p).name for p in paths] == ["study-dsA"]
-    assert "submitted 1 cell" in message, message
+    assert f"scaffolded {SOURCEDATA} / SimBIDS-0.0.3+chain" in message, message
 
 
-def test_the_save_message_names_the_transitions_not_a_count(superstudy, tick):
-    """With no lifecycle change to lead with, the subject is what happened to the
-    cells — and it names them, rather than counting them."""
+def test_a_submit_is_not_recorded_at_the_super(superstudy, dispatch_log):
+    """Submit hands jobs to the scheduler and writes nothing the study tracks, so
+    the member's gitlink does not move and there is nothing for the super to
+    commit. A save here would only ever come back `notneeded`."""
+    root, members, saves = superstudy
+    write(members[0], [cell(ANCHOR, babs=ANCHOR_PROJECT)])
+    set_lifecycle(root, "study-dsA", campaign_mod.LIFECYCLE_ACTIVE)
+    dispatch_log.status = dict(UNSUBMITTED)
+
+    iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    assert verbs(dispatch_log) == ["babs status", "submit"]
+    assert saves == []
+
+
+def test_each_cell_transition_is_its_own_save_and_names_its_cell(
+    superstudy, dispatch_log
+):
+    """One cell-transition, one commit at the super: two derivatives in one member
+    are two subdatasets whose provenance has nothing to do with each other, so a
+    save spanning both would mix them. With no lifecycle change to lead with, the
+    subject is the transition, naming the cell rather than counting cells."""
     root, members, saves = superstudy
     write(members[0], [cell(ANCHOR), cell(CHAIN)])
     set_lifecycle(root, "study-dsA", campaign_mod.LIFECYCLE_ACTIVE)
 
     iterate_mod.run_iterate(str(root), study="study-dsA")
 
-    (_root, _paths, message) = saves[0]
-    subject, _blank, *body = message.splitlines()
-    assert "scaffolded 2 cells" in subject, subject
-    assert body[:2] == [
-        f"scaffolded  {SOURCEDATA} / SimBIDS-0.0.3+anchor",
-        f"scaffolded  {SOURCEDATA} / SimBIDS-0.0.3+chain",
-    ], body
-    assert "cell(s)" not in message, "the count message survived"
+    subjects = [message.splitlines()[0] for _root, _paths, message in saves]
+    assert subjects == [
+        f"mechababs iterate: study-dsA scaffolded {SOURCEDATA} / SimBIDS-0.0.3+anchor "
+        f"(campaign {LABEL!r})",
+        f"mechababs iterate: study-dsA scaffolded {SOURCEDATA} / SimBIDS-0.0.3+chain "
+        f"(campaign {LABEL!r})",
+    ]
+    assert all("cell" not in message for _, _, message in saves), (
+        "the count message survived"
+    )
 
 
-def test_a_tick_that_does_two_different_things_says_both(superstudy, tick):
+def test_a_merge_that_is_not_the_last_holds_the_lifecycle_at_active(
+    superstudy, dispatch_log
+):
+    """Two merges in one member are two saves. The first leaves a sibling cell
+    unmerged, so its subject is the transition; the second is the last, so its
+    subject is the lifecycle move."""
     root, members, saves = superstudy
-    write(members[0], [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN)])
+    chain_project = scaffold_mod.derivative_path(SOURCEDATA, CHAIN)
+    write(
+        members[0],
+        [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN, babs=chain_project)],
+    )
     set_lifecycle(root, "study-dsA", campaign_mod.LIFECYCLE_ACTIVE)
-    tick.status = dict(UNSUBMITTED)
+    dispatch_log.status = dict(ALL_DONE)
 
     iterate_mod.run_iterate(str(root), study="study-dsA")
 
-    subject = saves[0][2].splitlines()[0]
-    assert "submitted 1, scaffolded 1" in subject, subject
+    subjects = [message.splitlines()[0] for _root, _paths, message in saves]
+    assert subjects == [
+        f"mechababs iterate: study-dsA merged {SOURCEDATA} / SimBIDS-0.0.3+anchor "
+        f"(campaign {LABEL!r})",
+        f"mechababs iterate: study-dsA {SOURCEDATA} is now merged (campaign {LABEL!r})",
+    ]
+    assert [Path(p).name for p in saves[0][1]] == ["study-dsA"]
+    assert [Path(p).name for p in saves[1][1]] == [
+        "study-dsA",
+        campaign_mod.MEMBERS_FILENAME,
+    ]
 
 
-def test_a_dry_run_writes_no_lifecycle(superstudy, tick):
+def test_a_failure_mid_member_leaves_the_super_as_far_as_the_last_success(
+    superstudy, dispatch_log, monkeypatch
+):
+    """Each cell-transition is recorded before the next cell is attempted, so a
+    dispatch that dies on the second cell leaves the first one registered at the
+    super. The next `iterate` then finds the gitlink current rather than refusing
+    with a message that blames an intervention nobody made."""
+    root, members, saves = superstudy
+    write(members[0], [cell(ANCHOR), cell(CHAIN)])
+    real_scaffold = iterate_mod.dispatch.scaffold
+
+    def scaffold_then_die(study_arg, label, source_dataset, app_config, **kw):
+        if app_config == CHAIN:
+            raise RuntimeError("babs init failed")
+        return real_scaffold(study_arg, label, source_dataset, app_config, **kw)
+
+    monkeypatch.setattr(iterate_mod.dispatch, "scaffold", scaffold_then_die)
+
+    with pytest.raises(RuntimeError, match="babs init failed"):
+        iterate_mod.run_iterate(str(root), study="study-dsA")
+
+    assert len(saves) == 1, saves
+    assert f"scaffolded  {SOURCEDATA} / SimBIDS-0.0.3+anchor" in saves[0][2]
+    assert lifecycles(root)["study-dsA"] == campaign_mod.LIFECYCLE_ACTIVE
+
+
+def test_a_failed_inner_command_is_a_message_at_the_cli_not_a_traceback(
+    superstudy, dispatch_log, monkeypatch
+):
+    """The inner command's own output is already on stderr; what the CLI adds is
+    that iterate stopped there and that the cells advanced before it stand
+    recorded."""
+    import subprocess
+
+    from mechababs import cli
+
+    root, members, saves = superstudy
+    write(members[0], [cell(ANCHOR), cell(CHAIN)])
+    real_scaffold = iterate_mod.dispatch.scaffold
+
+    def scaffold_then_die(study_arg, label, source_dataset, app_config, **kw):
+        if app_config == CHAIN:
+            raise subprocess.CalledProcessError(1, ["mechababs-inner", "scaffold"])
+        return real_scaffold(study_arg, label, source_dataset, app_config, **kw)
+
+    monkeypatch.setattr(iterate_mod.dispatch, "scaffold", scaffold_then_die)
+    monkeypatch.setattr(sys, "argv", ["mechababs", "iterate", "--study", "study-dsA"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    message = str(excinfo.value)
+    assert "mechababs iterate stopped: `mechababs-inner scaffold` exited 1" in message
+    assert "advanced before it is recorded" in message
+    assert len(saves) == 1, saves
+
+
+def test_a_dry_run_writes_no_lifecycle(superstudy, dispatch_log):
     root, _members, _saves = superstudy
 
     iterate_mod.run_iterate(str(root), dry_run=True)

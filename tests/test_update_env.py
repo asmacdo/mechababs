@@ -347,7 +347,7 @@ def test_update_env_runs_without_the_env_match_guard(study, uv_calls, saves):
 
 def test_the_campaign_flock_is_held_across_the_whole_update(study, saves, monkeypatch):
     """The level's single-writer lock, held because this rewrites the campaign's
-    uv.lock — the very file `iterate` dispatches work against. So a tick must not read it mid-rewrite,
+    uv.lock — the very file `iterate` dispatches work against. So an iterate must not read it mid-rewrite,
     and two update-envs must not resolve into it at once.
 
     Held across everything, not just the save: the window that matters opens at
@@ -382,7 +382,7 @@ def test_the_flock_is_taken_at_the_operated_level(
 ):
     """At the superstudy, not the member — the same level `iterate`'s fan-out locks,
     which is what makes the two mutually exclusive. A member-keyed lock would let a
-    tick advance the member while its lock copy is being rewritten."""
+    iterate advance the member while its lock copy is being rewritten."""
     taken = []
     real_flocked = update_env.utils.flocked
 

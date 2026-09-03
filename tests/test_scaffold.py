@@ -262,7 +262,7 @@ def test_the_generated_inclusion_honours_the_campaigns_limit(study, babs_calls):
 
 
 def test_a_pinned_inclusion_is_used_as_is(study, babs_calls):
-    """The smoke-test affordance: hand-write one row before the first tick and the
+    """The smoke-test affordance: hand-write one row before the first iterate and the
     whole pipeline runs on that subject. Selection is skipped entirely."""
     pin = scaffold.inclusion_pin(study, LABEL, SOURCEDATA, ANCHOR)
     pin.parent.mkdir(parents=True)

@@ -91,7 +91,7 @@ DATALAD_ID_KEY = "datalad.dataset.id"
 # The statefile is TALL: one row per (source dataset x app config) cell.
 #   identity  — inputs, written at add-dataset, never overwritten
 #   topology  — derived from the app config
-#   derived   — reconciled each tick; state is READ OFF these, there is no status
+#   derived   — reconciled each iterate; state is READ OFF these, there is no status
 #               enum (`babs` empty -> scaffold; set + `merged` empty -> active;
 #               `merged` set -> done). Volatile job status stays in babs.
 IDENTITY_COLUMNS = [
@@ -117,7 +117,7 @@ MEMBER_COLUMNS = ["study", "source_dataset", "lifecycle"]
 
 # The three a row can read, in the order they happen. `registered` is what
 # `add-dataset` writes: selected into the campaign, nothing dispatched. Not "pending"
-# -- nothing is queued, since a tick only happens when a human runs one -- and the
+# -- nothing is queued, since an iterate only happens when a human runs one -- and the
 # word would collide with the cell vocabulary's `waiting`, which is a real
 # blocked-on-a-producer state. `merged` rather than "complete" because it is the word
 # the cell table already uses for the same fact one grain down, so a member and its
@@ -688,7 +688,7 @@ def require_study_lock_match(study, label):
         # A member: the venv doing the work is the superstudy's, so the mismatch is
         # this member's lock copy lagging the canonical one, not a broken venv.
         # Refreshing it is a deliberate act, taken at the level that owns the
-        # environment -- never a side effect of the tick that noticed.
+        # environment -- never a side effect of the iterate that noticed.
         message += (
             "\nThis study is a member of a superstudy campaign, so the environment "
             "advancing it is the superstudy's and this lock copy is behind it. "

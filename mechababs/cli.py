@@ -9,6 +9,7 @@ the study it lives in, and runs from that campaign's own venv. The action verbs
 """
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -111,12 +112,16 @@ def cmd_add_dataset(args):
 
 
 def cmd_iterate(args):
-    """One reconciler tick: advance each cell of the selected campaign by one step.
+    """One iterate: advance each cell of the selected campaign by at most one transition.
 
     Runs from the campaign root — the study — like every operating verb; which
     campaign is the env var's answer, not a flag's. The clean check raises rather
     than exits (it is a library guard the verbs share), so it is turned into a plain
     message here: its text is already the explanation, and a traceback would bury it.
+
+    A mechababs inner command that fails is the same case: its own output is
+    already on stderr below the `+ <command>` echo, so what is left to say is that
+    iterate stopped there, and that everything advanced before it stands recorded.
     """
     try:
         iterate_mod.run_iterate(
@@ -128,6 +133,13 @@ def cmd_iterate(args):
         )
     except RuntimeError as e:
         sys.exit(str(e))
+    except subprocess.CalledProcessError as e:
+        sys.exit(
+            f"mechababs iterate stopped: `{' '.join(map(str, e.cmd))}` exited "
+            f"{e.returncode} (its output is above).\n"
+            "Every cell advanced before it is recorded; fix the cause and run "
+            "iterate again."
+        )
     return 0
 
 
@@ -343,13 +355,13 @@ def main():
         "iterate",
         help="advance the selected campaign's cells by one transition each",
         description=(
-            "One reconciler tick over this study's cells for the selected campaign. "
+            "Advance the selected campaign's cells by at most one transition each. "
             "Each cell advances by AT MOST ONE transition, routed on the statefile's "
             "columns: not started -> scaffold; scaffolded and not merged -> what the "
             "live `babs status` counts say (submit / wait / merge / flag a failure); "
             "merged -> skipped. A cell waiting on an unmerged producer is noted and "
             "passed over, not blocked on, and a cell whose jobs failed is flagged "
-            "rather than merged. Nothing is remembered between ticks: every tick "
+            "rather than merged. Nothing is remembered between runs: every iterate "
             "re-reads ground truth, so run it again and again until the campaign is "
             "done."
         ),
@@ -358,7 +370,7 @@ def main():
         "--batch",
         type=int,
         default=None,
-        help="advance at most N cells this tick (default: all). A cell that is "
+        help="advance at most N cells (default: all). A cell that is "
         "already done, waiting, or still running does not count against it.",
     )
     pi.add_argument(
@@ -495,7 +507,7 @@ def main():
             "are running, the live `babs status` counts. At a superstudy the rows "
             "span every member, computed from their shards at the moment you look, "
             "with a column saying which members are on disk. Read-only, and it takes "
-            "no lock, so it can be run while a tick is in progress. The table goes to "
+            "no lock, so it can be run while an iterate is in progress. The table goes to "
             "stdout and the summary to stderr, so it stays pipeable."
         ),
     )

@@ -75,7 +75,7 @@ An app whose `depends_on` names a producer that is not in the statefile is refus
 
 ## `iterate`
 
-Advance the campaign's cells by at most one transition each: one tick of the reconciler.
+Advance the campaign's cells by at most one transition each: one pass of the reconciler. Each cell that advances is a tick.
 
 ```bash
 mechababs iterate [--batch N] [--app STEM] [--study MEMBER] [--dry-run]
@@ -83,26 +83,27 @@ mechababs iterate [--batch N] [--app STEM] [--study MEMBER] [--dry-run]
 
 Each cell is routed on its statefile columns:
 
-| `babs` | `merged` | Cell state | What the tick does |
+| `babs` | `merged` | Cell state | What `iterate` does |
 |---|---|---|---|
 | empty | empty | not started | **scaffold**: generate the inclusion, compose the babs config, `babs init`, pin the inclusion, record the derivative path in `babs` |
 | set | empty | active | read `babs status` and decide from the counts: not all submitted, **submit**; still in flight, wait; all ended with failures, **flag**, do not merge; all done, **merge** |
 | set | set | merged | skip |
 
-A cell whose `depends_on` producer is not yet merged is noted as waiting and passed over, not blocked on; the next tick re-checks.
+A cell whose `depends_on` producer is not yet merged is noted as waiting and passed over, not blocked on; the next iterate re-checks.
 A cell whose jobs failed is flagged rather than merged, and the other cells keep going.
-Nothing is remembered between ticks: every tick re-reads the statefile and the live babs state, so you run `iterate` again and again until every cell is merged.
+Nothing is remembered between runs: every iterate re-reads the statefile and the live babs state, so you run `iterate` again and again until every cell is merged.
 
-- `--batch N` advances at most N cells this tick (default: all). A cell that is already done, waiting, or still running does not count against it.
+- `--batch N` stops after N ticks (default: all). A cell that is passed over because it is already merged, waiting, still running, or failed is not a tick and does not count against it.
 - `--app STEM` narrows to one app config's cells, by its filename stem (`MRIQC-24.0.2`).
 - `--study MEMBER`, at a superstudy, advances only that member study. Composable with `--app`.
 - `--dry-run` routes every cell for real and prints the transitions it would dispatch, without dispatching them.
 
-At a superstudy the tick runs over every installed member in study catalog order, and `--batch` is the whole tick's budget rather than each member's, so `--batch 5` advances the five cells that come first across the superstudy.
+At a superstudy the iterate runs over every installed member in study catalog order, and `--batch` is the whole iterate's budget rather than each member's, so `--batch 5` advances the five cells that come first across the superstudy.
 A member study that has been uninstalled is skipped, never reinstalled.
 
 Scaffold and merge are recorded with `datalad run` at the study, so the study's git history carries the command that produced each derivative; submit changes nothing tracked and is not recorded.
-A tick takes the level's single-writer lock, and refuses to start on a dirty tree.
+At a superstudy each scaffold or merge is also committed at the superstudy, as the member's moved gitlink, one commit per tick and before the next cell is attempted.
+An iterate takes the level's single-writer lock, and refuses to start on a dirty tree.
 
 ## `status`
 
@@ -115,7 +116,7 @@ mechababs status [--study MEMBER] [--app STEM]
 Columns: `source_dataset`, `app`, `level`, `subjects`, `sessions`, `state`, `jobs`.
 `state` is `not started`, `waiting` (its producer is not merged yet), `active`, `merged`, or `FAILED`, the last for an active cell whose live counts say jobs ended without results; `jobs` carries the live `babs status` counts for active cells.
 The table goes to stdout and the summary line to stderr, so `status | grep FAILED` sees rows and only rows.
-`status` takes no lock, so it can be run while a tick is in progress.
+`status` takes no lock, so it can be run while an iterate is in progress.
 
 At a superstudy the rows span every member study, computed from their statefiles at the moment you look, and gain two leading columns: `study`, and `installed`.
 `installed` is `yes` only when the member and that cell's derivative are both on disk, so a finished cell whose output has since been offloaded reads `merged` plus `no`.
@@ -236,7 +237,7 @@ mechababs also pins the requested list beside the statefile, at `.mechababs/camp
 The pin is written inside the cell's `datalad run`, so it travels with the study; its diff against babs's `processing_inclusion.csv` is what catches a selected subject the data does not have.
 
 If a file already exists at the pin path when the cell scaffolds, it is used as-is and selection is skipped.
-So a one-row file there before the first tick runs a one-subject smoke test of the whole cell:
+So a one-row file there before the first iterate runs a one-subject smoke test of the whole cell:
 
 ```bash
 mkdir -p .mechababs/campaigns/<label>/inclusions

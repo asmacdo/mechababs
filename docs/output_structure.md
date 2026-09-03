@@ -85,7 +85,7 @@ superstudy/
 
 A superstudy campaign dir mirrors a study's, with one complementary difference: it carries **membership** (`studies+sourcedata.tsv`) and **no statefile** — detailed per-cell state shards to the member studies, and the superstudy computes the rollup from them on demand.
 So a study has `+state / −membership` (it *is* one study); a superstudy has `+membership / −state` (it coordinates many).
-The one committed state at the super is deliberately coarse: a per-member lifecycle status (`registered` / `active` / `merged`) alongside the membership, recomputed from the member's shard on any tick that advances it and committed only when it changed — never a commit of its own.
+The one committed state at the super is deliberately coarse: a per-member lifecycle status (`registered` / `active` / `merged`) alongside the membership, recomputed from the member's shard on each tick that scaffolds or merges one of its cells and committed only when it changed — never a commit of its own.
 
 `mechababs campaign init` is the same command at either level.
 At a superstudy it touches only the superstudy's own campaign dir — no member studies are selected yet, so there is nothing to fan out to.

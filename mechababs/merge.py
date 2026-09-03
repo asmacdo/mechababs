@@ -7,7 +7,7 @@ then the derivative is fast-forwarded onto the result — because ``babs merge``
 pushes to the store and never touches the derivative's working tree, so without the
 second half the results exist and the derivative looks untouched.
 
-Then the cell's ``merged`` column is set, which is what routes every later tick past
+Then the cell's ``merged`` column is set, which is what routes every later iterate past
 it without asking babs anything.
 
 **Unambiguously mutating**, so unlike ``submit`` this one is dispatched under a
@@ -45,7 +45,7 @@ def require_all_done(project, row):
     """Refuse unless the live babs counts still say this cell is ready to merge.
 
     Re-asked here rather than inherited from whoever routed us: the reconciler's
-    decision is a tick old at best, and for a rerun it is a different run's
+    decision is an iterate old at best, and for a rerun it is a different run's
     decision entirely.
     """
     status = babs_status.read_status(project)
@@ -109,7 +109,7 @@ def merge(study, label, source_dataset, app_config):
     pull_merged_results(study / project)
 
     # The cell's second and last durable fact. Its presence is what makes every
-    # later tick skip this cell without querying babs at all.
+    # later iterate skip this cell without querying babs at all.
     row["merged"] = MERGED
     campaign_mod.write_state(study, label, rows)
     return project

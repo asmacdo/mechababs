@@ -1,15 +1,17 @@
-"""iterate.py — the reconciler tick.
+"""iterate.py — the reconciler.
 
 Every verb in a cell's life exists on its own (scaffold, submit, merge), and each one
 refuses a cell that is not in the state it advances from. ``iterate`` is what decides
-*which* verb a cell is owed, and dispatches it: one tick reads the statefile shard,
-advances each cell by **at most one transition**, and stops.
+*which* verb a cell is owed, and dispatches it: one ``iterate`` reads the statefile
+shard and visits every cell once, advancing each by **at most one transition**. One
+cell advancing is a **tick**; a cell that is passed over is not one, and does not
+count against ``--batch``.
 
-**Level-triggered, not edge-triggered.** A tick never remembers what the last one did.
-It re-reads ground truth — the shard's columns, plus a live ``babs status`` for any
-cell that is running — and re-derives what each cell needs from that alone. So a
-crashed tick, a hand-edited shard, or a cell repaired by hand between ticks all
-converge on the next pass instead of accumulating drift. This is also why there is no
+**Level-triggered, not edge-triggered.** An ``iterate`` never remembers what the last
+one did. It re-reads ground truth — the shard's columns, plus a live ``babs status``
+for any cell that is running — and re-derives what each cell needs from that alone.
+So a crashed ``iterate``, a hand-edited shard, or a cell repaired by hand between
+runs all converge on the next one instead of accumulating drift. This is also why there is no
 status enum: state is *read off* ``babs``/``merged``, and anything volatile is asked
 of babs at the moment it is needed.
 
@@ -23,11 +25,11 @@ The routing, which is the whole of the reconciler's opinion:
 ===================  ==========================================================
 
 **Gating is noting, not blocking.** A dependent cell whose producer has not merged is
-not a halt: the tick says so and goes on to the next cell. The next tick re-checks.
+not a halt: ``iterate`` says so and goes on to the next cell. The next one re-checks.
 
 **A failure is flagged, never merged, and never persisted.** When the live counts say
 jobs failed, the cell is marked loudly and left alone — merging a partial set would
-quietly produce a derivative that looks complete. The flag is this tick's reading, not
+quietly produce a derivative that looks complete. The flag is this ``iterate``'s reading, not
 a column, so a repair-and-resubmit (docs/interventions.md) takes effect with nothing
 to clear.
 
@@ -35,7 +37,7 @@ to clear.
 dispatches one run per advancing cell, so runs never nest at the same level — and it
 writes no statefile columns: the verbs do that, inside their own runs. The single
 writer is enforced by the campaign flock, taken in exactly one place: around the whole
-tick, at the level the campaign is operated from.
+``iterate``, at the level the campaign is operated from.
 """
 
 import sys
@@ -49,7 +51,7 @@ from mechababs import study as study_mod
 from mechababs import utils
 from mechababs.utils import require_clean_shallow
 
-# Every line iterate writes about its own reasoning carries this. A tick interleaves
+# Every line iterate writes about its own reasoning carries this. An iterate interleaves
 # mechababs' decisions with datalad's, babs's and git's output, and the old reconciler's
 # were indistinguishable from the noise around them — so the prefix is here from the
 # start rather than retrofitted. The `+ <command>` echoes from the verbs are left
@@ -65,10 +67,18 @@ SCAFFOLD = "scaffold"
 
 # What a cell was just *done to*, which is a different thing from what state it is in:
 # these name the transition that happened, in the past tense a save message wants. A
-# tick returns these, never a count, so the save at the super can say what it recorded.
+# tick is recorded as one of these, never as a count, so the save at the super can say
+# what it recorded.
 SCAFFOLDED = "scaffolded"
 SUBMITTED = "submitted"
 MERGED = "merged"
+
+# The transitions that move git state in the study — a scaffold registers the
+# derivative and a merge advances its HEAD — and so move the member's gitlink, which
+# only the super can record. Submit is not one: it hands jobs to the scheduler and
+# writes nothing the study tracks (``dispatch.plain``), so there is nothing to commit
+# at either level.
+RECORDED = (SCAFFOLDED, MERGED)
 
 
 class Advance(NamedTuple):
@@ -133,7 +143,7 @@ def route(rows, row):
     producer = producer_row(rows, row)
     if producer is None:
         # add-dataset refuses to write a cell whose producer has no row, so this is a
-        # hand-edited shard. One broken cell must not take the tick down: say what is
+        # hand-edited shard. One broken cell must not take the iterate down: say what is
         # wrong and let the others advance.
         return WAITING, f"{stem} (no cell for it in this shard)"
     if not producer.get("merged"):
@@ -150,7 +160,7 @@ def source_lifecycle(rows, source_dataset):
 
     Derived, never accumulated — so it is a stored view of the shard, not a tally the
     transitions keep. What it is NOT is a repair pass: mechababs is the single writer
-    and a dirty tree stops the tick, so this recomputes the value rather than hunting
+    and a dirty tree stops the iterate, so this recomputes the value rather than hunting
     for drift behind the tool.
     """
     states = [
@@ -165,20 +175,22 @@ def source_lifecycle(rows, source_dataset):
     return campaign_mod.LIFECYCLE_REGISTERED
 
 
-def update_lifecycle(superstudy, label, name, member, advances):
-    """Recompute the catalog lifecycle for the source datasets this tick touched.
+def update_lifecycle(superstudy, label, name, member, advance):
+    """Recompute the catalog lifecycle for the source dataset this transition touched.
 
-    Returns ``{source_dataset: (before, after)}`` for the rows that changed, and writes
-    them. Only touched rows are recomputed: a lifecycle changes as a consequence of a
+    Returns ``{source_dataset: (before, after)}`` for the row if it changed, and writes
+    it. Only the touched row is recomputed: a lifecycle changes as a consequence of a
     transition, so a row whose cells did not move cannot have moved either — and
     walking the rest would be a drift scan, which is not what this is.
     """
     rows = campaign_mod.read_state(member, label)
     members = campaign_mod.read_members(superstudy, label)
-    touched = {advance.source_dataset for advance in advances}
     changed = {}
     for row in members:
-        if row.get("study") != name or row.get("source_dataset") not in touched:
+        if (
+            row.get("study") != name
+            or row.get("source_dataset") != advance.source_dataset
+        ):
             continue
         before = row.get("lifecycle", "")
         after = source_lifecycle(rows, row["source_dataset"])
@@ -190,38 +202,27 @@ def update_lifecycle(superstudy, label, name, member, advances):
     return changed
 
 
-def describe_advances(advances):
-    """The tick's transitions for one member, counted by kind, in the order they ran."""
-    kinds = []
-    for advance in advances:
-        if advance.transition not in kinds:
-            kinds.append(advance.transition)
-    counts = {kind: sum(a.transition == kind for a in advances) for kind in kinds}
-    if len(kinds) == 1:
-        kind, count = kinds[0], counts[kinds[0]]
-        return f"{kind} {count} cell{'s' if count != 1 else ''}"
-    return ", ".join(f"{kind} {counts[kind]}" for kind in kinds)
-
-
-def member_message(name, label, advances, changed):
-    """The super's save message for one member: what this tick recorded about it.
+def member_message(name, label, advance, changed):
+    """The super's save message for one cell-transition in one member.
 
     A lifecycle change is the subject when there is one — it is the rarest and most
-    consequential thing a tick does to a member, and the line a reader with git but not
-    the cluster is scanning for. Otherwise the subject is what happened to the cells.
-    Never a bare count of them: that is what this message used to say, and it left the
-    super's own history unreadable.
+    consequential thing a cell-transition does to a member, and the line a reader with
+    git but not the cluster is scanning for; the transition that caused it is then the
+    body. Otherwise the subject is the transition itself, naming the cell. Never a
+    bare count: that is what this message used to say, and it left the super's own
+    history unreadable.
     """
+    if not changed:
+        return f"mechababs iterate: {name} {advance.transition} {advance.cell} (campaign {label!r})"
     moves = ", ".join(
         f"{source} is now {after}" for source, (_, after) in sorted(changed.items())
     )
-    headline = moves if changed else describe_advances(advances)
-    body = [f"{advance.transition}  {advance.cell}" for advance in advances]
+    body = [f"{advance.transition}  {advance.cell}"]
     body += [
         f"lifecycle: {source}  {before or '-'} -> {after}"
         for source, (before, after) in sorted(changed.items())
     ]
-    return f"mechababs iterate: {name} {headline} (campaign {label!r})\n\n" + "\n".join(
+    return f"mechababs iterate: {name} {moves} (campaign {label!r})\n\n" + "\n".join(
         body
     )
 
@@ -254,7 +255,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
         return None
 
     if state == WAITING:
-        note(f"{where}: waiting on {detail} — not scaffolded this tick")
+        note(f"{where}: waiting on {detail} — passed over")
         return None
 
     if state == SCAFFOLD:
@@ -263,7 +264,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
         return SCAFFOLDED
 
     # ACTIVE: the one state whose next step is not knowable from the shard. Ask babs,
-    # every tick, rather than mirroring a job status into a column that could drift.
+    # every iterate, rather than mirroring a job status into a column that could drift.
     status = babs_status.read_status(Path(study) / detail)
     action = babs_status.decide(status)
     note(f"{where}: {describe_counts(status)} -> {action}")
@@ -272,7 +273,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
         return None
     if action == "fail":
         # Loud, and stopping at this cell only: the campaign keeps reconciling, and a
-        # human decides what happened here. Nothing is written — the next tick
+        # human decides what happened here. Nothing is written — the next iterate
         # re-derives this from the same live counts.
         note(
             f"!! {where}: {status['failed']} job(s) FAILED — NOT merging. "
@@ -288,7 +289,7 @@ def advance_cell(study, label, rows, row, *, dry_run=False):
 
 
 def work_list(rows, app=None):
-    """The cells this tick will consider, in shard order, as ``(source, app)`` keys.
+    """The cells this iterate will consider, in shard order, as ``(source, app)`` keys.
 
     Row order is the ordering mechanism — there is no priority scheme — so this
     preserves it. ``app`` narrows to one app config's cells by its stem; naming
@@ -310,58 +311,32 @@ def work_list(rows, app=None):
     return matched
 
 
-def tick(study, label, *, batch=None, app=None, dry_run=False):
-    """One reconciler tick over ``study``'s shard for ``label``.
+def record(superstudy, label, name, member, advance, *, dry_run=False):
+    """Register one advance at the super: one commit, for one cell.
 
-    Returns the ``Advance`` records for the cells that moved — what happened, not how
-    much of it. The caller's save message is built from these, and at a superstudy so
-    is the lifecycle recompute, which needs to know which source datasets were touched.
+    A study-only campaign needs none of this — the transition's own ``datalad run``
+    commits in the study, which IS the operating level. With a super above it, that
+    same run leaves the member's gitlink advanced and only the super can register it:
+    the gitlink, plus the catalog row when the member's lifecycle changed. Only the
+    transitions in ``RECORDED`` get here; the others move nothing in git.
 
-    ``study`` is a parameter, never the cwd: at a superstudy the reconciler will stand
-    at the super and drive member studies, so nothing here may assume it is standing
-    in the study it is reconciling.
-
-    The single-writer flock is held by ``run_iterate``, not here — a fan-out calls
-    this once per member, and taking the lock per call would release it between
-    members and leave exactly the gaps it exists to close.
+    It runs before the next cell is attempted, for two reasons. A failure mid-member
+    then leaves the super exactly as far as the last success, rather than holding a
+    stale gitlink it would later blame on an intervention nobody made. And it keeps
+    the grain the same at every level: the member's own history is already one
+    ``datalad run`` per advancing cell, and a super commit spanning two derivatives
+    would mix subdatasets whose provenance has nothing to do with each other.
     """
-    study = Path(study)
-    campaign_mod.require_statefile(study, label)
-
-    # Once per tick, at the study being reconciled. `datalad run --explicit` captures
-    # only what a verb declares, so anything already uncommitted here did not come from
-    # mechababs — and a run recorded on top of it would not describe the tree it
-    # ran in. Cheap: a gitlink compare, no descent into submodule worktrees.
-    require_clean_shallow(study, what="an iterate tick")
-
-    cells = work_list(campaign_mod.read_state(study, label), app)
-    scope = f" ({app})" if app else ""
-    note(f"tick over {len(cells)} cell(s) in {study}{scope}")
-
-    advanced = []
-    for i, key in enumerate(cells):
-        if batch is not None and len(advanced) >= batch:
-            note(
-                f"--batch {batch} reached — {len(cells) - i} cell(s) left for "
-                f"the next tick"
-            )
-            break
-        # Re-read: the verbs write the shard themselves, so a copy taken at tick
-        # start is stale the moment a cell advances. Ground truth, every cell.
-        rows = campaign_mod.read_state(study, label)
-        row = campaign_mod.find_cell(rows, *key)
-        transition = advance_cell(study, label, rows, row, dry_run=dry_run)
-        if transition:
-            advanced.append(Advance(transition, cell_label(row), key[0]))
-
     if dry_run:
-        note(
-            f"DRY-RUN: {len(advanced)} cell(s) would advance. Nothing changed, so no "
-            f"cell's state moved — a real tick may advance more."
-        )
-    else:
-        note(f"tick done: {len(advanced)} cell(s) advanced.")
-    return advanced
+        # Nothing moved, so the shard still reads as it did and the lifecycle cannot
+        # be computed from it. Say what would be recorded and leave it there.
+        note(f"DRY-RUN: {name} would record {advance.transition} {advance.cell}")
+        return
+    changed = update_lifecycle(superstudy, label, name, member, advance)
+    paths = [member]
+    if changed:
+        paths.append(campaign_mod.members_path(superstudy, label))
+    utils.save_paths(superstudy, paths, member_message(name, label, advance, changed))
 
 
 def member_studies(superstudy, label, target=None):
@@ -388,7 +363,7 @@ def member_studies(superstudy, label, target=None):
 
 
 def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
-    """Resolve where we are standing, then tick — once, or once per member.
+    """Resolve where we are standing, then advance cells, one cell-transition at a time.
 
     The **configured-level check lives here**, on the user-driven path, and not on
     ``mechababs-inner``: advancing a campaign is gated on standing at the level it was
@@ -397,109 +372,133 @@ def run_iterate(root=".", *, batch=None, app=None, study=None, dry_run=False):
     a study root, a campaign selected by ``MECHABABS_CAMPAIGN``, this process running
     that campaign's own venv, and the campaign not belonging to a level above.
 
-    Where you stand gives the *level*; ``study`` narrows *within* it. At a superstudy
-    the tick is per member, and ``batch`` caps the **whole tick** rather than each
-    member: the budget is spent in catalog order and the fan-out stops when it runs
-    out. That is what makes catalog order a priority interface rather than only an
-    ordering — ``--batch 5`` advances the five most important transitions in the
-    superstudy, wherever they live — and it keeps ``--batch N`` meaning one thing at
-    either level: at most N cells advance, per tick, full stop.
+    The loop is the same at both levels: for each study to advance, clean in, then
+    walk its cells in shard order and advance each by at most one transition. At a
+    study there is one study to advance, and the transition's own ``datalad run`` is
+    its record. At a superstudy the studies are the **installed** members in catalog
+    order, and every cell-transition is recorded at the super before the next cell is
+    attempted (see ``record``). A member the user has pushed and uninstalled is
+    skipped with a note rather than reinstalled, including when ``study`` names it
+    directly — reclaiming space is a decision an ``iterate`` must not quietly reverse.
 
-    Only **installed** members are advanced. A member the user has pushed and
-    uninstalled is skipped with a note rather than reinstalled, including when
-    ``study`` names it directly — reclaiming space is a decision a tick must not
-    quietly reverse.
+    Where you stand gives the *level*; ``study`` narrows *within* it. ``batch`` is
+    the budget for the whole ``iterate``, spent in catalog order and then shard order,
+    so ``--batch N`` means one thing at either level: at most N cell-transitions,
+    full stop. That is what makes catalog order a priority interface rather than only
+    an ordering — ``--batch 5`` advances the five most important cells in the
+    superstudy, wherever they live.
+
+    Returns the ``Advance`` records, in the order they happened.
     """
     selected = campaign_mod.require_selected_campaign(root)
     root, label = selected.root, selected.label
 
     # The single writer, in exactly one place — and at the level the campaign is
     # OPERATED from, which for a member of a super-campaign is not the study whose
-    # shard is being advanced. One lock covers the whole tick: a fan-out that took
+    # shard is being advanced. One lock covers the whole iterate: a fan-out that took
     # each member's lock in turn would hold nothing between members, and nothing at
     # all over the super's own writes (the gitlink and the catalog row), which are
-    # the writes a second tick would actually collide with.
+    # the writes a second iterate would actually collide with.
     #
     # Not in `dispatch` and not in the verbs: an flock is per open-file-description,
-    # so a lock taken inside a verb this tick dispatches would deadlock against the
+    # so a lock taken inside a verb dispatched from here would deadlock against the
     # one held here.
     with utils.flocked(campaign_mod.flock_path(selected.operated_at)):
-        if not campaign_mod.is_superstudy_campaign(root, label):
+        at_super = campaign_mod.is_superstudy_campaign(root, label)
+        if at_super:
+            members = member_studies(root, label, study)
+            note(f"superstudy iterate over {len(members)} member(s) in {root}")
+            # Clean in at the super, once, before any member is touched — but only
+            # the super's OWN tree: its campaign dir, its catalog, anything stray at
+            # its root. The members are excluded because each is asked about
+            # separately, immediately before it is advanced, so nothing is checked
+            # twice and one member's drift stops that member rather than the whole
+            # fan-out. What is left here is the dirt only this level can see, and the
+            # same contract applied one level down: anything uncommitted is not
+            # mechababs' and must not be committed as ours.
+            require_clean_shallow(root, what="a superstudy iterate", ignore=members)
+            studies = [Path(root) / name for name in members]
+        else:
             if study:
                 sys.exit(
                     f"campaign {label!r} here is configured at a study, so there are "
-                    f"no members to select between.\n--study narrows a superstudy tick."
+                    f"no members to select between.\n--study narrows a superstudy iterate."
                 )
-            return tick(root, label, batch=batch, app=app, dry_run=dry_run)
+            studies = [Path(root)]
 
-        members = member_studies(root, label, study)
-        note(f"superstudy tick over {len(members)} member(s) in {root}")
-
-        # Clean in at the super, once, before any member is touched — but only the
-        # super's OWN tree: its campaign dir, its catalog, anything stray at its root.
-        # The members are excluded because each is asked about separately, immediately
-        # before it is advanced, so nothing is checked twice and one member's drift stops
-        # that member rather than the whole fan-out. What is left here is the dirt only
-        # this level can see, and the same contract `tick` applies one level down:
-        # anything uncommitted is not mechababs' and must not be committed as ours.
-        require_clean_shallow(root, what="a superstudy iterate tick", ignore=members)
-
-        advanced = 0
-        remaining = batch
-        for i, name in enumerate(members):
-            # The batch is the tick's budget, not each member's, and it is spent in
-            # catalog order — so the catalog decides who gets the budget, not just who
-            # goes first. Checked before the member is even looked at: a tick with
+        budget = batch
+        advanced = []
+        for i, study_path in enumerate(studies):
+            # The budget is checked before a study is even looked at: an iterate with
             # nothing left to spend must not touch the filesystem to discover that.
-            if remaining is not None and remaining <= 0:
+            if budget is not None and budget <= 0:
                 note(
-                    f"--batch {batch} reached — {len(members) - i} member(s) left for "
-                    f"the next tick"
+                    f"--batch {batch} reached — {len(studies) - i} member(s) left for "
+                    f"the next iterate"
                 )
                 break
-            member = Path(root) / name
-            # A member that has left the cluster is left alone — never reinstalled to
-            # advance it. The user's uninstall IS the signal: a study whose derivatives
-            # are pushed and whose content is dropped has nothing here to advance, and
-            # reinstalling to find that out would undo the space they just reclaimed.
-            # Reinstall it later and its shard drives it, state derived as always from
-            # ground truth, so no "done" marker is needed for this to be safe.
-            if not study_mod.is_study_root(member):
-                note(f"{name}: not installed — left alone")
-                continue
-            # Clean in, before this member is touched — and scoped to it. The member's
-            # own tree is covered by `tick`, and again before each transition it
-            # dispatches, so what is left for the super is the one thing only the super
-            # can see: whether its gitlink still matches the member's HEAD. A whole-super
-            # status would answer this for every member at a cost linear in members, and
-            # would answer it too early to be worth much; this one is flat and current.
-            utils.require_clean_gitlink(root, name)
-            moved = tick(member, label, batch=remaining, app=app, dry_run=dry_run)
-            advanced += len(moved)
-            if remaining is not None:
-                remaining -= len(moved)
-            # Then record. A study-only campaign needs none of this: the transition's own
-            # `datalad run` commits in the study, which IS the operating level. With a
-            # super above it, that same run leaves the member's gitlink advanced and only
-            # the super can register it — so each member is recorded as it lands, rather
-            # than at the end, so an interrupted fan-out still leaves the super
-            # describing the members that did advance.
-            #
-            # The lifecycle rides along rather than costing a commit of its own: it is
-            # recomputed from the shard this tick just changed, and the catalog joins the
-            # same save as one more declared path.
-            if moved and not dry_run:
-                changed = update_lifecycle(root, label, name, member, moved)
-                paths = [member]
-                if changed:
-                    paths.append(campaign_mod.members_path(root, label))
-                utils.save_paths(
-                    root, paths, member_message(name, label, moved, changed)
-                )
-            elif moved:
-                # Dry-run advances nothing, so the shard still reads as it did and the
-                # lifecycle cannot be computed from it. Say which cells would move and
-                # leave it there rather than printing a transition that assumes they
-                # all succeeded.
-                note(f"DRY-RUN: {name} would record {describe_advances(moved)}")
+            if at_super:
+                # A member that has left the cluster is left alone — never reinstalled
+                # to advance it. The user's uninstall IS the signal: a study whose
+                # derivatives are pushed and whose content is dropped has nothing here
+                # to advance, and reinstalling to find that out would undo the space
+                # they just reclaimed. Reinstall it later and its shard drives it,
+                # state derived as always from ground truth, so no "done" marker is
+                # needed for this to be safe.
+                if not study_mod.is_study_root(study_path):
+                    note(f"{study_path.name}: not installed — left alone")
+                    continue
+                # The one thing only the super can see: whether its gitlink still
+                # matches the member's HEAD. Scoped to this member, so it is flat
+                # and current where a whole-super status would be linear in members
+                # and too early to be worth much. The member's own tree is checked
+                # next, at its own level.
+                utils.require_clean_gitlink(root, study_path.name)
+            campaign_mod.require_statefile(study_path, label)
+            # Once per study, before any of its cells. `datalad run --explicit`
+            # captures only what a verb declares, so anything already uncommitted here
+            # did not come from mechababs — and a run recorded on top of it would not
+            # describe the tree it ran in. Cheap: a gitlink compare, no descent into
+            # submodule worktrees.
+            require_clean_shallow(study_path, what="an iterate")
+
+            cells = work_list(campaign_mod.read_state(study_path, label), app)
+            scope = f" ({app})" if app else ""
+            note(f"iterate over {len(cells)} cell(s) in {study_path}{scope}")
+            for j, key in enumerate(cells):
+                if budget is not None and budget <= 0:
+                    note(
+                        f"--batch {batch} reached — {len(cells) - j} cell(s) left for "
+                        f"the next iterate"
+                    )
+                    break
+                # Re-read: the verbs write the shard themselves, so a copy taken
+                # before the loop is stale the moment a cell advances. Ground truth,
+                # every cell.
+                rows = campaign_mod.read_state(study_path, label)
+                row = campaign_mod.find_cell(rows, *key)
+                transition = advance_cell(study_path, label, rows, row, dry_run=dry_run)
+                if not transition:
+                    continue
+                advance = Advance(transition, cell_label(row), key[0])
+                advanced.append(advance)
+                if budget is not None:
+                    budget -= 1
+                if at_super and transition in RECORDED:
+                    record(
+                        root,
+                        label,
+                        study_path.name,
+                        study_path,
+                        advance,
+                        dry_run=dry_run,
+                    )
+
+        if dry_run:
+            note(
+                f"DRY-RUN: {len(advanced)} cell(s) would advance. Nothing changed, so "
+                f"no cell's state moved — a real iterate may advance more."
+            )
+        else:
+            note(f"iterate done: {len(advanced)} cell(s) advanced.")
         return advanced

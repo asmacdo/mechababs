@@ -52,9 +52,11 @@ Ordered from the outside in: the objects on disk first, then the campaign that a
   One row per (member study, source dataset), each with a coarse lifecycle.
   The superstudy's counterpart to the statefile.
 - **lifecycle**: `registered`, `active`, or `merged`, per study catalog row.
-  Derived from the member study's statefile on each tick that advances it, not accumulated.
-- **tick**: one `iterate`.
-  Every cell advances by at most one transition.
+  Derived from the member study's statefile on each tick that scaffolds or merges one of its cells, not accumulated.
+- **iterate**: one run of `mechababs iterate`.
+  It visits every cell once, in order, and ticks each one that can advance, up to `--batch`.
+- **tick**: one cell advancing by one transition: scaffold, submit, or merge.
+  A cell that is passed over (merged, waiting, jobs still running, jobs failed) is not a tick and does not count against `--batch`.
 - **transition**: a change of a cell's state: scaffold, submit, or merge.
   The change-making ones are recorded with `datalad run`.
 - **inclusion**: the subject list a cell's jobs run over.
