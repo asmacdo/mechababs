@@ -8,14 +8,12 @@ moment you look.
 
 **At a superstudy the shape is the same table, wider.** The rows span every member,
 gaining a column for which member each came from and one for whether that member is
-on disk. The rollup is computed from the member shards at the moment you look and is
-never stored: the superstudy commits membership and no per-cell state, so there is no
-cache here that could disagree with the shards it summarizes. That the same render
-serves both levels is the point — a superstudy is a fan-out, not a second model.
+on disk; the rollup is computed from the member shards, never stored
+(``report_superstudy``). That the same render serves both levels is the point — a
+superstudy is a fan-out, not a second model.
 
-**The table is stdout; the summary line is stderr.** Data and commentary, the split
-``iterate``'s notes already make. At a terminal they arrive together; in a pipe,
-``status | grep FAILED`` sees rows and only rows.
+**The table is stdout; the summary line is stderr** (``note``), so a pipe sees rows
+and only rows.
 
 Distinct from ``babs_status.py``, which parses one cell's ``babs status --json`` for
 the reconciler to route on. This is for a human looking at the whole study at once.
@@ -73,32 +71,18 @@ MERGED = "merged"
 ACTIVE = "active"
 FAILED = "FAILED"
 
-# A member with no working tree at all — never installed after a clone of the super,
-# or `datalad uninstall`ed. Its shard is not on disk, so its cells' states are not
-# merely absent, they are *unreadable*, and saying "not started" about work that may
-# well be finished would be a lie the table cannot take back.
-#
-# Note what this is NOT: a member whose annexed *content* was dropped keeps its git
-# repo, and the campaign dir carries `* annex.largefiles=nothing`, so its shard is
-# still in git and still reads exactly right. Dropping content to reclaim space is
-# the ordinary sweep move and it costs no visibility -- only a full uninstall does.
-#
-# The catalog's `lifecycle` column is what answers this ("for readers who have git but
-# not the cluster", campaign.py), so an uninstalled member's rows read it rather than
-# this. `unknown` is the fallback for a row that has none — a catalog written before
-# the column carried anything, where "we cannot see" really is the honest reading.
+# A member with no working tree at all (never installed, or `datalad uninstall`ed):
+# its shard is not on disk, so its cells' states are *unreadable*, and "not started"
+# about work that may well be finished would be a lie. Its rows read the catalog's
+# `lifecycle` instead; `unknown` is the fallback for a row that has none. A member
+# whose annexed *content* was dropped keeps its git repo, and the campaign dir is
+# `annex.largefiles=nothing`, so its shard still reads exactly right.
 UNKNOWN = "unknown"
 
-# The catalog's lifecycle, said in the table's own words. An uninstalled member's rows
-# come from the catalog rather than a shard, and `state` has to mean one thing in the
-# column regardless of which it was read from — so the coarse value is translated here
-# rather than leaking a second vocabulary into the table (and past ``SUMMARY_ORDER``,
-# which would count it in the total and then drop it from the parts).
-#
-# The translation is exact at both ends and lossy in the middle: `registered` really is
-# `not started`, and `merged` really is `merged`, but a member-level `active` cannot say
-# which of its cells is the active one. That is the resolution the catalog claims, and
-# the reason installing the member is what buys per-cell detail.
+# The catalog's lifecycle, said in the table's own words, so `state` means one thing
+# whichever file it was read from. Exact at both ends and lossy in the middle: a
+# member-level `active` cannot say which cell is the active one, which is the
+# resolution the catalog claims and the reason installing the member buys detail.
 FROM_LIFECYCLE = {
     campaign_mod.LIFECYCLE_REGISTERED: NOT_STARTED,
     campaign_mod.LIFECYCLE_ACTIVE: ACTIVE,
@@ -178,14 +162,8 @@ def cell_installed(study, record):
 
     Both halves are stats, so a whole-superstudy look stays cheap. What this does NOT
     see is dropped annex *content*: `datalad drop` leaves the derivative dataset in
-    place, so the cell still reads `yes`. Distinguishing that needs a git-annex query
-    per cell, which is a subprocess where this is a stat.
-
-    A cell with nothing scaffolded yet is `yes` when its study is — there is no
-    derivative to be missing.
-
-    ``is_study_root`` is the codebase's one "a dataset is present here" predicate; a
-    derivative is a dataset like any other, so it is asked the same question.
+    place, so the cell still reads `yes`. A cell with nothing scaffolded yet is `yes`
+    when its study is — there is no derivative to be missing.
     """
     derivative = record.get("derivative") or ""
     if not derivative:
@@ -196,18 +174,11 @@ def cell_installed(study, record):
 def member_records(superstudy, label, name, catalog):
     """One member's rows, tagged with the member and whether it is on disk.
 
-    An **uninstalled** member is rendered from the catalog rather than its shard: the
-    catalog knows which source datasets were selected into it, and the shard is not
-    there to say what became of them. It still gets a row per selected source dataset
-    rather than one bare line — a row per selected thing is the same one-fact-per-row
-    shape the installed case has, and it keeps the member's scope visible.
-
-    Its cells' states read ``unknown``, never ``not started``: the difference between
-    "nothing has happened" and "we cannot see" is the whole reason ``installed`` is a
-    separate column.
-
-    Costs nothing for an uninstalled member: no shard read, no babs query. That is
-    what keeps a whole-superstudy ``status`` cheap when most of it is not on disk.
+    An **uninstalled** member is rendered from the catalog rather than its shard, one
+    row per selected source dataset (the same one-fact-per-row shape as the installed
+    case), state from ``FROM_LIFECYCLE``. It costs no shard read and no babs query,
+    which is what keeps a whole-superstudy ``status`` cheap when most of it is not on
+    disk.
     """
     path = Path(superstudy) / name
     if study_mod.is_study_root(path):
@@ -294,13 +265,9 @@ def run_status(root=".", *, study=None, app=None):
 
     Same split as the reconciler's: ``run_status`` answers "which study, which
     campaign, and is this the right environment", and the ``report`` functions take
-    both as parameters — so nothing below here assumes the study is the cwd.
-
-    Resolves the level exactly the way ``iterate`` does — where you stand gives the
-    level, ``study`` narrows *within* it — so the two commands agree about what a
-    campaign contains. **No flock, at either level**: see the module docstring.
-    Looking at a superstudy must not block behind an iterate that is fanning out across
-    its members, which is precisely when you want to look.
+    both as parameters. The level is resolved the way ``iterate`` does it (where you
+    stand gives the level, ``study`` narrows within it), so the two commands agree
+    about what a campaign contains. No flock: see the module docstring.
     """
     selected = campaign_mod.require_selected_campaign(root)
     root, label = selected.root, selected.label
@@ -318,8 +285,7 @@ def note(text):
     """The summary line, on stderr — commentary, not data.
 
     stdout stays the table alone, so `status | grep FAILED` greps rows and
-    `status > cells.tsv` writes a file with nothing to strip. At a terminal both
-    land together and the split is invisible, which is the case that matters most.
+    `status > cells.tsv` writes a file with nothing to strip.
     """
     print(text, file=sys.stderr)
 
