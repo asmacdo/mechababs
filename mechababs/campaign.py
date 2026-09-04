@@ -34,15 +34,9 @@ shortcut and no ``--campaign`` flag, so one campaign and five behave identically
 history (that is how a mid-sweep version bump works), so "the venv I am running in"
 and "the environment this campaign records" can drift apart in either direction.
 ``require_env_match`` refuses both directions rather than letting a run be recorded
-against tools that did not produce it.
-
-**mechababs keeps no environment metadata of its own.** That second check is
-delegated whole to ``uv sync --check``, which inspects the *installed* environment
-rather than any record of how it was built — so a hand-``pip install``ed package is
-caught, not only a moved lock. The only environment artifacts are the two standard
-ones, the lock (what should be installed) and the venv (what is), compared by the
-tool that owns them. ``uv`` is itself a campaign dependency, resolved from
-``sys.prefix`` like every other pinned binary, so the check needs nothing ambient.
+against tools that did not produce it. mechababs keeps no environment metadata of
+its own: the check is delegated whole to ``uv sync --check`` (see
+``venv_matches_lock``), so the only environment artifacts are the lock and the venv.
 """
 
 import csv
@@ -61,17 +55,14 @@ CAMPAIGNS_DIRNAME = "campaigns"
 
 CONFIG_FILENAME = "campaign.yaml"
 STATE_FILENAME = "sourcedata+derivatives.tsv"
-# The single-writer flock (spec: the writer unit is the study or superstudy, not
-# the campaign — campaigns coexist under one level but never operate at once).
-# One per level, directly under .mechababs/, so every campaign at that level takes
-# the same lock; gitignored from there, since a lock left in the tree would dirty
-# the study every `iterate`. Named for the kind of lock it is — an fcntl flock —
-# NOT `UV_LOCK_FILENAME`: that is uv.lock, a resolved environment, two lines down.
+# The single-writer flock. The writer unit is the study or superstudy, not the
+# campaign (campaigns coexist under one level but never operate at once), so it is
+# one per level, directly under .mechababs/, and gitignored from there since a lock
+# left in the tree would dirty the study every `iterate`.
 FLOCK_FILENAME = ".single-writer.flock"
-# The superstudy's counterpart to the statefile, and the whole of the asymmetry:
-# a study's campaign dir carries per-cell STATE, a superstudy's carries MEMBERSHIP.
-# Per-cell detail shards to the members and the rollup is computed on demand, so
-# there is no master copy here to drift out of agreement with what it summarizes.
+# The superstudy's counterpart to the statefile: a study's campaign dir carries
+# per-cell STATE, a superstudy's carries MEMBERSHIP, and the rollup is computed on
+# demand so there is no master copy to drift from what it summarizes.
 MEMBERS_FILENAME = "studies+sourcedata.tsv"
 APPS_DIRNAME = "bids-app-configs"
 CLUSTERS_DIRNAME = "clusters"
@@ -116,22 +107,17 @@ STATE_COLUMNS = IDENTITY_COLUMNS + TOPOLOGY_COLUMNS + DERIVED_COLUMNS
 MEMBER_COLUMNS = ["study", "source_dataset", "lifecycle"]
 
 # The three a row can read, in the order they happen. `registered` is what
-# `add-dataset` writes: selected into the campaign, nothing dispatched. Not "pending"
-# -- nothing is queued, since an iterate only happens when a human runs one -- and the
-# word would collide with the cell vocabulary's `waiting`, which is a real
-# blocked-on-a-producer state. `merged` rather than "complete" because it is the word
-# the cell table already uses for the same fact one grain down, so a member and its
-# cells read alike.
+# `add-dataset` writes: selected into the campaign, nothing dispatched (not
+# "pending": nothing is queued, and it would collide with the cell vocabulary's
+# `waiting`). `merged` is the word the cell table uses for the same fact one grain
+# down, so a member and its cells read alike.
 LIFECYCLE_REGISTERED = "registered"
 LIFECYCLE_ACTIVE = "active"
 LIFECYCLE_MERGED = "merged"
 
 # The member's half of the superstudy relationship, written into its campaign.yaml
 # when its footprint is created. Its value is the super's DATALAD-ID: an identity,
-# not a location. A relative path re-resolves wherever the member currently sits, so
-# it says "one level up" and adopts whatever is there -- which made a member cloned
-# elsewhere both claim the wrong owner and resolve its environment to a stranger.
-# `superstudy_of` turns the id back into a place when the super is actually present.
+# not a location (see `superstudy_of` for why, and for turning it back into a place).
 SUPERSTUDY_KEY = "superstudy"
 
 
@@ -275,20 +261,15 @@ def superstudy_of(study, label):
     The marker records the super's **datalad-id**, and this resolves it to a place
     by walking up from the member until a dataset carries that id.
 
-    An id and not a path, because a path is relative and re-resolves wherever the
-    member currently sits — so a member cloned somewhere else keeps pointing at
-    "one level up" and silently adopts whatever is there. Two things went wrong
-    that way: a member cloned into a *different* superstudy passed an ownership
-    check it should have failed, and a member cloned **standalone** resolved its
-    environment to an arbitrary parent directory, which broke re-executing its own
-    recorded commands — the property `write_member_footprint` copies the lock down
-    to provide.
+    An id and not a path, because a relative path re-resolves wherever the member
+    currently sits: a member cloned somewhere else would keep pointing at "one level
+    up" and silently adopt whatever is there — a different superstudy passing the
+    ownership check, or an arbitrary parent directory becoming its environment.
 
-    The walk is not the parent-scanning the design forbids. That would be asking
-    "is there something above me that might claim this", letting an unrelated
-    dataset higher up change what a study does. Here the member has already
-    asserted *which* dataset its campaign belongs to; the walk only finds where
-    that dataset currently lives, and any other ancestor is ignored.
+    The walk is not the parent-scanning the design forbids ("is there something
+    above me that might claim this"). The member has already asserted *which*
+    dataset its campaign belongs to; the walk only finds where that dataset
+    currently lives, and any other ancestor is ignored.
 
     **Unresolvable means detached**, deliberately: a member that cannot find the
     super it names is on its own, whatever the reason, and operating on its own
@@ -315,10 +296,9 @@ def operated_level(study, label):
 
     Ask this whenever the answer is about the campaign's environment or its
     serialization. Ask ``study`` itself whenever the answer is about the work — the
-    shard, the derivatives, the member's own recorded lock epoch. Getting those two
-    the wrong way round is what produced both of the blockers this layer's first
-    real run hit, and neither was reachable from a unit test: a test of a guard is
-    written against the same assumption the guard makes.
+    shard, the derivatives, the member's own recorded lock epoch. A unit test cannot
+    catch the two swapped: a test of a guard is written against the same assumption
+    the guard makes, so the e2e superstudy scenario is what checks it.
     """
     return superstudy_of(study, label) or Path(study)
 
@@ -407,8 +387,8 @@ def read_state(study, label):
 def write_state(study, label, rows):
     """Rewrite the shard with ``STATE_COLUMNS`` and ``rows``, in order.
 
-    The schema is the module's, not the file's: unlike the wide ledger it replaces,
-    a tall statefile's columns do not vary with the campaign's app bundle.
+    The schema is the module's, not the file's: a tall statefile's columns do not
+    vary with the campaign's app bundle.
     """
     with open(state_path(study, label), "w", newline="") as f:
         w = csv.DictWriter(
@@ -475,10 +455,9 @@ def babs_bin():
     """The pinned ``babs``: this environment's, never PATH's.
 
     A campaign's venv *is* its babs pin, and ``require_env_match`` is what vouches
-    for ``sys.prefix`` being that venv. PATH can disagree with it — a stray
-    user-level babs has shadowed the pinned one before — and a run attributed to
-    the recorded pin but produced by another babs is the failure the whole
-    pinning apparatus exists to prevent.
+    for ``sys.prefix`` being that venv. PATH can disagree with it (a stray
+    user-level babs), and a run attributed to the recorded pin but produced by
+    another babs is the failure the pinning exists to prevent.
     """
     return str(Path(sys.prefix) / "bin" / "babs")
 
@@ -486,12 +465,9 @@ def babs_bin():
 def uv_bin():
     """The pinned ``uv``: this environment's, never PATH's.
 
-    Same rule and same reason as :func:`babs_bin` — ``uv`` is a campaign dependency,
+    Same rule and same reason as :func:`babs_bin`: ``uv`` is a campaign dependency,
     so a venv built from the campaign's lock contains the ``uv`` that checks it, and
-    the check is self-contained by construction rather than by whatever a login shell
-    happens to have. That matters most on the path with no operator watching: a
-    ``datalad rerun`` in a study cloned somewhere else, where an ambient uv may be
-    absent, older, or another project's.
+    a ``datalad rerun`` in a study cloned somewhere else needs nothing ambient.
     """
     return str(Path(sys.prefix) / "bin" / "uv")
 
@@ -578,23 +554,15 @@ def require_env_match(root, label):
     which the message names.
 
     **The environment is resolved at the level the campaign is operated from, not
-    at ``root``.** For a study-configured campaign the two are the same directory.
-    For a member of a super-campaign they are not: the member holds the cells and
-    is where the work runs, but by construction it has no venv of its own
-    (``write_member_footprint`` gives it none — the operational environment lives
-    at the configured level). Resolving against ``root`` there would demand a venv
-    the design guarantees is absent, which is exactly what the fan-out hits when it
-    dispatches an inner verb with the member as cwd.
+    at ``root``** (``operated_level``): a member of a super-campaign holds the cells
+    but by construction has no venv of its own, and this is called with the member
+    as ``root`` when the fan-out dispatches an inner verb there. The member's own
+    lock copy is checked separately, by the inner verbs (``require_study_lock_match``).
     """
     campaign = campaign_dir(root, label)
     if not config_path(root, label).is_file():
         sys.exit(f"no campaign {label!r} here (looked for {config_path(root, label)})")
 
-    # Where the environment lives. The member's own copy of the lock is a record of
-    # the epoch it was given; the lock the running venv must answer to here is the
-    # CANONICAL one, and it sits at the operated level. (The member's copy is checked
-    # too, but by the inner verbs — `require_study_lock_match` — which is what makes
-    # a member whose copy is behind refuse at dispatch.)
     operated_at = operated_level(root, label)
 
     venv = venv_path(operated_at, label).resolve()
@@ -711,9 +679,8 @@ class Selected(NamedTuple):
 
     ``root`` is where the verb stands and the work happens; ``operated_at`` is the
     level the campaign was configured at, which is the same directory unless
-    ``root`` is a member of a super-campaign. Both are carried because both are
-    needed and deriving one from the other at each site is what let the level go
-    wrong twice — see ``operated_level``.
+    ``root`` is a member of a super-campaign. Both are carried so no call site
+    derives one from the other — see ``operated_level``.
     """
 
     root: Path
@@ -737,11 +704,11 @@ def require_campaign_level(path="."):
     """
     root = study_mod.require_study_root(path)
     label = selected_label()
-    # Asked of the marker's PRESENCE, not of whether the super can be found. A
-    # campaign configured at a superstudy stays one when the super is out of reach:
-    # a member cloned on its own would otherwise advance cells that the super's
-    # catalog never hears about, which is the divergence this rule exists to
-    # prevent, and the unreachability is exactly when nothing can notice.
+    # Asked of the marker's PRESENCE, not of whether the super can be found, and
+    # with no override: a member cloned on its own would otherwise advance cells
+    # that the super's catalog never hears about. A detached member supports
+    # reproduction (`datalad rerun`, which carries its own environment check), not
+    # advancing.
     owner = recorded_superstudy_id(root, label)
     if owner:
         where = superstudy_of(root, label)
@@ -762,17 +729,9 @@ def require_selected_campaign(path="."):
     running the environment that campaign records (``require_env_match``).
     Returns a ``Selected``.
 
-    The level check comes **before** the env-match guard on purpose. A member of a
-    super-campaign has no venv of its own — the operational environment lives at
-    the configured level — so the env guard reached first would fail with "source
-    the campaign's env.sh" naming a file that will never exist there. The honest
-    error is that this campaign is operated from its superstudy.
-
-    There is no escape hatch. A member is not operated from, full stop: a member
-    detached from its superstudy supports **reproduction** (``datalad rerun`` of its
-    recorded commands, which carry their own environment check) and not advancing,
-    so an override would only let a study accumulate cells its superstudy's catalog
-    never hears about.
+    The level check comes **before** the env-match guard on purpose: a member of a
+    super-campaign has no venv of its own, so the env guard reached first would say
+    "source the campaign's env.sh" naming a file that will never exist there.
 
     ``campaign init`` is the one command that does not take this: it runs before
     the environment exists — it is what creates it. ``campaign update-env`` takes
