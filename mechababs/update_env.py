@@ -135,17 +135,12 @@ def copy_lock_to_member(superstudy, member, label):
     about a member is auto-synced; how a canonical *config* edit propagates is a
     separate, undecided question.
 
-    No uv runs here. Resolution happens only where the pyproject lives, and the copy
-    is a record rather than a control: there is one venv, at the configured level, so
-    a member cannot sit on an old environment. What the copy fixes is the study's own
-    claim about which tools its remaining work will run under — which is what the
-    inner verbs check, and what made this member refuse until now.
+    No uv runs here. There is one venv, at the configured level, so the copy is a
+    record rather than a control: the study's own claim about which tools its
+    remaining work runs under, which is what the inner verbs check.
 
-    Every level stays clean, in the same shape ``add-dataset`` uses: the member
-    commits its lock, then the superstudy commits the gitlink that points at it. The
-    super's scope is entered FIRST so its clean-in runs while the member is still
-    clean — the other way round it would see its own intended change as pre-existing
-    dirt and refuse.
+    Every level stays clean, nested outer-first as in ``add-dataset``: the member
+    commits its lock, then the superstudy commits the gitlink that points at it.
     """
     canonical = campaign_mod.uv_lock_path(superstudy, label)
     copy = campaign_mod.uv_lock_path(member, label)
@@ -194,15 +189,10 @@ def run_update_env(root=".", *, upgrade=(), member=None):
     cluster_file = staged_cluster(root, label)
     upgrade = list(upgrade)
 
-    # The level's single-writer guarantee, spanning everything that follows: the
-    # resolve, the install, the save, and (with --study) the member's copy. This
-    # mutates the campaign's uv.lock -- the file `iterate` dispatches work against
-    # -- so an iterate must not be reading it mid-rewrite, and two update-envs must not
-    # resolve into it at once. Taken at `root`, which `require_campaign_level` has
-    # already established IS the operated level.
-    #
-    # Nothing under this lock dispatches an inner verb, so there is no
-    # per-open-file-description deadlock of the kind iterate has to avoid.
+    # The single writer, spanning the resolve, the install, the save and the
+    # member's copy: this rewrites the uv.lock `iterate` dispatches work against, so
+    # an iterate must not read it mid-rewrite and two update-envs must not resolve
+    # into it at once.
     with utils.flocked(campaign_mod.flock_path(root)):
         _converge(root, label, campaign, upgrade, uv, cluster_file)
         if target:
@@ -215,14 +205,11 @@ def _converge(root, label, campaign, upgrade, uv, cluster_file):
     lock_args = ["lock", "--project", str(campaign)]
     for package in upgrade:
         # A pure passthrough: uv decides what "newest satisfying the declaration"
-        # means per source kind -- the tip for a branch pin, itself for a sha (so a
-        # no-op, by uv's own consistent semantics), the newest release from a
-        # registry. None of that is logic of ours.
+        # means per source kind (the tip for a branch pin, a no-op for a sha).
         lock_args += ["--upgrade-package", package]
 
-    # The site-cannot-install-this failure is the same one init translates, but the
-    # way back is not: telling an update-env user to `rm -rf` the campaign would
-    # delete one that is holding a running campaign's derivatives and history.
+    # The same missing-wheel diagnosis as init, with update-env's way back (see
+    # campaign_init.UPDATE_ENV_RETRY).
     uv_kwargs = dict(
         campaign=campaign,
         cluster_file=cluster_file,
