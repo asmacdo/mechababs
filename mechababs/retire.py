@@ -2,30 +2,12 @@
 
 Backs ``mechababs retire-derivative <derivative-path> (--remove | --path DEST)``.
 
-A cell that has to be redone — a resource change, a tool bug, a config fix — leaves
-a derivative that is no longer wanted in the study but blocks the re-scaffold, since
-``babs init`` refuses an existing path. Retiring is the one act that clears it, and
-the destination is a **required choice** rather than a default, because the two
-answers are not interchangeable:
-
-- ``--path DEST`` **keeps the evidence**. The derivative's logs, git history and
-  ``[DATALAD RUNCMD]`` records are what say *why* the cell was redone, and deleting
-  them throws that away. DEST must resolve **outside the study** (and outside the
-  whole superstudy, when the campaign is operated at one), because a study is a
-  published object we may not own: a retired attempt parked inside it would travel
-  with it to whoever clones it next.
-- ``--remove`` **deletes it outright**, for a cell whose evidence is worth nothing —
-  a disposable test campaign, a scaffold that failed before any job ran.
-
-**A retired derivative is an archive, not a resumable babs project.** babs bakes
-ABSOLUTE RIA paths in at init (which is why babs projects cannot be relocated at
-all), so after the move the archive's ``input``/``output`` siblings still name the
-derivative's old place inside the study. Nothing is lost — the RIA stores live under
-``.babs/`` and travel with it — but every recorded reference is dangling, so **babs
-commands will not work on it and neither will ``datalad get``/``push`` through those
-siblings**. Read its logs, its git history, and its content; do not expect to resume
-the run in place. Retire a cell you intend to redo from scratch, not one you mean to
-continue.
+A cell that has to be redone leaves a derivative that blocks the re-scaffold, since
+``babs init`` refuses an existing path. The destination is a **required choice**:
+``--path DEST`` keeps the evidence (logs, git history, run records) at a directory
+outside the study, ``--remove`` deletes it. What the archive is and is not good for
+is in docs/reference.md; in short, babs bakes absolute RIA paths in at init, so the
+archive is evidence, not a resumable babs project.
 
 **Resetting the cell is part of the same transition, not a follow-up.** Blanking the
 shard's derived columns is what returns the cell to "not started" so the next
@@ -169,9 +151,8 @@ def next_attempt(dest, prefix, name):
     """The first free ``DEST/<prefix>-<name>-attempt-<N>``. Never clobbers.
 
     ``prefix`` is the study's directory name, so one DEST can collect attempts from
-    every study in a superstudy without two of them landing on the same path — the
-    same job the dataset id did when the archive lived inside a campaign. ``attempt-N``
-    covers the same cell being retired more than once.
+    every study in a superstudy without two of them landing on the same path;
+    ``attempt-N`` covers the same cell being retired more than once.
     """
     n = 1
     while (dest / f"{prefix}-{name}-attempt-{n}").exists():
@@ -244,13 +225,10 @@ def rmtree(path):
 def relocate(src, dest):
     """Move ``src`` to ``dest``, across filesystems if it comes to that.
 
-    A rename when both sides are on one filesystem, which is the fast, atomic,
-    permission-blind case and the one a sibling DEST gets. Across filesystems there
-    is no rename, so the tree is copied and the original deleted — and the delete is
-    :func:`rmtree`'s, not ``shutil``'s, for the same reason ``--remove`` needs it:
-    ``shutil.move``'s own cross-device fallback ends in a plain ``rmtree`` that dies
-    on git-annex's read-only object store. A cluster DEST on a different mount than
-    the study is the normal case, not an exotic one.
+    A rename when both sides are on one filesystem. Across filesystems (a cluster
+    DEST on a different mount is the normal case) the tree is copied and the original
+    deleted with :func:`rmtree`, not ``shutil.move``, whose cross-device fallback
+    ends in a plain ``rmtree`` that dies on git-annex's read-only object store.
 
     ``symlinks=True`` keeps the annex's symlinks as symlinks rather than
     dereferencing them into copies of the content they point at.
@@ -328,10 +306,9 @@ def reset_cell(study, label, derivative_rel):
 def require_claimed_cell(study, label, derivative_rel):
     """Prove a cell claims this derivative **before** anything is moved.
 
-    The same lookup ``reset_cell`` does, run first and for its refusal alone: raised
-    inside the transition it would leave the derivative already detached and the
-    shard untouched, which is the exact half-retired state doing both in one scope
-    exists to make impossible.
+    The same lookup ``reset_cell`` does, run first for its refusal alone: raised
+    inside the transition it would leave the derivative detached and the shard
+    untouched, the half-retired state the single scope exists to prevent.
     """
     return find_cell(campaign_mod.read_state(study, label), derivative_rel)
 
@@ -377,9 +354,8 @@ def run_retire(path, *, dest=None, remove=False, root="."):
         sys.exit(f"no such derivative: {study / derivative_rel}")
     require_claimed_cell(study, label, derivative_rel)
 
-    # Both roots, though at a lone study they are the same directory: the superstudy
-    # is a published object too, so an archive parked anywhere under it would travel
-    # with whichever member carries it.
+    # Both roots (the same directory at a lone study): the superstudy is a published
+    # object too.
     target = (
         None
         if remove
@@ -388,9 +364,7 @@ def run_retire(path, *, dest=None, remove=False, root="."):
         )
     )
 
-    # The level's single writer, at the level the campaign is operated from, held
-    # across the whole read-modify-write. Nothing here dispatches an inner verb, so
-    # there is no per-open-file-description deadlock of the kind `iterate` avoids.
+    # The level's single writer, held across the whole read-modify-write.
     with utils.flocked(campaign_mod.flock_path(selected.operated_at)):
         _retire(root, study, label, study_rel, derivative_rel, target)
 
