@@ -18,8 +18,8 @@ superstudy/                       # optional
   study-ds000001/                 # a member study
     sourcedata/ds000001/          #   a source dataset
     derivatives/
-      MRIQC-24.0.2+ds000001/      #   a derivative mechababs added
-      fMRIPrep-25.2.5+anat+ds000001/
+      MRIQC-24.0.2+ds000001+c1/   #   a derivative mechababs added, by campaign c1
+      fMRIPrep-25.2.5+anat+ds000001+c1/
     .mechababs/campaigns/<label>/ #   the campaign's record in this study
   study-ds000002/
   .mechababs/campaigns/<label>/   # the campaign's record at the superstudy

@@ -34,7 +34,7 @@ study-<id>/
   sourcedata/<id>/             # submodule -> raw BIDS dataset  (a study may hold more than one)
   derivatives/
     <Tool>-<Ver>/              # pre-existing derivatives (any tool)
-    <Tool>-<Ver>+<stage>/      # a new babs derivative (see "a derivative dataset")
+    <Tool>-<Ver>+<stage>+<id>+<label>/  # a new babs derivative (see "a derivative dataset")
   .mechababs/                  # mechababs' record — bidsignored, NOT a dataset
     campaigns/
       <label>/                 # one campaign's record in this study
@@ -51,7 +51,8 @@ study-<id>/
 A study can hold **more than one** `sourcedata/<id>`; a campaign selects which to process (the `(study, sourcedata)` pair is the coarse selection; subjects/configs are the fine selection).
 When the study holds exactly one raw BIDS dataset, the generic slots `sourcedata/raw` or `sourcedata/rawbids` are preferred; `sourcedata/<id>` covers the multiple-datasets case.
 Derivative directory names follow the upstream convention — `<Tool>-<Ver>` in the tool's own casing (`fMRIPrep-25.1.1`, `MRIQC-24.0.2`) — plus `+<stage>` where a run has stages (`fMRIPrep-25.1.1+anat`).
-When the sourcedata slot is a generic one (`sourcedata/raw`, `sourcedata/rawbids`) that suffix is enough; otherwise the derivative also carries the source-dataset id — `<Tool>-<Ver>+<stage>+<id>/` (e.g. `fMRIPrep-25.1.1+anat+ds000001`) — since a cell is (source dataset × app config) and the name would collide when a study holds several source datasets.
+Unless the sourcedata slot is a generic one (`sourcedata/raw`, `sourcedata/rawbids`) the derivative also carries the source-dataset id, since a cell is (source dataset × app config) and the name would collide when a study holds several source datasets; and it always ends in the campaign label, since a study accumulates campaigns and a new one must be able to produce the same cell beside the old.
+So a mechababs derivative is `<Tool>-<Ver>+<stage>[+<id>]+<label>/` (e.g. `fMRIPrep-25.1.1+anat+ds000001+c1`).
 
 **A campaign is a config-epoch run, not a dataset.**
 `.mechababs/campaigns/<label>/` is where a study records each campaign that touched it: one pinned environment (`uv.lock` fixes `mechababs` + `babs` by git commit — a fork is just a different URL), one bundle of BIDS-App configs, and the state of that study's cells.
@@ -99,14 +100,14 @@ A study-of-studies is also a gap in BIDS — BIDS describes no study containing 
 
 ---
 
-## `<Tool>-<Ver>+<stage>/` — a derivative dataset
+## `<Tool>-<Ver>+<stage>[+<id>]+<label>/` — a derivative dataset
 
 The unit of work, one per (source dataset × bids-app-config) cell, tracked by the study's statefile.
 This is the babs project: `babs init` targets this path, and its root is the derivative's root.
 The BIDS app writes `dataset_description.json` and `sub-*` here.
 
 ```
-<Tool>-<Ver>+<stage>/          # e.g. fMRIPrep-25.1.1+anat; fMRIPrep-25.1.1+anat+ds000001 when the source dataset is named
+<Tool>-<Ver>+<stage>[+<id>]+<label>/  # e.g. fMRIPrep-25.1.1+anat+ds000001+c1; the id only when the source dataset is named
   dataset_description.json     # DatasetType "derivative"; GeneratedBy [<bids_app>]
   .bidsignore                  # containers/, logs/, prov/
   sub-*                        # unzipped derivative content

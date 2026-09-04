@@ -26,7 +26,7 @@ Ordered from the outside in: the objects on disk first, then the campaign that a
   A bundle of app configs, a cluster config, and a locked environment pinning mechababs and babs together.
   Lives in a campaign dir inside a study or superstudy; it is not a dataset.
 - **label**: a campaign's name and identity.
-  It names the campaign dir `.mechababs/campaigns/<label>/` and the venv inside it.
+  It names the campaign dir `.mechababs/campaigns/<label>/` and the venv inside it, and ends the name of every derivative the campaign produces.
   Selected by sourcing the campaign's `env.sh`, which sets `MECHABABS_CAMPAIGN`.
 - **campaign dir**: `.mechababs/campaigns/<label>/` at a level.
   Holds the config copies, `pyproject.toml`, `uv.lock`, and the statefile or study catalog.

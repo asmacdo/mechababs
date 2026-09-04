@@ -259,7 +259,7 @@ Edit them there and commit; a change reaches only cells not yet scaffolded, sinc
 
 ### App configs
 
-The filename stem is the app's identity: what `--app` takes, what `depends_on` names, and part of the derivative's name (`MRIQC-24.0.2+ds000001`).
+The filename stem is the app's identity: what `--app` takes, what `depends_on` names, and the first part of the derivative's name (`MRIQC-24.0.2+ds000001+c1`: app, source dataset, campaign label).
 The `mechababs:` block at the top is read by mechababs and stripped before the config reaches babs; everything else is babs container-config, passed through.
 
 ```yaml
