@@ -3,22 +3,14 @@
 Two things, and each verb reaches for both: a single-writer lock over the campaign,
 and a way to land a block of work as one attributable commit at one level.
 
-**Saving is always path-scoped and always declared.** `campaign_save_scope` and
-`save_paths` commit exactly the paths the caller names — the same
-declare-your-outputs contract `datalad run --explicit` makes — so nothing outside
-the declaration is walked, evaluated, or swept in. A declared path that is a
-subdataset is gitlink-registered, never recursed: the super's record of a member is
-which commit it points at, and descending would both cost a walk of that member's
-tree and pull its own uncommitted work into a commit at this level.
+**Saving is always path-scoped and always declared** (``campaign_save_scope``), and
+a declared subdataset is gitlink-registered, never recursed. That is what makes
+"every level commits its own facts" implementable: a verb that changes a member and
+its superstudy opens one scope per level, nested outer-first, and each commits only
+what that level can see.
 
-That is what makes "every level commits its own facts" implementable: a verb that
-changes a member and its superstudy opens one scope per level, nested outer-first,
-and each commits only what that level can see.
-
-**Checking is deliberately shallow.** `shallow_status` compares submodule gitlinks
-without walking their worktrees, which is what keeps a check over a study with real
-source data cheap enough to run every iterate — and a dirty submodule *worktree* is
-never this layer's business, while a moved submodule *pointer* always is.
+**Checking is deliberately shallow** (``shallow_status``): a dirty submodule
+*worktree* is never this layer's business, a moved submodule *pointer* always is.
 """
 
 import fcntl
@@ -81,16 +73,12 @@ def campaign_save_scope(root, paths):
     write into a directory a human may have touched — ``add-dataset`` saving the
     statefile, scaffold pinning an inclusion.
 
-    The check is **path-scoped**, which is also what makes it cheap: a campaign dir
-    holds no subdatasets, so this is a status over a handful of small files rather
-    than a walk of the study's sourcedata.
+    The check is **path-scoped**, which is also what makes it cheap: a status over a
+    handful of small files rather than a walk of the study's sourcedata. Files land
+    in git rather than annex by the campaign's own ``.gitattributes``, not a flag here.
 
-    Files land in git rather than annex, but that is the campaign's own
-    ``.gitattributes`` (written at init) doing it, not a flag on this save.
-
-    Through ``datalad.api``, not a shelled-out ``datalad``: datalad is a declared
-    dependency, so it is importable wherever this runs — including the ``uvx``
-    install, which has no ``bin/datalad`` beside the interpreter to find.
+    Through ``datalad.api``, not a shelled-out ``datalad``: the ``uvx`` install has
+    no ``bin/datalad`` beside the interpreter to find.
     """
     paths = require_clean_paths(root, paths)
     pending = PendingSave()
@@ -187,21 +175,16 @@ def shallow_status(root, *paths):
 def require_clean_gitlink(root, member):
     """Refuse unless ``root``'s recorded pointer to ``member`` is up to date.
 
-    The superstudy's whole stake in a member it is about to advance. The member's
-    own tree is not this check's business — ``iterate`` checks it there, and again
-    before each transition it dispatches. What only the super can see is whether its
-    gitlink still matches the member's HEAD, and a stale one matters because the
-    follow-up save would then commit somebody else's advance as ours.
+    What only the super can see is whether its gitlink still matches the member's
+    HEAD; a stale one matters because the follow-up save would commit somebody
+    else's advance as ours. The member's own tree is ``iterate``'s to check. This is
+    the **only** check of a member's gitlink (the super's once-per-iterate check
+    ignores the members), so it costs the same in a superstudy of a thousand as in
+    one of two.
 
-    This is the **only** check of a member's gitlink: the super's own once-per-iterate
-    check ignores the members precisely so each is asked about once, here, right
-    before it is touched. It costs the same in a superstudy of a thousand as in one
-    of two.
-
-    A stale gitlink **stops the iterate** rather than skipping the member. A member
+    A stale gitlink **stops the iterate** rather than skipping the member: a member
     moving underneath us is a bug or an intervention, not a condition to reconcile
-    past — unlike a failed cell, which is a known outcome the reconciler notes and
-    works around.
+    past.
     """
     rel = Path(member).relative_to(root) if Path(member).is_absolute() else Path(member)
     dirty = shallow_status(root, rel)
@@ -217,23 +200,19 @@ def require_clean_gitlink(root, member):
 def require_clean_shallow(root, *, what="this operation", ignore=()):
     """Refuse unless ``root`` is clean at its own level. Cheap enough for every iterate.
 
-    The backstop for `datalad run --explicit`, and it is the *only* one: explicit
-    mode does not check the dataset at all (verified — plain `datalad run` refuses a
-    dirty dataset, `--explicit` runs and commits just its declared outputs, leaving
-    the stray file behind). That is the trade explicit mode makes to avoid
-    deep-walking `sourcedata/raw`, so a stray side-write is silently left rather than
-    swept into the commit. Hence this, loudly, before dispatching: anything already
+    The backstop for `datalad run --explicit`, and the *only* one: explicit mode
+    does not check the dataset at all (it runs and commits just its declared outputs,
+    leaving a stray file behind — the trade it makes to avoid deep-walking
+    `sourcedata/raw`). So this, loudly, before dispatching: anything already
     uncommitted here did not come from mechababs, and a run recorded on top of it
     would not describe the tree it ran in.
 
     ``ignore`` names paths whose state is somebody else's to check — at a superstudy,
-    the members, each checked by ``require_clean_gitlink`` immediately before it is
+    the members, each checked by ``require_clean_gitlink`` right before it is
     advanced. Excluded by git pathspec rather than by filtering the output, so a path
-    is never matched by string-comparing against git's own quoting. What is left is
-    the level's *own* tree: its campaign dir, its catalog, anything stray at its root.
+    is never matched by string-comparing against git's own quoting.
 
-    Deliberately shallow (see ``shallow_status``): a dirty submodule *worktree* is
-    not this check's business, a moved submodule *pointer* is.
+    Deliberately shallow (see ``shallow_status``).
     """
     paths = [".", *(f":(exclude){p}" for p in ignore)] if ignore else ()
     dirty = shallow_status(root, *paths)
