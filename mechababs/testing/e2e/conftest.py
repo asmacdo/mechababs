@@ -6,9 +6,8 @@ scenario drives the real CLI against a real study, so the fixtures build the wor
 that CLI expects to already exist:
 
 - `simbids_sif` — the simbids container, inside a plain ReproNim/containers clone
-  seeded once in the workdir as host-prep. Not a shim: upstream carries the simbids
-  image, and babs main resolves it from the datalad-containers registration, so the
-  suite names the same kind of container dataset a production config does.
+  seeded once in the workdir as host-prep, so the suite names the same kind of
+  container dataset a production config does.
 - `rawdata` — fake BIDS input, generated once into the workdir cache. Prod uses real
   OpenNeuro data, so fake input is a test-only concern that lives in the test, not in
   any prod tool.
@@ -144,36 +143,18 @@ def cluster_config(request):
 def mechababs_pin(request):
     """The `URL@REF` the scenario's campaigns pin, or ``None`` to let init self-pin.
 
-    The scenario's claim is "these tools work on this cluster", so the mechababs a
-    campaign records has to be the code under test. There are two ways to get that,
-    and both are real:
-
-    - **Hand it in** (`--mechababs`), which a dev run does: the checkout under test is
-      a mount path, not something `campaign init` could have inferred.
-    - **Leave it unset**, which `test-cluster` does: `campaign init` then pins whichever
-      mechababs is running it, read from PEP 610 install metadata. The mechababs
-      running `test-cluster` IS the code under test, so the self-pin names it — and
-      omitting the flag exercises the same path a user's own `campaign init` takes.
-
-    So this fixture has no default of its own: unset means "omit the flag", not "guess".
+    A dev run hands it in (the checkout under test is a mount path init could not
+    infer); `test-cluster` leaves it unset, so `campaign init` pins the mechababs
+    running it, which IS the code under test (see validate.py). No default of its
+    own: unset means "omit the flag", not "guess".
     """
     return request.config.getoption("--mechababs")
 
 
 @pytest.fixture(scope="session")
 def babs_pin(request):
-    """The `URL@REF` the scenario's campaigns pin for babs.
-
-    Defaults to babs **main** rather than the latest release, because the suite's
-    app configs name a plain ReproNim/containers dataset: resolving an image out of
-    its datalad-containers registration (instead of babs's own default layout) is
-    `PennLINC/babs#399`, which is on main and in no release yet. A campaign built
-    against a release would fail `babs init` on the container, so the suite states
-    the babs it needs rather than discovering it.
-
-    `--babs` overrides — that is how an unmerged babs fix gets run through the
-    scenario, and a local checkout works because `git clone` takes a path.
-    """
+    """The `URL@REF` the scenario's campaigns pin for babs: `--babs`, else
+    ``DEFAULT_BABS`` (see its comment for why main and not a release)."""
     return request.config.getoption("--babs") or DEFAULT_BABS
 
 
@@ -207,13 +188,10 @@ def workdir():
 def simbids_sif(workdir):
     """Path to the simbids SIF, inside the workdir's ReproNim/containers clone.
 
-    No shim: upstream ReproNim/containers carries `bids-simbids--0.0.3.sif` itself,
-    and babs main resolves it from the datalad-containers registration. So the app
-    configs name the same kind of dataset a production config does, and the only
-    host prep is a clone plus one `datalad get`.
-
-    Local rather than the GitHub URL because babs installs `container.source` into
-    every derivative it inits — clone once here, not once per cell.
+    Upstream carries `bids-simbids--0.0.3.sif` itself, so the only host prep is a
+    clone plus one `datalad get`. Local rather than the GitHub URL because babs
+    installs `container.source` into every derivative it inits — clone once here,
+    not once per cell.
     """
     sif = workdir / CONTAINERS_DIRNAME / SIMBIDS_IMAGE
     if not sif.exists():

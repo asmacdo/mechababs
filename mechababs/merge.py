@@ -65,10 +65,6 @@ def require_all_done(project, row):
 def pull_merged_results(project):
     """Fast-forward the derivative onto the branch ``babs merge`` pushed to the RIA.
 
-    Through ``datalad.api`` rather than a shelled-out ``datalad``: datalad is a
-    declared dependency, so it is importable wherever this runs, and no subprocess
-    is needed here (unlike the run wrapper, which exists to wrap one).
-
     The results arrive as tracked annex symlinks; their content stays in the output
     RIA under the derivative's gitignored ``.babs/``, which is where babs keeps it
     and where a later ``datalad get`` finds it.

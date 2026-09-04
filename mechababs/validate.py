@@ -15,17 +15,12 @@ campaign lives *inside* a study, so there is no standalone campaign to point at 
 stand in — the scenario's fixtures build a fixture study and run ``campaign init``
 inside it. Real studies are never touched.
 
-The two pins get there differently, and the asymmetry is the point:
-
-- **mechababs mirrors the caller.** With no ``--mechababs``, ``campaign init`` pins
-  whichever mechababs is running it (read from PEP 610 install metadata), so the
-  fixture campaign records the code being validated.
-- **babs cannot mirror the caller.** babs is not a mechababs dependency; it is a
-  dependency of the *generated campaign*, frozen by that campaign's lock. So the
-  fixture campaign gets what a user's campaign would get.
-
-Both are overridable — ``--mechababs URL@REF``, ``--babs URL@REF`` — which is how a
-branch gets tested.
+The two pins get there differently, and the asymmetry is the point: with no
+``--mechababs``, ``campaign init`` pins whichever mechababs is running it, so the
+fixture campaign records the code being validated; babs is a dependency of the
+*generated campaign*, not of mechababs, so the fixture campaign gets what a user's
+would. Both are overridable (``--mechababs URL@REF``, ``--babs URL@REF``), which is
+how a branch gets tested.
 """
 
 import os

@@ -16,14 +16,9 @@ exists so the two CLIs can have different manners:
   recorded run is not, and *which directory* a venv sits in is a selection question
   that selection already answered.
 
-What an inner verb does check about its environment is one thing, and it checks it
-against the **study it is standing in**: that the running venv is what this study's
-own committed lock describes (`require_study_lock_match`). A recorded command has a
-second entry path that never passes through an outer command — `datalad rerun`
-executes it directly — so it validates its own environment wherever it is replayed.
-That one check is also the member-drift gate: on the dispatched path the outer guard
-has already proved the venv matches the *canonical* lock, so a failure here means
-the member's copy is behind.
+What an inner verb does check is that the running venv is what the **study it is
+standing in** committed as its lock (`require_study_lock_match`, which says why
+that one check serves reproduction, replay and member drift alike).
 
 The campaign is a required flag rather than the `MECHABABS_CAMPAIGN` env var, so a
 recorded command names what it operated on instead of inheriting it.
