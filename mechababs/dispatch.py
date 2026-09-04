@@ -2,8 +2,8 @@
 
 A transition that changes the study is not saved with a hand-written label; it is
 **dispatched**, so what lands in git is the verbatim command that produced the
-change. That is the provenance this rewrite delivers: the study's history is a
-list of re-executable orchestration steps, not a list of adjectives.
+change. That is the orchestration provenance: the study's history is a list of
+re-executable steps, not a list of adjectives.
 
 **Only the change-making verbs are wrapped.** `scaffold` and `merge` write into the
 study, so they go through `dispatch`. `submit` only sbatches — babs's job

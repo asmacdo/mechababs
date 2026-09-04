@@ -51,11 +51,10 @@ from mechababs import study as study_mod
 from mechababs import utils
 from mechababs.utils import require_clean_shallow
 
-# Every line iterate writes about its own reasoning carries this. An iterate interleaves
-# mechababs' decisions with datalad's, babs's and git's output, and the old reconciler's
-# were indistinguishable from the noise around them — so the prefix is here from the
-# start rather than retrofitted. The `+ <command>` echoes from the verbs are left
-# unprefixed on purpose: those are commands, not commentary.
+# Every line iterate writes about its own reasoning carries this, so mechababs'
+# decisions stand out from the datalad, babs and git output they interleave with.
+# The `+ <command>` echoes from the verbs are left unprefixed on purpose: those are
+# commands, not commentary.
 PREFIX = "mechababs>"
 
 # The four cell states, read off the shard's columns. There is no status enum in the
@@ -209,8 +208,7 @@ def member_message(name, label, advance, changed):
     consequential thing a cell-transition does to a member, and the line a reader with
     git but not the cluster is scanning for; the transition that caused it is then the
     body. Otherwise the subject is the transition itself, naming the cell. Never a
-    bare count: that is what this message used to say, and it left the super's own
-    history unreadable.
+    bare count, which leaves the super's own history unreadable.
     """
     if not changed:
         return f"mechababs iterate: {name} {advance.transition} {advance.cell} (campaign {label!r})"

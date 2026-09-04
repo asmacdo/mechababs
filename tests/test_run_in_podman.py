@@ -1,9 +1,9 @@
 """Tests for `run_in_podman.sh`'s interrupt handling (con/mechababs#105).
 
-Ctrl-C used to have no effect on the podman rung: the interrupt never reached the
-workload, so the e2e ran to completion no matter how many times you pressed it. Nothing
-else can catch that — no test fails, the run just refuses to stop — so it needs a test
-that actually interrupts a run.
+The failure mode these guard: the interrupt never reaches the workload, so the e2e
+runs to completion no matter how many times you press Ctrl-C. Nothing else can catch
+that — no test fails, the run just refuses to stop — so it needs a test that actually
+interrupts a run.
 
 These drive the REAL script against a stub `podman` on PATH, so they are hermetic and take
 about a second: no image, no container, no e2e. What keeps that honest is that the stub

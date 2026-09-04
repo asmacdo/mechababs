@@ -122,8 +122,8 @@ Inputs are registered by **URL**, not local path, so the recorded provenance re-
 
 ### `prov/` — orchestration provenance
 
-This section is under active design and is **out of scope for the study-first implementation** — the `datalad run` command capture in the study is the provenance that implementation delivers, and the BEP028 record below is tracked separately.
-The shape was not fully settled even before study-first; study-first changes where the `Bundle` points: **to the study** (which now holds the orchestration record) rather than to a separate campaign dataset.
+This section is under active design and **not yet produced**: the `datalad run` command capture in the study is the orchestration provenance mechababs delivers today, and the BEP028 record below is tracked separately.
+The `Bundle` points **to the study**, which holds the orchestration record.
 
 The BIDS app records itself in its own `dataset_description.json`. `prov/` records the tools that *composed and ran* it,
 following [BEP028 / BIDS-Prov](https://github.com/bids-standard/BEP028_BIDSprov): `prov/prov-<label>_<suffix>.json`.

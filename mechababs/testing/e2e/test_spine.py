@@ -1,4 +1,4 @@
-"""The study-first spine: `campaign init` -> `add-dataset` -> scaffold -> submit -> merge.
+"""The spine: `campaign init` -> `add-dataset` -> scaffold -> submit -> merge.
 
 One test, run as ordered **stages**, against a real study on a real filesystem. It
 asserts the things only an end-to-end run can: that `uv lock` + `uv sync` actually
@@ -237,9 +237,9 @@ def _state_rows(study, label):
 def _run_record(study):
     """The `datalad run` record datalad embeds as JSON in the HEAD commit's body.
 
-    This is the artifact the whole chunk exists to produce, so the scenario reads it
-    rather than trusting the commit subject: the subject says a run happened, the
-    record says *which command*, from *where*, declaring *what*.
+    This is the artifact dispatch exists to produce, so the scenario reads it rather
+    than trusting the commit subject: the subject says a run happened, the record
+    says *which command*, from *where*, declaring *what*.
     """
     body = _git(study, "log", "-1", "--format=%b")
     return json.loads(body[body.index("{") : body.rindex("}") + 1])
@@ -526,8 +526,8 @@ def _stage_scaffold(study):
         "scaffolding one cell advanced its sibling"
     )
 
-    # The point of the whole chunk: the transition landed as a re-executable
-    # command, not as a save with an adjective on it.
+    # The point of dispatch: the transition landed as a re-executable command, not
+    # as a save with an adjective on it.
     subject = _git(study, "log", "-1", "--format=%s").strip()
     assert subject.startswith("[DATALAD RUNCMD] mechababs scaffold"), subject
     record = _run_record(study)
@@ -1012,7 +1012,7 @@ def _stage_retire_clears_a_cell_so_it_can_be_redone(study):
 def test_spine(
     study, cluster_config, app_configs, mechababs_pin, babs_pin, simbids_sif
 ):
-    """The whole spine, in order. Add later chunks' stages to the bottom.
+    """The whole spine, in order. New stages go at the bottom.
 
     `simbids_sif` is requested because `scaffold` really inits against that container
     dataset, and because a missing one means this cluster config could not run

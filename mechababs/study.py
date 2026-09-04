@@ -1,6 +1,6 @@
 """study.py — the study a mechababs command operates in.
 
-Study-first: mechababs operates on a BIDS study that **already exists** on disk —
+mechababs operates on a BIDS study that **already exists** on disk —
 cloned, or authored by another tool — and never creates one (docs/spec.md,
 "Layout & input"). Every command therefore begins by answering the same question,
 so it is answered in exactly one place here.

@@ -1,6 +1,6 @@
 """The superstudy layer: one campaign at a superstudy, fanned out over its members.
 
-The study-first spine (`test_spine.py`) proves a campaign configured **at a study**.
+The spine (`test_spine.py`) proves a campaign configured **at a study**.
 This proves the other level: a campaign configured at a **superstudy**, where the
 campaign root and the place the work happens are no longer the same directory. That
 split is the whole subject of this module, and it is where the layer's bugs live —
@@ -176,7 +176,7 @@ def _assert_clean(path, phase, *, what="tree"):
 
 
 def _assert_every_level_clean(superstudy, phase, *members):
-    """Austin's rule, asserted as such: no level is left carrying the next one's work.
+    """The every-level-clean rule, asserted as such: no level is left carrying the next one's work.
 
     Checked bottom-up so the failure names the deepest dirty level, which is the one
     that caused it — a dirty member shows at the super as a moved gitlink, and

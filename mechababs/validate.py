@@ -1,9 +1,8 @@
 """validate.py — the body of ``mechababs test-cluster``.
 
-Validating a cluster config used to be a repo-dev operation: check the repo out,
-``pip install -e '.[test]'``, export ``MECHABABS_E2E_WORKDIR``, then run pytest by
-hand. ``test-cluster`` is that, as a command — so validation sits on the operate
-side, next to ``iterate`` and ``status``.
+Validating a cluster config is an operate-side command, next to ``iterate`` and
+``status``, rather than a repo-dev operation (check the repo out, ``pip install -e
+'.[test]'``, export ``MECHABABS_E2E_WORKDIR``, run pytest by hand).
 
 What it runs is the packaged e2e scenario, which drives the whole spine
 (``campaign init`` -> ``add-dataset`` -> ``iterate``: scaffold -> submit -> merge)

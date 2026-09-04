@@ -101,17 +101,12 @@ def test_env_match_refuses_a_venv_uv_says_disagrees_with_the_lock(
     assert "Would install: requests==2.32.5" in message
 
 
-def test_env_match_no_longer_refuses_a_venv_mechababs_did_not_build(
-    tmp_path, monkeypatch
-):
-    """A deliberate behavior flip, and the one that unblocks detached reproduction.
-
-    The guard used to demand a stamp only `campaign init` could write, so a venv
-    somebody built themselves from the committed lock was refused as "not ours" —
-    which is exactly the venv a re-runner has, and nothing could stamp one at a
-    member. The question is now what uv answers: does this environment match this
-    lock. Provenance is not weakened by it — two venvs built from one lock hold the
-    same tools, and it is the tools a run is attributed to.
+def test_env_match_accepts_a_venv_mechababs_did_not_build(tmp_path, monkeypatch):
+    """What unblocks detached reproduction: the guard asks uv whether this
+    environment matches this lock, not whether `campaign init` built it. A venv
+    somebody built themselves from the committed lock is exactly the venv a
+    re-runner has. Provenance is not weakened by it — two venvs built from one lock
+    hold the same tools, and it is the tools a run is attributed to.
     """
     make_campaign(tmp_path)
     pretend_uv_check(monkeypatch)  # uv: this environment matches the lock
@@ -389,10 +384,8 @@ def test_a_detached_member_still_refuses_to_be_operated_from(tmp_path, monkeypat
 def test_a_member_is_never_operated_from_and_there_is_no_override(
     tmp_path, monkeypatch
 ):
-    """The refusal is unconditional, and stays so now that the stamp is gone.
-
-    An override existed for one case — advancing a member detached from its
-    superstudy. What a detached member supports is *reproduction*: `datalad rerun` of
+    """The refusal is unconditional: no override for advancing a member detached from
+    its superstudy. What a detached member supports is *reproduction*: `datalad rerun` of
     its own recorded commands, which carry their own study-local env check and never
     pass through here. Advancing is the part that must not happen detached, because
     the cells it would add are ones the superstudy's catalog never hears about.

@@ -1,9 +1,8 @@
 """Tests for `mechababs.testing` — locating the packaged e2e suite.
 
 The point of these: `mechababs test-cluster` has to find the suite through the
-INSTALLED package, not through a path into a vendored clone, so it keeps working
-now that the code is referenced and locked rather than cloned into the campaign
-(con/mechababs#101).
+INSTALLED package, not through a path into a clone — the campaign references and
+locks the code, it never vendors it.
 """
 
 import mechababs.testing as testing

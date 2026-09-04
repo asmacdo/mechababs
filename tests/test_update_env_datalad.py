@@ -180,8 +180,7 @@ def test_unrelated_work_in_flight_is_not_swept_into_the_commit(study, fake_uv):
 
 
 def test_study_commits_at_the_member_then_the_gitlink_at_the_super(superstudy, fake_uv):
-    """Every level stays clean — Austin's rule, and the reason the copy is not left
-    for publish time. The member commits its lock; the superstudy commits the
+    """Every level stays clean — the reason the copy is not left for publish time. The member commits its lock; the superstudy commits the
     gitlink that points at that commit. Neither is left dirty for a later iterate to
     trip over."""
     root, member = superstudy

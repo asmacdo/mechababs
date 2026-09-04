@@ -1,6 +1,6 @@
 """Unit tests for the study-root check.
 
-Study-first: every command operates inside a study that already exists, so the
+Every command operates inside a study that already exists, so the
 wrong-directory mistake is caught once, here, rather than as a confusing failure
 deeper in.
 """

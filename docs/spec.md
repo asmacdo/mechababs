@@ -1,10 +1,10 @@
-# mechababs — study-first requirements spec
+# mechababs — requirements spec
 
-The decisions of record for the study-first implementation.
+The design decisions of record.
 [use_cases.md](use_cases.md) holds the user stories these answer to; [output_structure.md](output_structure.md) holds the resulting layout; this document holds the requirements and the reasoning behind them.
 Each entry should trace to a use case.
 
-The spec is a contract for implementation, not gospel: it was written before contact with the real code.
+The spec is a contract for implementation, not gospel.
 If a requirement forces the implementation somewhere weird, inefficient, or sloppy, the requirement is revisited — loudly, with options — rather than followed blindly.
 Entries marked **Open** are named holes we have not decided.
 
@@ -100,7 +100,7 @@ Entries marked **Open** are named holes we have not decided.
 ## CLI surface
 
 - **Two entrypoints (console_scripts).** `mechababs` is the user CLI (`campaign init`, `add-dataset`, `iterate`, `status`, `jobs`, `retire-derivative`, `campaign update-env`, `test-cluster`); `mechababs-inner` (working name) carries the action verbs (`scaffold` / `submit` / `merge`) that `iterate` dispatches — the change-making ones under `datalad run`. The inner verbs are hidden from users, self-labeling in run records (a runcmd is unambiguously a machine-dispatched provenance step), and self-guarding (refuse a cell not in the right state).
-- **`test-cluster` recreates the environment it was called from, in a throwaway study.** The durable pieces (per con/mechababs#104) survive study-first: the command surface, the e2e suite shipped as package data (`importlib.resources`, chosen in con/mechababs#98 precisely because under study-first there is no clone to reach into), fail-loud fixtures, and the throwaway-workspace principle. What changes is that there is no campaign to invoke it from: a campaign lives *inside* a study, so nothing standalone can be pointed at or stood in. It therefore runs from anywhere, taking a cluster config by path and a `--scratch-path` to work in — required, since there is no campaign to derive one from and RIA stores must not land in home or `/tmp`.
+- **`test-cluster` recreates the environment it was called from, in a throwaway study.** The durable pieces (per con/mechababs#104): the command surface, the e2e suite shipped as package data (`importlib.resources`, chosen in con/mechababs#98 precisely because there is no clone to reach into), fail-loud fixtures, and the throwaway-workspace principle. There is no campaign to invoke it from: a campaign lives *inside* a study, so nothing standalone can be pointed at or stood in. It therefore runs from anywhere, taking a cluster config by path and a `--scratch-path` to work in — required, since there is no campaign to derive one from and RIA stores must not land in home or `/tmp`.
   - **The two pins reach the fixture campaign differently, and the asymmetry is intended.** *mechababs mirrors the caller*: with `--mechababs` unset, `campaign init` pins whichever mechababs is running it (PEP 610 install metadata), so the code validated is the code invoked — dev-exercises-prod, by the same path a user's own `campaign init` takes. *babs cannot mirror the caller*: babs is not a mechababs dependency, it is a dependency of the **generated campaign**, frozen by that campaign's lock — so the fixture campaign gets what a user's campaign would get. Both are overridable (`--mechababs URL@REF`, `--babs URL@REF`), which is how a branch gets tested.
   - **pytest comes from the calling environment**, since the suite runs as `sys.executable -m pytest`; it cannot come from the fixture campaign's venv, because the scenario's first act is `campaign init` and that campaign does not exist yet. So the documented invocation installs the `test` extra: `uvx --from 'git+https://github.com/con/mechababs@<ref>#egg=mechababs[test]' mechababs test-cluster --cluster <site.yaml> --scratch-path <scratch>`.
   - `test-cluster` fabricates the throwaway study (tiny sourcedata + per-subject TSV) — a test fixture, not study authoring re-entering scope.
@@ -125,10 +125,10 @@ Entries marked **Open** are named holes we have not decided.
 
 ## Provenance (`prov/`)
 
-- **The BEP028 `prov/` record is out of scope for this rewrite.** It stays tracked separately (see [output_structure.md](output_structure.md)). The `datalad run` command capture above is the provenance this rewrite delivers.
+- **The BEP028 `prov/` record is not yet produced.** It is tracked separately (see [output_structure.md](output_structure.md)). The `datalad run` command capture above is the orchestration provenance mechababs delivers.
 
 ## Non-goals / out of scope
 
 - **mechababs never pushes to a remote and never removes or drops data.** Publishing and space reclamation are the user's acts, on their timing and credentials; mechababs produces the objects, reports they are finished, and *tolerates* the result (a pushed-and-uninstalled study, dropped content) as normal state, never as something to repair. (The babs-internal RIA pushes during a run are not an exception — machinery internal to the derivative, not publishing. Neither is `retire-derivative --remove`: it deletes one named derivative because the user said to, with no default and no path by which mechababs reaches that decision on its own. What the non-goal rules out is mechababs deciding *for* you that something is no longer needed.) See [use_cases.md](use_cases.md) "Out of scope".
 - **Roundup of out-of-scope calls made inline above:** a PyPI release (con/mechababs#113); the BEP028 `prov/` record; a priority mechanism beyond default order + `iterate --study`; concurrent operation within one campaign (blocked on babs RIA non-relocatability); study authoring (recommend a tool, don't build one); a `--campaign` flag (env var only).
-- **A source dataset gaining subjects or sessions after scaffold — deferred in this implementation.** The inclusion is fixed at scaffold and babs fixes the job universe at init, so an already-scaffolded cell does not pick up new subjects. Deferred in the spec, not in the user stories — the [use_cases.md](use_cases.md) story stands as a requirement for later.
+- **A source dataset gaining subjects or sessions after scaffold — deferred.** The inclusion is fixed at scaffold and babs fixes the job universe at init, so an already-scaffolded cell does not pick up new subjects. Deferred in the spec, not in the user stories — the [use_cases.md](use_cases.md) story stands as a requirement for later.
