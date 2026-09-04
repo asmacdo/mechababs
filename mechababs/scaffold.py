@@ -146,15 +146,11 @@ def output_ria_url(project_root, app_config_data):
 def require_producer_merged(rows, row):
     """The ``depends_on`` gate — **ordering only**, and nothing else.
 
-    ``depends_on`` carries no kind and wires nothing. It says one thing: this cell
-    is not scaffolded until the producer's cell is merged. The producer is resolved
-    as a **row lookup in this shard** — the same source dataset's upstream-app row —
-    so an edge can never cross studies.
-
-    Input wiring is a separate declaration (``input_datasets``, see
-    ``resolve_input_origins``) that this function never reads. The two typically
-    name the same producer, which is deliberate: one is orchestration topology,
-    the other is what babs consumes.
+    ``depends_on`` carries no kind and wires nothing: this cell is not scaffolded
+    until the producer's cell is merged. The producer is a row lookup in this shard
+    (the same source dataset's upstream-app row), so an edge can never cross studies.
+    Input wiring is ``input_datasets``' (``resolve_input_origins``), which this never
+    reads; the two typically name the same producer, on purpose.
     """
     upstream = row.get("depends_on") or ""
     if not upstream:
@@ -344,16 +340,11 @@ def scaffold(study, label, source_dataset, app_config):
         study, label, row, app_config_data, config.get("limit")
     )
 
-    # The composed config is derived, not source: a pure function of the app and
-    # cluster configs (both committed in the study), the source URL, and the venv
-    # path. babs keeps its own resolved copy inside the derivative, so a tempfile
-    # here loses nothing and keeps the run's declared outputs to the four the
-    # transition actually owns.
-    #
-    # The venv goes into every job script, so it has to name the level the campaign
-    # is operated from: a member of a super-campaign is given no environment of its
-    # own, and a member-level path would leave each job activating nothing and
-    # failing at its first command.
+    # The composed config is derived from committed inputs and babs keeps its own
+    # resolved copy inside the derivative, so a tempfile loses nothing and keeps the
+    # run's declared outputs to the four the transition owns. The venv path goes
+    # into every job script, so it names the level the campaign is operated from: a
+    # member of a super-campaign has no environment of its own.
     operated_at = campaign_mod.operated_level(study, label)
     with tempfile.TemporaryDirectory() as tmp:
         babs_config = compose.write_babs_config(
