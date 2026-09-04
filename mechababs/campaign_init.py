@@ -18,13 +18,9 @@ Everything after it runs from the venv this builds.
 exact versions (a commit, for a git source) and writes them into ``uv.lock``, which
 is committed to the study. That file — not a vendored code clone — is what says which
 tools ran, and a mid-campaign version bump is an edit to it, with its git history as
-the record of the campaign's config epochs. The mechababs pin is read from the running
-install (PEP 610 ``direct_url.json``), so the campaign records the mechababs the user
-actually invoked rather than a ref they would have to retype; babs, which mechababs
-only shells out to, defaults to its latest **release** — declared as a plain
-dependency and frozen to an exact version by the lock — and ``--babs URL@REF`` pins a
-git checkout instead, which is how a PR branch (or a local one) gets run through a
-whole campaign.
+the record. The mechababs pin defaults to the running install
+(``running_mechababs_pin``); babs defaults to its latest release, and ``--babs
+URL@REF`` pins a git checkout instead.
 """
 
 import json
@@ -52,12 +48,7 @@ CAMPAIGN_EXTRAS = [
     "con-duct",  # usage/resource logs alongside every run
     "visidata",  # interactive TSV viewer for the statefile
     "pytest",  # runs the packaged e2e scenario behind `mechababs test-cluster`
-    # The environment checks its own freshness with `uv sync --check`, so the venv
-    # has to contain the uv that checks it: resolved sys.prefix-relative like babs,
-    # never from PATH. Being IN the lock is what makes it self-contained even
-    # detached -- any venv built from that lock can validate itself, which is what a
-    # `datalad rerun` in a standalone-cloned study depends on.
-    "uv",
+    "uv",  # the venv checks its own freshness, so it carries the uv that checks it
 ]
 
 # A label names a directory and is exported as an env var, so keep it boring.
@@ -66,10 +57,8 @@ LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Everything mechababs writes under a campaign dir is small text that a clone must
 # be able to read *without* fetching annex content — the lock above all, since
 # rebuilding the environment from a fresh clone is the whole reproduction story.
-# So the routing is declared once, as an attribute on the campaign dir, instead of
-# being asked for per save: it then holds for every later writer into the campaign,
-# and no save has to carry a `to_git` flag that would mis-route the moment its scope
-# reached a real subdataset.
+# Declared once as an attribute on the dir, so it holds for every later writer and
+# no save has to carry a `to_git` flag.
 GITATTRIBUTES = "* annex.largefiles=nothing\n"
 
 UV = "uv"
@@ -309,9 +298,8 @@ def render_pyproject(
     babs and a registry-installed mechababs. A source entry overrides that with a
     git (or path) checkout.
 
-    ``env_constraints`` (the cluster config's) become uv ``constraint-dependencies``:
-    caps that apply to whatever the resolution already contains, deep in the transitive
-    closure included, without adding a dependency or pinning one the site does not use.
+    ``env_constraints`` (the cluster config's) become uv ``constraint-dependencies``;
+    see ``cluster_env_constraints``.
     """
     deps = [mechababs_req, "babs", "datalad", *CAMPAIGN_EXTRAS]
     sources = {"datalad": DATALAD_PIN}
@@ -406,14 +394,10 @@ def missing_wheel_message(package, campaign, cluster_file, retry=INIT_RETRY):
 def run_uv(*args, campaign, cluster_file, uv=None, retry=INIT_RETRY):
     """Run a ``uv`` command, and translate a source-build failure into a named one.
 
-    ``uv`` is which binary to run; ``None`` means PATH's, the only answer available at
-    init time, when the campaign venv it would otherwise come from does not exist
-    yet. ``campaign update-env`` passes the venv's own once there is one. Resolved
-    here rather than as a default argument, so the module-level ``UV`` stays the one
-    place PATH resolution is named (and stays monkeypatchable).
-
-    ``retry`` is how a missing-wheel failure tells the user to come back, which
-    differs by verb — see :data:`INIT_RETRY` and :data:`UPDATE_ENV_RETRY`.
+    ``uv`` is which binary to run; ``None`` means PATH's, the only answer at init
+    time, when the campaign venv does not exist yet (``campaign update-env`` passes
+    the venv's own). ``retry`` is how a missing-wheel failure tells the user to come
+    back, which differs by verb — see :data:`INIT_RETRY` and :data:`UPDATE_ENV_RETRY`.
 
     A package with no wheel for this system does not announce itself as one: uv falls
     back to the sdist, and what reaches the user is the build backend's compiler error
@@ -450,11 +434,8 @@ def build_env(campaign, cluster_file):
     """Resolve the campaign's lock and build its venv from it.
 
     ``uv lock`` pins every dependency (the git refs to commits) and ``uv sync``
-    installs exactly that — so the environment and the committed lock agree by
-    construction, which is what the env-match guard later re-checks with
-    ``uv sync --check``. Nothing is recorded about the venv beyond the venv itself:
-    the lock says what should be installed, the environment is what is, and uv
-    compares them on demand.
+    installs exactly that, so the environment and the committed lock agree by
+    construction, which is what the env-match guard later re-checks.
 
     ``cluster_file`` names the config a failure should send the user to edit; both uv
     steps can hit a source build (lock builds an sdist it cannot read metadata from,
@@ -514,12 +495,10 @@ def create_superstudy(path):
     """Create the superstudy dataset at ``path``, or adopt the one already there.
 
     The one dataset mechababs creates. A *study* is never created (``study.py``):
-    it holds real acquired data, so authoring one is another tool's job and
-    inventing an empty one would only produce a plausible-looking place to put
-    data that is not there. A superstudy holds no data of its own — it is the
-    coordinating container for member studies — so there is nothing to fabricate,
-    and requiring the user to `datalad create` it by hand first would be ceremony
-    with no decision in it.
+    it holds real acquired data, so authoring one is another tool's job. A
+    superstudy holds no data of its own, so there is nothing to fabricate, and
+    requiring a `datalad create` by hand first would be ceremony with no decision
+    in it.
 
     Adoption is not a separate mode: a name that is already a dataset is used as
     it stands, campaigns and all.
@@ -568,25 +547,21 @@ def init(
     if campaign.exists():
         sys.exit(
             f"campaign {label!r} already exists: {campaign}\n"
-            f"A campaign is a config epoch — start another one under a new "
-            f"label rather than editing this one's identity."
+            f"Start another one under a new label rather than editing this "
+            f"one's identity."
         )
     if not app_args:
         sys.exit("--apps must name at least one BIDS-App config")
 
     # The level's single-writer lock, held across the write and the save: init
     # commits at the study root, where a tick or an add-dataset may be mid-save.
-    # The lock lives under .mechababs/, so on a fresh study that dir is created
-    # first; the lock file itself is not yet ignored at that moment, but the scope
-    # below is path-scoped to what init declares, so it is neither checked nor
-    # swept in.
+    # On a fresh study the lock's dir is created first; the lock file is not yet
+    # ignored at that moment, but the save scope is path-scoped to what init
+    # declares, so it is neither checked nor swept in. The level's .gitignore is
+    # declared too: shared by every campaign here, so a second init finds it
+    # committed and the save has nothing to record for it.
     level_gitignore = campaign_mod.level_gitignore_path(study)
     level_gitignore.parent.mkdir(exist_ok=True)
-    # Everything that writes runs inside the scope: it checks the target is clean
-    # first, and commits what the block produced as one attributable node. Two paths
-    # declared: the campaign dir, and the level's .gitignore under .mechababs/ —
-    # shared by every campaign at this level, so a second init finds it committed
-    # and the save has nothing to record for it.
     with (
         flocked(campaign_mod.flock_path(study)),
         campaign_save_scope(study, [campaign, level_gitignore]) as save,
@@ -598,15 +573,11 @@ def init(
         # younger than a save that could reach these paths.
         (campaign / ".gitattributes").write_text(GITATTRIBUTES)
 
-        # Two runtime artifacts, ignored from where each lives, so mechababs' whole
-        # footprint stays under .mechababs/ and the study's own .gitignore is left
-        # alone — untracked-but-not-ignored files would dirty the study, which the
-        # clean-in guards read as unattributable work. The flock belongs to the
-        # LEVEL (every campaign here takes the same one), so it is ignored from
-        # .mechababs/ itself — written by the first init here and left alone by
-        # every later one: the file is shared, and may carry a user's own lines.
-        # The venv is this campaign's, ephemeral and rebuilt from the lock, and is
-        # ignored from inside its own dir.
+        # Two runtime artifacts, each ignored from where it lives, so mechababs'
+        # whole footprint stays under .mechababs/ and the study's own .gitignore is
+        # left alone. The flock belongs to the LEVEL, so its .gitignore is written
+        # by the first init here and left alone by every later one (shared, and
+        # may carry a user's own lines); the venv is this campaign's.
         if not level_gitignore.exists():
             level_gitignore.write_text(f"{campaign_mod.FLOCK_FILENAME}\n")
         (campaign / ".gitignore").write_text(f"{campaign_mod.VENV_DIRNAME}/\n")
@@ -629,10 +600,8 @@ def init(
         )
 
         # Header only, either way: which source datasets a campaign acts on is an
-        # explicit selection, made by `add-dataset`, not implied by init. At a
-        # superstudy no members are selected yet, so there is nothing to fan out to
-        # -- a member's own campaign footprint is written when add-dataset first
-        # selects into it.
+        # explicit selection, made by `add-dataset`, which also writes a member's
+        # own campaign footprint when it first selects into one.
         if superstudy:
             (campaign / campaign_mod.MEMBERS_FILENAME).write_text(
                 campaign_mod.initial_members_header()
@@ -650,8 +619,7 @@ def init(
         else:
             mechababs_req, mechababs_source = running_mechababs_pin()
         # No --babs: babs stays a plain dependency, so uv resolves the latest release
-        # from PyPI and freezes that version in the lock. A git ref is the override,
-        # for running a PR branch (or a local one) through a campaign.
+        # from PyPI and freezes that version in the lock.
         babs_source = (
             git_source(*parse_source_spec(babs_spec, "babs")) if babs_spec else None
         )
