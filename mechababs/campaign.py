@@ -1,6 +1,6 @@
 """campaign.py — a campaign's layout, its selection, and its env guard.
 
-A campaign is a **config epoch**, not a dataset: one pinned environment, one bundle
+A campaign is not a dataset. It is one pinned environment, one bundle
 of BIDS-App configs, one cluster, and the state of that root's cells under it. It
 lives at ``<root>/.mechababs/campaigns/<label>/`` (docs/output_structure.md), and a
 root accumulates campaigns over time — a set of derivatives now, another a year

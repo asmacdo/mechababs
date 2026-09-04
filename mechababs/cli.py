@@ -41,7 +41,7 @@ def cmd_campaign_init(args):
 
     The superstudy and the campaign are named separately because they are not the
     same thing and do not share a lifetime: one superstudy accumulates many
-    campaigns, each its own label and config epoch.
+    campaigns, each with its own label, configs and lock.
     """
     if args.superstudy:
         root = campaign_init.create_superstudy(args.superstudy)
@@ -211,7 +211,7 @@ def main():
         "init",
         help="create a campaign in the study you are standing in",
         description=(
-            "Create a campaign — one config epoch — inside an existing study: copy "
+            "Create a campaign inside an existing study: copy "
             "your app + cluster configs into .mechababs/campaigns/<label>/, pin "
             "mechababs + babs into a uv.lock, build the campaign's venv from that "
             "lock, and write the empty statefile. Which source datasets the campaign "

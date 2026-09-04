@@ -348,7 +348,7 @@ def _stage_add_dataset_selects_a_member(superstudy):
 
     member = superstudy / MEMBER
 
-    # --- what the member received: the config epoch, made local ---------------
+    # --- what the member received: the configs and the lock, made local -------
     member_campaign = campaign_mod.campaign_dir(member, LABEL)
     assert member_campaign.is_dir(), "the member got no campaign footprint"
     for name in (ANCHOR, CHAIN):

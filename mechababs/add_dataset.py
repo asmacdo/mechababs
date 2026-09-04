@@ -180,8 +180,7 @@ def write_member_footprint(superstudy, member, label):
 
     A member receives the campaign at the moment it is first selected into it,
     which is why ``campaign init`` at a super fans out to nothing: no members are
-    chosen yet. The copy is the config epoch made local — the same configs and the
-    same lock — so the member reproduces its own derivatives from its own contents,
+    chosen yet. The copy is the same configs and the same lock, so the member reproduces its own derivatives from its own contents,
     without the superstudy.
 
     No ``env.sh`` and no venv: the operational environment lives at the configured
