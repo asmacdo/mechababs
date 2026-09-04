@@ -394,6 +394,18 @@ def test_pyproject_pins_mechababs_and_babs_by_ref(study, configs, stub_env):
     assert "[build-system]" not in pyproject
 
 
+def test_a_config_path_with_a_literal_tilde_is_expanded(tmp_path, monkeypatch):
+    # `--apps a.yaml,~/b.yaml`: the shell expands only a word-initial `~`, so the
+    # second path arrives with the `~` still in it
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "MRIQC-24.0.2.yaml").write_text("{}\n")
+    dest = tmp_path / "staged"
+    assert campaign_init.stage_config(dest, "~/MRIQC-24.0.2.yaml", "app") == (
+        "MRIQC-24.0.2.yaml"
+    )
+    assert (dest / "MRIQC-24.0.2.yaml").is_file()
+
+
 def test_a_local_checkout_pin_becomes_a_file_url(tmp_path):
     # dev mode: run a whole campaign against a branch that exists only on disk
     checkout = tmp_path / "babs-checkout"
