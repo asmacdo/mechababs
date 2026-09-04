@@ -5,6 +5,9 @@
 # this composes the same way a real cluster config does (dev-exercises-prod).
 script_preamble: |
   PATH=/opt/conda/envs/babs/bin:$PATH
+  # The campaign venv in front, conda's bin behind it for git-annex and singularity:
+  # the job's python tools (babs's deps, duct) come from the venv, as on a real site.
+  source "{{MECHABABS_VENV}}/bin/activate"
   # Supply $JOB_TMP so pipeline YAMLs can bind container /tmp to real disk with
   # the same `-B $JOB_TMP:/tmp` line they use on real clusters (see
   # examples/clusters/dartmouth.yaml). Rooted at the container-writable /tmp; the SLURM
