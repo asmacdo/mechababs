@@ -446,7 +446,7 @@ def _stage_fanout_scaffold(superstudy):
     assert "superstudy iterate over 1 member(s)" in run.stderr, run.stderr
 
     member = superstudy / MEMBER
-    derivative = f"derivatives/{ANCHOR}+{DATASET_ID}"
+    derivative = f"derivatives/{ANCHOR}+{DATASET_ID}+{LABEL}"
 
     assert (member / derivative).is_dir(), (
         f"the fan-out did not scaffold a derivative at {derivative} — if the error "
@@ -495,7 +495,7 @@ def _stage_fanout_submit_and_merge(superstudy):
         return
 
     member = superstudy / MEMBER
-    project = member / "derivatives" / f"{ANCHOR}+{DATASET_ID}"
+    project = member / "derivatives" / f"{ANCHOR}+{DATASET_ID}+{LABEL}"
     anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
 
     # --- iterate: the cell is scaffolded and nothing is submitted -> submit ---
@@ -571,7 +571,7 @@ def _stage_a_second_member_and_narrowing(superstudy, study_template):
     # --- narrowing: name the second member, and only it moves ------------------
     run = _at_super(superstudy, "iterate", "--study", MEMBER_2, "--batch", "1")
     assert "superstudy iterate over 1 member(s)" in run.stderr, run.stderr
-    assert (second / "derivatives" / f"{ANCHOR}+{DATASET_ID}").is_dir(), (
+    assert (second / "derivatives" / f"{ANCHOR}+{DATASET_ID}+{LABEL}").is_dir(), (
         "the narrowed iterate did not advance the member it named"
     )
     assert _git(superstudy / MEMBER, "rev-parse", "HEAD").strip() == first_before, (
@@ -683,7 +683,7 @@ def _stage_a_drifted_member_is_refused_until_acknowledged(superstudy):
 
     # --- and the work resumes ---------------------------------------------------
     run = _at_super(superstudy, "iterate", "--study", MEMBER, "--batch", "1")
-    assert (member / "derivatives" / f"{CHAIN}+{DATASET_ID}").is_dir(), (
+    assert (member / "derivatives" / f"{CHAIN}+{DATASET_ID}+{LABEL}").is_dir(), (
         f"the acknowledged member did not advance:\n{run.stderr}"
     )
     _assert_every_level_clean(superstudy, "the iterate after acknowledgment", MEMBER)

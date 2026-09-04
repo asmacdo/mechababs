@@ -485,7 +485,7 @@ def _stage_scaffold(study):
     # The derivative is created in its final home inside the study — nothing is
     # composed or relocated afterwards, which is what keeps run provenance clean.
     # It carries the source id because the sourcedata slot is a named one.
-    derivative = study / "derivatives" / f"{ANCHOR}+{DATASET_ID}"
+    derivative = study / "derivatives" / f"{ANCHOR}+{DATASET_ID}+{LABEL}"
     assert derivative.is_dir(), f"no derivative at {derivative}"
     assert (derivative / ".babs").is_dir(), "not a babs project — babs init did not run"
     assert (derivative / "code" / "processing_inclusion.csv").is_file(), (
@@ -520,7 +520,9 @@ def _stage_scaffold(study):
 
     # The cell's durable fact, and only that cell's.
     rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
-    assert rows[anchor_app]["babs"] == f"derivatives/{ANCHOR}+{DATASET_ID}", rows
+    assert rows[anchor_app]["babs"] == f"derivatives/{ANCHOR}+{DATASET_ID}+{LABEL}", (
+        rows
+    )
     assert rows[anchor_app]["merged"] == "", "scaffold claimed a merge"
     assert rows[f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"]["babs"] == "", (
         "scaffolding one cell advanced its sibling"
@@ -542,7 +544,7 @@ def _stage_scaffold(study):
 
     # Declared outputs, so this also says nothing undeclared was swept in.
     assert set(record["outputs"]) == {
-        f"derivatives/{ANCHOR}+{DATASET_ID}",
+        f"derivatives/{ANCHOR}+{DATASET_ID}+{LABEL}",
         str(campaign_mod.state_path(study, LABEL).relative_to(study)),
         str(pin.relative_to(study)),
         ".gitmodules",
@@ -572,7 +574,7 @@ def _stage_dependent_cell_waits_for_its_producer(study):
     assert "not merged yet" in refused.stderr, refused.stderr
     rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
     assert rows[chain_app]["babs"] == "", "the refused cell was recorded anyway"
-    assert not (study / "derivatives" / f"{CHAIN}+{DATASET_ID}").exists()
+    assert not (study / "derivatives" / f"{CHAIN}+{DATASET_ID}+{LABEL}").exists()
     _assert_clean(study, "the refused dependent cell")
 
     # This is the one moment the waiting state exists — the producer scaffolded, not
@@ -596,7 +598,7 @@ def _stage_submit(study):
         return
     anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
     chain_app = f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"
-    project = study / "derivatives" / f"{ANCHOR}+{DATASET_ID}"
+    project = study / "derivatives" / f"{ANCHOR}+{DATASET_ID}+{LABEL}"
 
     head = _git(study, "rev-parse", "HEAD").strip()
     statefile = campaign_mod.state_path(study, LABEL).read_text()
@@ -638,7 +640,7 @@ def _stage_merge(study):
         return
     anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
     chain_app = f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"
-    derivative = f"derivatives/{ANCHOR}+{DATASET_ID}"
+    derivative = f"derivatives/{ANCHOR}+{DATASET_ID}+{LABEL}"
     project = study / derivative
 
     status = _wait_for_jobs(study, project)
@@ -805,7 +807,7 @@ def _stage_iterate_drives_the_chain_cell(study):
     if _skip_without_scheduler("_stage_iterate_drives_the_chain_cell"):
         return
     chain_app = f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml"
-    derivative = study / "derivatives" / f"{CHAIN}+{DATASET_ID}"
+    derivative = study / "derivatives" / f"{CHAIN}+{DATASET_ID}+{LABEL}"
 
     # Where the campaign stands before the reconciler touches it, as `status` sees it:
     # the anchor done, and the chain no longer waiting — merging the anchor is what
@@ -820,7 +822,7 @@ def _stage_iterate_drives_the_chain_cell(study):
 
     assert (derivative / ".babs").is_dir(), f"no babs project at {derivative}"
     rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
-    assert rows[chain_app]["babs"] == f"derivatives/{CHAIN}+{DATASET_ID}", rows
+    assert rows[chain_app]["babs"] == f"derivatives/{CHAIN}+{DATASET_ID}+{LABEL}", rows
 
     # The tick was a real `datalad run` — iterate itself is a plain
     # coordinator, so what lands in the study is the verb's record, not iterate's.
@@ -840,7 +842,7 @@ def _stage_iterate_drives_the_chain_cell(study):
     assert origin.startswith("ria+file://") and origin.endswith("output_ria#~data"), (
         f"the chained input is not wired to an output-RIA alias: {origin}"
     )
-    assert f"derivatives/{ANCHOR}+{DATASET_ID}/.babs/output_ria" in origin, (
+    assert f"derivatives/{ANCHOR}+{DATASET_ID}+{LABEL}/.babs/output_ria" in origin, (
         f"the chained input points somewhere other than the producer: {origin}"
     )
     # And babs resolved it: the producer's output is installed as an input
@@ -914,7 +916,7 @@ def _stage_retire_clears_a_cell_so_it_can_be_redone(study):
     rung, and a re-scaffold is `babs init` and git.
     """
     anchor_app = f"{campaign_mod.APPS_DIRNAME}/{ANCHOR}.yaml"
-    derivative_rel = f"derivatives/{ANCHOR}+{DATASET_ID}"
+    derivative_rel = f"derivatives/{ANCHOR}+{DATASET_ID}+{LABEL}"
     derivative = study / derivative_rel
     # A sibling of the study, so the move is a rename rather than a copy — and so the
     # outside-the-study rule is exercised against a real neighbouring directory.
@@ -943,7 +945,7 @@ def _stage_retire_clears_a_cell_so_it_can_be_redone(study):
         study, LABEL, "retire-derivative", derivative_rel, "--path", str(attic)
     )
 
-    parked = attic / f"{study.name}-{ANCHOR}+{DATASET_ID}-attempt-1"
+    parked = attic / f"{study.name}-{ANCHOR}+{DATASET_ID}+{LABEL}-attempt-1"
     assert parked.is_dir(), sorted(p.name for p in attic.iterdir())
     assert (parked / "logs").is_dir(), "the archive lost the logs it exists to keep"
     assert campaign_mod.dataset_id(parked) == before_id, (
