@@ -49,21 +49,25 @@ def source_id(source_dataset):
     return Path(source_dataset).name
 
 
-def derivative_name(source_dataset, app_config):
-    """The derivative directory: ``<app stem>`` (+``+<id>`` for a named sourcedata).
+def derivative_name(source_dataset, app_config, label):
+    """The derivative directory: ``<app stem>[+<id>]+<label>``.
 
-    A cell is (source dataset x app config), so ``<Tool>-<Ver>+<stage>`` alone
-    would collide the moment a study holds two source datasets. A generic slot
-    carries no id — its directory name is not one.
+    A cell is (source dataset x app config) in one campaign, and the name carries
+    each part that can differ. ``<Tool>-<Ver>+<stage>`` alone would collide the
+    moment a study holds two source datasets; a generic slot carries no id, since
+    its directory name is not one. The campaign label comes last: a study
+    accumulates campaigns, and without it a new campaign could not produce the
+    same cell without first retiring the previous campaign's derivative.
     """
     stem = app_stem(app_config)
     dsid = source_id(source_dataset)
-    return stem if dsid in GENERIC_SOURCEDATA_SLOTS else f"{stem}+{dsid}"
+    name = stem if dsid in GENERIC_SOURCEDATA_SLOTS else f"{stem}+{dsid}"
+    return f"{name}+{label}"
 
 
-def derivative_path(source_dataset, app_config):
+def derivative_path(source_dataset, app_config, label):
     """The derivative's STUDY-RELATIVE path — what the ``babs`` column records."""
-    return f"derivatives/{derivative_name(source_dataset, app_config)}"
+    return f"derivatives/{derivative_name(source_dataset, app_config, label)}"
 
 
 def inclusion_pin(study, label, source_dataset, app_config):
@@ -257,7 +261,7 @@ def resolve_inclusion(study, label, row, app_config_data, limit):
     return pin
 
 
-def babs_init_command(study, row, app_config_data, inclusion, babs_config):
+def babs_init_command(study, row, project, app_config_data, inclusion, babs_config):
     """The ``babs init`` argv for this cell, with study-relative paths.
 
     Study-relative because the run's cwd is the study: the recorded command has to
@@ -277,7 +281,7 @@ def babs_init_command(study, row, app_config_data, inclusion, babs_config):
     cmd = [
         campaign_mod.babs_bin(),
         "init",
-        derivative_path(row["source_dataset"], row["app_config"]),
+        project,
         "--container-ds",
         resolve_container_ds(study, container),
         "--container-name",
@@ -329,7 +333,7 @@ def scaffold(study, label, source_dataset, app_config):
     require_producer_merged(rows, row)
     input_origins = resolve_input_origins(study, label, rows, row, app_config_data)
 
-    project = derivative_path(source_dataset, app_config)
+    project = derivative_path(source_dataset, app_config, label)
     print(
         f"\n=== scaffold {source_dataset} / {app_stem(app_config)} -> {project} ===",
         file=sys.stderr,
@@ -355,7 +359,9 @@ def scaffold(study, label, source_dataset, app_config):
             input_origins=input_origins,
             campaign_venv=campaign_mod.venv_path(operated_at, label),
         )
-        cmd = babs_init_command(study, row, app_config_data, inclusion, babs_config)
+        cmd = babs_init_command(
+            study, row, project, app_config_data, inclusion, babs_config
+        )
         print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr)
         subprocess.run([str(c) for c in cmd], cwd=str(study), check=True)
 

@@ -56,12 +56,21 @@ def test_a_named_sourcedata_carries_its_id_into_the_derivative():
     """A cell is (source dataset x app), so the app stem alone would collide the
     moment a study holds two source datasets."""
     assert (
-        scaffold.derivative_name("sourcedata/ds000001", ANCHOR)
-        == "SimBIDS-0.0.3+anchor+ds000001"
+        scaffold.derivative_name("sourcedata/ds000001", ANCHOR, LABEL)
+        == "SimBIDS-0.0.3+anchor+ds000001+e2e"
     )
     assert (
-        scaffold.derivative_path("sourcedata/ds000001", ANCHOR)
-        == "derivatives/SimBIDS-0.0.3+anchor+ds000001"
+        scaffold.derivative_path("sourcedata/ds000001", ANCHOR, LABEL)
+        == "derivatives/SimBIDS-0.0.3+anchor+ds000001+e2e"
+    )
+
+
+def test_the_campaign_label_comes_last():
+    """A study accumulates campaigns; without the label a second campaign could
+    not produce the same cell until the first one's derivative was retired."""
+    assert (
+        scaffold.derivative_name("sourcedata/ds000001", ANCHOR, "c2")
+        == "SimBIDS-0.0.3+anchor+ds000001+c2"
     )
 
 
@@ -69,7 +78,7 @@ def test_a_named_sourcedata_carries_its_id_into_the_derivative():
 def test_a_generic_sourcedata_slot_carries_no_id(slot):
     """`raw`/`rawbids` are slots, not dataset ids — there is nothing to collide
     with, and nothing meaningful to put in the name."""
-    assert scaffold.derivative_name(slot, ANCHOR) == "SimBIDS-0.0.3+anchor"
+    assert scaffold.derivative_name(slot, ANCHOR, LABEL) == "SimBIDS-0.0.3+anchor+e2e"
 
 
 def test_the_inclusion_pin_is_filename_safe_and_keeps_the_whole_path(tmp_path):
@@ -236,7 +245,7 @@ def _row(study, app_config):
 def test_scaffold_inits_the_derivative_and_records_the_cell(study, babs_calls):
     project = scaffold.scaffold(study, LABEL, SOURCEDATA, ANCHOR)
 
-    assert project == "derivatives/SimBIDS-0.0.3+anchor+ds999999"
+    assert project == "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e"
     assert _row(study, ANCHOR)["babs"] == project, "the cell was not recorded"
     assert _row(study, CHAIN)["babs"] == "", "a sibling cell was touched"
 
@@ -334,7 +343,7 @@ def test_a_dependent_cell_is_refused_while_its_producer_is_unmerged(study, babs_
 
 def _merge_the_producer(study):
     rows = campaign_mod.read_state(study, LABEL)
-    rows[0]["babs"] = "derivatives/SimBIDS-0.0.3+anchor+ds999999"
+    rows[0]["babs"] = "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e"
     rows[0]["merged"] = "true"
     campaign_mod.write_state(study, LABEL, rows)
 
@@ -349,7 +358,7 @@ def test_a_merged_producer_wires_its_output_ria_into_the_dependent(study, babs_c
     ]
     assert origin.startswith("ria+file://"), origin
     assert origin.endswith("/.babs/output_ria#~data"), origin
-    assert "derivatives/SimBIDS-0.0.3+anchor+ds999999" in origin
+    assert "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e" in origin
 
 
 def test_a_depends_on_edge_alone_wires_nothing(study, babs_calls):
@@ -406,7 +415,7 @@ def test_an_input_whose_producer_cell_is_unmerged_is_refused(study, babs_calls):
     )
     rows = campaign_mod.read_state(study, LABEL)
     rows[1]["depends_on"] = ""  # the statefile mirrors the config's declaration
-    rows[0]["babs"] = "derivatives/SimBIDS-0.0.3+anchor+ds999999"
+    rows[0]["babs"] = "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e"
     campaign_mod.write_state(study, LABEL, rows)
 
     with pytest.raises(SystemExit, match="not merged yet"):

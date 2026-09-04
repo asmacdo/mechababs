@@ -54,7 +54,7 @@ def test_scaffold_declares_the_four_paths_it_writes(tmp_path):
     registers the new derivative as a subdataset."""
     outputs = dispatch.scaffold_outputs(tmp_path, LABEL, SOURCEDATA, ANCHOR)
     assert outputs == [
-        "derivatives/SimBIDS-0.0.3+anchor+ds999999",
+        "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e",
         ".mechababs/campaigns/e2e/sourcedata+derivatives.tsv",
         (
             ".mechababs/campaigns/e2e/inclusions/"
@@ -66,9 +66,9 @@ def test_scaffold_declares_the_four_paths_it_writes(tmp_path):
 
 
 def test_the_message_says_which_cell_advanced_and_where(tmp_path):
-    assert dispatch.scaffold_message(SOURCEDATA, ANCHOR) == (
+    assert dispatch.scaffold_message(SOURCEDATA, ANCHOR, LABEL) == (
         "mechababs scaffold sourcedata/ds999999 SimBIDS-0.0.3+anchor -> "
-        "derivatives/SimBIDS-0.0.3+anchor+ds999999"
+        "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e"
     )
 
 
@@ -237,7 +237,7 @@ def test_merge_declares_the_two_paths_it_writes(tmp_path):
     derivative was registered at scaffold; merge only moves its HEAD."""
     outputs = dispatch.merge_outputs(tmp_path, LABEL, SOURCEDATA, ANCHOR)
     assert outputs == [
-        "derivatives/SimBIDS-0.0.3+anchor+ds999999",
+        "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e",
         ".mechababs/campaigns/e2e/sourcedata+derivatives.tsv",
     ]
     assert dispatch.GITMODULES not in outputs

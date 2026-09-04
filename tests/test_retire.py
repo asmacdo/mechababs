@@ -23,7 +23,7 @@ from mechababs import campaign as campaign_mod
 from mechababs import retire
 
 APP = "bids-app-configs/MRIQC-24.0.2.yaml"
-DERIVATIVE = "derivatives/MRIQC-24.0.2+ds000001"
+DERIVATIVE = "derivatives/MRIQC-24.0.2+ds000001+nprep"
 
 # One scaffolded, merged cell — the state a derivative that has to be redone is
 # actually in. Identity and topology are filled so the reset can be shown to leave
@@ -284,7 +284,7 @@ def test_a_destination_outside_both_is_accepted(superstudy, saves, tmp_path):
 
 def test_the_archive_is_named_for_the_study_and_the_derivative(study, saves, tmp_path):
     retire.run_retire(DERIVATIVE, dest=str(tmp_path / "attic"))
-    parked = tmp_path / "attic" / "study-ds000001-MRIQC-24.0.2+ds000001-attempt-1"
+    parked = tmp_path / "attic" / "study-ds000001-MRIQC-24.0.2+ds000001+nprep-attempt-1"
     assert parked.is_dir(), sorted(p.name for p in (tmp_path / "attic").iterdir())
     assert (parked / "logs" / "job.o").read_text() == "the evidence\n"
     assert not (study / DERIVATIVE).exists(), "the derivative is still in the study"
@@ -294,11 +294,13 @@ def test_attempt_numbers_take_the_first_free_slot(study, saves, tmp_path):
     """Never clobbers: the same cell retired twice lands beside its predecessor."""
     attic = tmp_path / "attic"
     for taken in ("attempt-1", "attempt-2"):
-        (attic / f"study-ds000001-MRIQC-24.0.2+ds000001-{taken}").mkdir(parents=True)
+        (attic / f"study-ds000001-MRIQC-24.0.2+ds000001+nprep-{taken}").mkdir(
+            parents=True
+        )
 
     retire.run_retire(DERIVATIVE, dest=str(attic))
 
-    parked = attic / "study-ds000001-MRIQC-24.0.2+ds000001-attempt-3"
+    parked = attic / "study-ds000001-MRIQC-24.0.2+ds000001+nprep-attempt-3"
     assert (parked / "logs" / "job.o").is_file()
 
 
@@ -316,8 +318,8 @@ def test_one_dest_collects_attempts_from_two_studies(tmp_path, saves, monkeypatc
         retire.run_retire(DERIVATIVE, dest=str(attic))
 
     assert sorted(p.name for p in attic.iterdir()) == [
-        "study-ds000001-MRIQC-24.0.2+ds000001-attempt-1",
-        "study-ds000002-MRIQC-24.0.2+ds000001-attempt-1",
+        "study-ds000001-MRIQC-24.0.2+ds000001+nprep-attempt-1",
+        "study-ds000002-MRIQC-24.0.2+ds000001+nprep-attempt-1",
     ]
 
 
@@ -348,7 +350,7 @@ def test_a_cross_filesystem_archive_copies_and_then_deletes(study, saves, monkey
 
     retire.run_retire(DERIVATIVE, dest=str(attic))
 
-    parked = attic / "study-ds000001-MRIQC-24.0.2+ds000001-attempt-1"
+    parked = attic / "study-ds000001-MRIQC-24.0.2+ds000001+nprep-attempt-1"
     assert (parked / "logs" / "job.o").read_text() == "the evidence\n"
     assert (parked / ".git" / "annex" / "objects").is_dir(), "the annex did not travel"
     assert not (study / DERIVATIVE).exists(), "the original was left behind"
@@ -395,7 +397,7 @@ def test_only_the_retired_cell_is_reset(tmp_path, saves, monkeypatch):
     sibling = {
         **CELL,
         "app_config": "bids-app-configs/fMRIPrep-25.2.5+anat.yaml",
-        "babs": "derivatives/fMRIPrep-25.2.5+anat+ds000001",
+        "babs": "derivatives/fMRIPrep-25.2.5+anat+ds000001+nprep",
     }
     _make_campaign(root, rows=[CELL, sibling])
     _make_derivative(root)

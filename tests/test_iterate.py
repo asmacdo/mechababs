@@ -23,7 +23,7 @@ LABEL = "e2e"
 ANCHOR = "bids-app-configs/SimBIDS-0.0.3+anchor.yaml"
 CHAIN = "bids-app-configs/SimBIDS-0.0.3+chain.yaml"
 SOURCEDATA = "sourcedata/ds999999"
-ANCHOR_PROJECT = "derivatives/SimBIDS-0.0.3+anchor+ds999999"
+ANCHOR_PROJECT = "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e"
 
 ALL_DONE = {"total": 2, "submitted": 2, "done": 2, "failed": 0}
 STILL_RUNNING = {"total": 2, "submitted": 2, "done": 1, "failed": 0}
@@ -118,7 +118,7 @@ def dispatch_log(monkeypatch):
                 rows = campaign_mod.read_state(study_arg, label)
                 row = campaign_mod.find_cell(rows, source_dataset, app_config)
                 row[column] = value or scaffold_mod.derivative_path(
-                    source_dataset, app_config
+                    source_dataset, app_config, label
                 )
                 campaign_mod.write_state(study_arg, label, rows)
 
@@ -973,7 +973,7 @@ def test_a_merge_that_is_not_the_last_holds_the_lifecycle_at_active(
     unmerged, so its subject is the transition; the second is the last, so its
     subject is the lifecycle move."""
     root, members, saves = superstudy
-    chain_project = scaffold_mod.derivative_path(SOURCEDATA, CHAIN)
+    chain_project = scaffold_mod.derivative_path(SOURCEDATA, CHAIN, LABEL)
     write(
         members[0],
         [cell(ANCHOR, babs=ANCHOR_PROJECT), cell(CHAIN, babs=chain_project)],

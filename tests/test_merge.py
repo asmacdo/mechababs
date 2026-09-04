@@ -20,7 +20,7 @@ LABEL = "e2e"
 ANCHOR = "bids-app-configs/SimBIDS-0.0.3+anchor.yaml"
 CHAIN = "bids-app-configs/SimBIDS-0.0.3+chain.yaml"
 SOURCEDATA = "sourcedata/ds999999"
-PROJECT = "derivatives/SimBIDS-0.0.3+anchor+ds999999"
+PROJECT = "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e"
 
 ALL_DONE = {"total": 2, "submitted": 2, "done": 2, "failed": 0}
 STILL_RUNNING = {"total": 2, "submitted": 2, "done": 1, "failed": 0}

@@ -101,18 +101,18 @@ def scaffold_outputs(study, label, source_dataset, app_config):
     """
     pin = scaffold_mod.inclusion_pin(study, label, source_dataset, app_config)
     return [
-        scaffold_mod.derivative_path(source_dataset, app_config),
+        scaffold_mod.derivative_path(source_dataset, app_config, label),
         str(campaign_mod.state_path(study, label).relative_to(study)),
         str(pin.relative_to(study)),
         GITMODULES,
     ]
 
 
-def scaffold_message(source_dataset, app_config):
+def scaffold_message(source_dataset, app_config, label):
     return (
         f"mechababs scaffold {source_dataset} "
         f"{scaffold_mod.app_stem(app_config)} -> "
-        f"{scaffold_mod.derivative_path(source_dataset, app_config)}"
+        f"{scaffold_mod.derivative_path(source_dataset, app_config, label)}"
     )
 
 
@@ -127,7 +127,7 @@ def merge_outputs(study, label, source_dataset, app_config):
     covers it.)
     """
     return [
-        scaffold_mod.derivative_path(source_dataset, app_config),
+        scaffold_mod.derivative_path(source_dataset, app_config, label),
         str(campaign_mod.state_path(study, label).relative_to(study)),
     ]
 
@@ -249,7 +249,7 @@ def scaffold(study, label, source_dataset, app_config, *, dry_run=False):
         study,
         inner_command("scaffold", label, source_dataset, app_config),
         outputs=scaffold_outputs(study, label, source_dataset, app_config),
-        message=scaffold_message(source_dataset, app_config),
+        message=scaffold_message(source_dataset, app_config, label),
         dry_run=dry_run,
     )
 

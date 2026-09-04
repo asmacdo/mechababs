@@ -18,8 +18,8 @@ LABEL = "e2e"
 ANCHOR = "bids-app-configs/SimBIDS-0.0.3+anchor.yaml"
 CHAIN = "bids-app-configs/SimBIDS-0.0.3+chain.yaml"
 SOURCEDATA = "sourcedata/ds999999"
-ANCHOR_PROJECT = "derivatives/SimBIDS-0.0.3+anchor+ds999999"
-CHAIN_PROJECT = "derivatives/SimBIDS-0.0.3+chain+ds999999"
+ANCHOR_PROJECT = "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e"
+CHAIN_PROJECT = "derivatives/SimBIDS-0.0.3+chain+ds999999+e2e"
 
 BABS_COLUMNS = [
     "sub_id",
