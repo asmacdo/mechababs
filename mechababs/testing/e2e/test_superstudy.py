@@ -7,13 +7,12 @@ split is the whole subject of this module, and it is where the layer's bugs live
 everything that "just works" at a study because the two coincide has to be checked
 again here, once, against a real filesystem.
 
-**Why an end-to-end test and not more unit tests.** The layer's first field failure
-was the env-match guard resolving the campaign environment at the *member* — which by
-construction has no venv — so no superstudy transition could scaffold at all. 282 unit
-tests passed through it, because a unit test of the guard is written against the same
-assumption the guard makes. Only a real fan-out, dispatching a real inner verb with a
-member as cwd, asks the question the right way round. `_stage_fanout_scaffold` is that
-question.
+**Why an end-to-end test and not more unit tests.** The layer's characteristic bug
+is resolving the campaign environment at the *member*, which by construction has
+no venv, so no superstudy transition can scaffold at all. A unit test of the guard
+is written against the same assumption the guard makes; only a real fan-out,
+dispatching a real inner verb with a member as cwd, asks the question the right way
+round. `_stage_fanout_scaffold` is that question.
 
 **Stages over one superstudy, like `test_spine`.** `campaign init` builds a venv, which
 is the slowest thing here, so the stages share one campaign rather than paying for it
@@ -432,14 +431,12 @@ def _stage_a_member_is_not_operated_from(superstudy):
 
 
 def _stage_fanout_scaffold(superstudy):
-    """The fan-out really scaffolds — the regression this whole module exists for.
+    """The fan-out really scaffolds — the question this whole module exists to ask.
 
     `iterate` at the superstudy dispatches an inner verb with the **member** as cwd
-    while the running interpreter is the **superstudy's** venv. That is the only
-    configuration in which mechababs' two levels disagree about where the environment
-    is, and resolving it at the member — which by construction has none — meant no
-    superstudy transition could scaffold at all. Unit tests could not see it; this is
-    the shape that asks the question properly.
+    while the running interpreter is the **superstudy's** venv: the only
+    configuration in which mechababs' two levels disagree about where the
+    environment is (see the module docstring).
 
     Beyond that, this is scaffold's usual contract, checked one level up: the
     derivative in its final home inside the member, a run record in the member saying
@@ -600,12 +597,10 @@ def _stage_a_drifted_member_is_refused_until_acknowledged(superstudy):
     run records into a study whose own committed history names other tools, which is
     provenance falsification one level below where the outer guard can see it.
 
-    So a drifted member is **refused, never auto-refreshed**. Nothing here reconciles
-    the member for you: moving its remaining work onto a new environment is a human
-    act, and `update-env --study` is the act. The refusal is not iterate's — iterate
-    does no lock comparison at all — it is the dispatched inner verb checking the
-    running venv against the study it is standing in, which is the same check that
-    lets a detached rerun validate itself.
+    So a drifted member is **refused, never auto-refreshed**: moving its remaining
+    work onto a new environment is a human act, and `update-env --study` is the act.
+    The refusal is the dispatched inner verb's (`require_study_lock_match`), not
+    iterate's, which does no lock comparison at all.
 
     Needs a scheduler: the member's advanceable cell is the chain one, whose gate
     only opened because the anchor really merged.
@@ -708,7 +703,7 @@ def _stage_campaign_init_adopts_the_superstudy(
     A superstudy accumulates campaigns over time — each its own label and config
     epoch — so pointing `--superstudy` at one that already exists must adopt it as it
     stands rather than refuse or re-create. This is the path a user takes on every
-    campaign after their first, and the one Unity takes when resuming.
+    campaign after their first.
 
     Last, deliberately: it builds a second venv, and a failure here should not mask
     the spine above it.

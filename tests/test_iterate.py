@@ -5,9 +5,9 @@ real scheduler and a real container, which is the e2e's job. What is mechababs' 
 is the decision: given a shard and (for an active cell) a set of live counts, which
 verb does each cell get, and which cells get nothing at all.
 
-The dispatch_log mutate the shard the way the real verbs do (scaffold records `babs`, merge
-sets `merged`), because `iterate` re-reads it between cells — so a stub that only
-recorded the call would make the multi-cell cases lie.
+The dispatch stubs mutate the shard the way the real verbs do (scaffold records
+`babs`, merge sets `merged`), because `iterate` re-reads it between cells — so a
+stub that only recorded the call would make the multi-cell cases lie.
 """
 
 import sys

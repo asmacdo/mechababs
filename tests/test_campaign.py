@@ -6,7 +6,7 @@ entirely, and a venv uv says disagrees with the lock — are tested explicitly. 
 inner verbs' check (`require_study_lock_match`) is the study-local half, and the
 member hint it grows is tested against the superstudy marker that gates it.
 
-Freshness is a `uv sync --check` subprocess now, so these stub it two ways: at
+Freshness is a `uv sync --check` subprocess, so these stub it two ways: at
 `venv_matches_lock` when the test is about what the guard *does* with the answer,
 and at `subprocess.run` when it is about the invocation itself. Nothing here needs a
 real uv — the `uv_build`-marked contract tests are what pin uv's actual behavior.
@@ -280,9 +280,9 @@ def test_a_member_cloned_standalone_reads_as_detached(tmp_path):
     `datalad rerun` of the study's own recorded commands, which is the whole
     re-executability claim.
 
-    A relative marker could not express this. `..` resolves against wherever the
-    clone now sits, so the member silently adopted an unrelated parent directory as
-    the place its environment lives.
+    A relative marker could not express this: `..` resolves against wherever the
+    clone now sits, so the member would silently adopt an unrelated parent directory
+    as the place its environment lives.
     """
     from mechababs import campaign as c
 

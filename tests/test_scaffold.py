@@ -290,11 +290,10 @@ def test_a_members_job_scripts_name_the_superstudys_venv(study, babs_calls):
     campaign is operated from.
 
     A member of a super-campaign is given no environment of its own, so a
-    member-level path leaves each job activating a file that does not exist: on
-    Unity every task of a 16-job array died at its first command with exit 127.
-    No test caught it because the one cluster config the e2e runs
+    member-level path leaves every job activating a file that does not exist and
+    dying at its first command. The one cluster config the e2e runs
     (`examples/clusters/test-docker.yaml`) hardcodes its PATH instead of using the
-    placeholder, so the substitution is exercised nowhere else.
+    placeholder, so the substitution is exercised nowhere but here.
     """
     config = campaign_mod.config_path(study, LABEL)
     config.write_text(

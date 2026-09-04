@@ -343,17 +343,14 @@ def test_editing_the_rev_re_resolves_on_a_bare_relock(tmp_path):
 def test_a_detached_study_can_rebuild_and_pass_its_own_lock_check(
     tmp_path, monkeypatch
 ):
-    """The whole reason the stamp had to go, end to end and for real.
+    """Detached reproduction, end to end and for real.
 
     A member footprint is a complete uv project — `pyproject.toml` AND `uv.lock`,
     copied down — so a study cloned away from its superstudy holds everything needed
     to rebuild the environment its history names. Someone does exactly that, then
     `datalad rerun`s a recorded inner command, and the verb's check has to pass on a
-    venv mechababs never built, at a path it has never heard of.
-
-    Under the stamp this was impossible by construction: only `campaign init` wrote
-    one, and a member never gets an init. Here it just works — and drift is still
-    refused, which is the half that keeps the reproduction honest rather than merely
+    venv mechababs never built, at a path it has never heard of — while drift is
+    still refused, the half that keeps the reproduction honest rather than merely
     permissive.
     """
     git_package(tmp_path / "pkg")
