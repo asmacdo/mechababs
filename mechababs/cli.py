@@ -69,7 +69,10 @@ def cmd_campaign_init(args):
         "Next, select it and activate its environment, then add data:", file=sys.stderr
     )
     print(f"  source {rel}/{campaign_mod.ENV_FILENAME}", file=sys.stderr)
-    print("  mechababs add-dataset --sourcedata sourcedata/<id>", file=sys.stderr)
+    member = "--study <member|url> " if args.superstudy else ""
+    print(
+        f"  mechababs add-dataset {member}--sourcedata sourcedata/<id>", file=sys.stderr
+    )
     return 0
 
 

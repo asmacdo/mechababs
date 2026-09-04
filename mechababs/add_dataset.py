@@ -29,6 +29,7 @@ pinned inside that cell's ``datalad run``.
 import contextlib
 import re
 import shutil
+import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
@@ -167,12 +168,34 @@ def resolve_member(superstudy, arg):
             f"--study names a member of the superstudy you are standing in."
         )
     if not study_mod.is_study_root(member):
+        rel = member.relative_to(Path(superstudy)).as_posix()
+        if rel in registered_subdatasets(superstudy):
+            # The first thing anyone hits after a plain clone of a real superstudy:
+            # the members are registered but not installed.
+            sys.exit(
+                f"{rel} is a member of this superstudy but is not installed.\n"
+                f"Install it, then select into it:\n"
+                f"  datalad get -n {rel}"
+            )
         sys.exit(
             f"not a member study: {member}\n"
             f"--study names a study already in this superstudy, or a URL to "
             f"clone one in."
         )
     return member
+
+
+def registered_subdatasets(superstudy):
+    """The paths ``.gitmodules`` registers at ``superstudy``, installed or not."""
+    gitmodules = Path(superstudy) / ".gitmodules"
+    if not gitmodules.is_file():
+        return set()
+    out = subprocess.run(
+        ["git", "config", "--file", str(gitmodules), "--get-regexp", r"\.path$"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    return {line.split(maxsplit=1)[1] for line in out.splitlines() if " " in line}
 
 
 def write_member_footprint(superstudy, member, label):

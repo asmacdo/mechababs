@@ -509,6 +509,22 @@ def test_a_member_that_is_not_a_study_is_refused(superstudy, saves):
     assert "not a member study" in str(excinfo.value)
 
 
+def test_a_registered_but_uninstalled_member_is_named_as_such(superstudy, saves):
+    """After a plain clone of a real superstudy the members are registered in
+    `.gitmodules` but not installed, and the fix is `datalad get -n`, not a re-clone."""
+    root, _ = superstudy
+    (root / ".gitmodules").write_text(
+        '[submodule "study-ds000009"]\n\tpath = study-ds000009\n\turl = ./x\n'
+    )
+    (root / "study-ds000009").mkdir()  # an empty mount point, as git leaves it
+    with pytest.raises(SystemExit) as excinfo:
+        add_dataset.add("sourcedata/ds000001", "study-ds000009")
+    message = str(excinfo.value)
+    assert "not installed" in message
+    assert "datalad get -n study-ds000009" in message
+    assert "not a member study" not in message
+
+
 # --- --study as a URL -------------------------------------------------------
 
 
