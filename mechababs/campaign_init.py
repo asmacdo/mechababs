@@ -178,7 +178,9 @@ def stage_config(dest_dir, arg, what):
         with urllib.request.urlopen(arg) as response:  # http/https only, checked above
             dest.write_bytes(response.read())
         return name
-    source = Path(arg)
+    # The shell expands `~` only at the start of a word, so a `~` inside a
+    # comma-joined `--apps a.yaml,~/b.yaml` arrives literal.
+    source = Path(arg).expanduser()
     if not source.is_file():
         sys.exit(
             f"{what} config not found: {arg}\n"
