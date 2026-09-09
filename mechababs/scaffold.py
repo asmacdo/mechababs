@@ -70,18 +70,31 @@ def derivative_path(source_dataset, app_config, label):
     return f"derivatives/{derivative_name(source_dataset, app_config, label)}"
 
 
-def inclusion_pin(study, label, source_dataset, app_config):
-    """Where this cell's requested subject list is pinned, beside the statefile.
+def cell_key(source_dataset, app_config):
+    """The cell's identity as one filename-safe token: ``<sourcedata>_<app>``.
 
     Both halves of the cell's identity are *paths*, so neither is filename-safe as
     written. The sourcedata half is the whole study-relative path with ``/`` mapped
     to ``-`` (whole, so two datasets whose directories share a basename cannot
     collide); the app half is the config's stem. The result is a key mechababs
     constructs and never parses back, so the ambiguity of ``-`` inside a component
-    costs nothing — and this is the only place the name is derived.
+    costs nothing — and this is the only place the key is derived. Everything the
+    campaign dir keeps per cell (the inclusion pin, the duct records) is named by it.
     """
-    name = f"{source_dataset.replace('/', '-')}_{app_stem(app_config)}.csv"
+    return f"{source_dataset.replace('/', '-')}_{app_stem(app_config)}"
+
+
+def inclusion_pin(study, label, source_dataset, app_config):
+    """Where this cell's requested subject list is pinned, beside the statefile."""
+    name = f"{cell_key(source_dataset, app_config)}.csv"
     return campaign_mod.inclusions_dir(study, label) / name
+
+
+def duct_dir(study, label, source_dataset, app_config):
+    """Where this cell's duct records go: one directory per cell, so every attempt
+    at scaffolding or merging it — a retire-and-redo, a ``datalad rerun`` — lands
+    beside the others and the cell's orchestration history reads out of one place."""
+    return campaign_mod.duct_dir(study, label) / cell_key(source_dataset, app_config)
 
 
 def source_dataset_url(study, source_dataset):
