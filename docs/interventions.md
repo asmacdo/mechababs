@@ -19,10 +19,17 @@ Nothing is written; the flag is this iterate's reading of babs's live counts, an
 `mechababs status` shows the cell as `FAILED`, and `mechababs jobs --failed` lists each failed job with its subject, SLURM id, and the directory its logs are in.
 Read the log, decide what happened, then pick one of the two repairs below.
 
-A transition itself can also fail: a `babs init` that refuses the dataset, a merge that dies partway.
-The `datalad run` then saves nothing, and the con/duct records of the failed attempt are left untracked in the campaign dir's `duct/<cell>/`, so the next `iterate` refuses to start on the dirty study until you have looked.
+A transition itself can also fail or refuse: a `babs init` that dies partway, a member study whose lock copy is behind the superstudy's, a recorded command rerun by hand against a cell that has moved on.
+The `datalad run` then saves nothing, and the con/duct records of the attempt are left untracked in the campaign dir's `duct/<cell>/`, so the next `iterate` refuses to start on the dirty study until you have looked.
 Its `stderr` and `stdout` files hold what the transition printed; `info.json` holds its exit code, wall time and peak memory.
-Keep them with a plain `datalad save` of that directory, or delete them, and the reconciler resumes.
+Keep them, so the study records that the attempt happened, or delete them; either way the reconciler resumes.
+
+```bash
+datalad save -r -d . -m "duct records of the refused scaffold" .mechababs/campaigns/<label>/duct/<cell>   # at a study
+datalad save -r -d . -m "duct records of the refused scaffold" <member>/.mechababs/campaigns/<label>/duct/<cell>   # at a superstudy
+```
+
+The superstudy form is path-scoped through the member, so it lands one commit in the member and one at the superstudy; a save in the member alone would leave the superstudy's gitlink behind, which the next iterate reads as drift.
 
 ## Per-job surgery: repair a derivative in place
 

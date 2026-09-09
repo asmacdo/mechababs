@@ -36,7 +36,7 @@ from pathlib import Path
 
 import yaml
 
-from conftest import BUMP_PACKAGE, bump_declaration
+from conftest import BUMP_PACKAGE, bump_declaration, keep_refused_records
 from mechababs import babs_status
 from mechababs import campaign as campaign_mod
 
@@ -648,7 +648,20 @@ def _stage_a_drifted_member_is_refused_until_acknowledged(superstudy):
     assert _git(member, "rev-parse", "HEAD").strip() == member_before, (
         "the refused iterate still advanced the member"
     )
-    _assert_every_level_clean(superstudy, "the refused iterate", MEMBER, MEMBER_2)
+    # The refusal was dispatched, so it ran under duct and left its records; keeping
+    # them from the super is one save that lands in the member and at the super.
+    keep_refused_records(
+        superstudy,
+        member,
+        LABEL,
+        SOURCEDATA,
+        f"{campaign_mod.APPS_DIRNAME}/{CHAIN}.yaml",
+        "scaffold",
+        "the refused iterate",
+    )
+    _assert_every_level_clean(
+        superstudy, "keeping the refused iterate's records", MEMBER, MEMBER_2
+    )
 
     # --- the acknowledgment, typed exactly as the refusal printed it ------------
     super_before = _git(superstudy, "rev-parse", "HEAD").strip()

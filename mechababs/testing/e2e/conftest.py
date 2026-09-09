@@ -88,6 +88,73 @@ def bump_declaration(campaign, package=BUMP_PACKAGE):
     return package
 
 
+def keep_refused_records(root, study, label, source_dataset, app_config, verb, phase):
+    """The documented recovery from a refused dispatch, asserted and then performed.
+
+    A dispatched verb that refuses (a cell already scaffolded, a producer not merged,
+    a member whose lock is behind) runs under duct like any other, and `--fail-time 0`
+    keeps the refusal's records; the `datalad run` saves nothing on a non-zero exit, so
+    they are left untracked and the next iterate refuses on the dirty study. That is
+    the contract: the operator keeps them with a scoped save, or deletes them. This
+    asserts the refusal left exactly those records and nothing else, then keeps them
+    the way interventions.md says to, from ``root`` — the study itself, or the
+    superstudy, where the path-scoped save lands one commit in the member and one at
+    the super so the gitlink does not read as drift.
+    """
+    from mechababs import scaffold as scaffold_mod
+
+    cell_dir = scaffold_mod.duct_dir(study, label, source_dataset, app_config)
+    porcelain = subprocess.run(
+        ["git", "-C", str(study), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    # One directory line when the cell had no records yet, one line per file when
+    # an earlier run of the cell already tracked some: either way, nothing else.
+    inside = f"?? {cell_dir.relative_to(study)}/"
+    assert porcelain and all(
+        line.startswith(inside) for line in porcelain.splitlines()
+    ), f"{phase} left more than the refusal's duct records behind:\n{porcelain}"
+    # The refusal's records are the untracked ones, read off the same status lines;
+    # a whole-directory line means everything in it is the refusal's.
+    records = []
+    for line in porcelain.splitlines():
+        path = study / line[3:]
+        records += (
+            [p.name for p in path.iterdir()] if line.endswith("/") else [path.name]
+        )
+    records.sort()
+    assert all(r.startswith(f"{verb}_") for r in records), records
+    assert [r.rsplit("_", 1)[-1] for r in records] == [
+        "info.json",
+        "stderr",
+        "stdout",
+        "usage.jsonl",
+    ], (
+        f"{phase}: the refusal's duct records are not the four expected:\n{records}\n"
+        f"status --porcelain:\n{porcelain}"
+    )
+
+    # From inside the campaign venv, as the operator types it: its datalad, not
+    # whichever one the host or container has on PATH.
+    from mechababs import campaign as campaign_mod
+
+    save = (
+        f'. "{campaign_mod.env_path(root, label)}" && datalad save -r -d . '
+        f'-m "duct records of the refused {verb}" "$1"'
+    )
+    kept = subprocess.run(
+        ["bash", "-c", save, "keep", str(cell_dir.relative_to(root))],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+    )
+    assert kept.returncode == 0, (
+        f"{phase}: keeping the refusal's records failed:\n{kept.stdout}\n{kept.stderr}"
+    )
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--cluster-config",

@@ -42,7 +42,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from conftest import BUMP_PACKAGE, bump_declaration
+from conftest import BUMP_PACKAGE, bump_declaration, keep_refused_records
 from mechababs import babs_status
 from mechababs import campaign as campaign_mod
 from mechababs import dispatch
@@ -592,7 +592,16 @@ def _stage_scaffold(study):
     again = _dispatch(study, "scaffold", SOURCEDATA, anchor_app, check=False)
     assert again.returncode != 0, "a scaffolded cell was scaffolded again"
     assert "already scaffolded" in again.stderr, again.stderr
-    _assert_clean(study, "the refused re-scaffold")
+    keep_refused_records(
+        study,
+        study,
+        LABEL,
+        SOURCEDATA,
+        anchor_app,
+        "scaffold",
+        "the refused re-scaffold",
+    )
+    _assert_clean(study, "keeping the refused re-scaffold's records")
 
 
 def _stage_dependent_cell_waits_for_its_producer(study):
@@ -610,7 +619,16 @@ def _stage_dependent_cell_waits_for_its_producer(study):
     rows = {r["app_config"]: r for r in _state_rows(study, LABEL)}
     assert rows[chain_app]["babs"] == "", "the refused cell was recorded anyway"
     assert not (study / "derivatives" / f"{CHAIN}+{DATASET_ID}+{LABEL}").exists()
-    _assert_clean(study, "the refused dependent cell")
+    keep_refused_records(
+        study,
+        study,
+        LABEL,
+        SOURCEDATA,
+        chain_app,
+        "scaffold",
+        "the refused dependent cell",
+    )
+    _assert_clean(study, "keeping the refused dependent cell's records")
 
     # This is the one moment the waiting state exists — the producer scaffolded, not
     # merged — so it is where `status` gets asserted for it. (Only the dependent's row:
@@ -712,9 +730,11 @@ def _stage_merge(study):
         str(campaign_mod.state_path(study, LABEL).relative_to(study)),
         dispatch.duct_output(study, LABEL, SOURCEDATA, anchor_app),
     }, record["outputs"]
-    # Merge's records land beside scaffold's, in the cell's one duct directory.
+    # Merge's records land beside scaffold's, in the cell's one duct directory —
+    # two scaffold attempts by now: the real one, and the refused re-scaffold whose
+    # records the scaffold stage kept.
     assert len(_duct_records(study, SOURCEDATA, anchor_app, "merge")) == 4
-    assert len(_duct_records(study, SOURCEDATA, anchor_app, "scaffold")) == 4
+    assert len(_duct_records(study, SOURCEDATA, anchor_app, "scaffold")) == 8
 
     _assert_clean(study, "merge")
 
@@ -723,7 +743,10 @@ def _stage_merge(study):
     again = _dispatch(study, "merge", SOURCEDATA, anchor_app, check=False)
     assert again.returncode != 0, "a merged cell was merged again"
     assert "already merged" in again.stderr, again.stderr
-    _assert_clean(study, "the refused re-merge")
+    keep_refused_records(
+        study, study, LABEL, SOURCEDATA, anchor_app, "merge", "the refused re-merge"
+    )
+    _assert_clean(study, "keeping the refused re-merge's records")
 
 
 def _stage_update_env_bumps_the_environment(study):
@@ -820,7 +843,16 @@ def _stage_update_env_bumps_the_environment(study):
             "the inner verb did not reach its cell-state guard under the bumped "
             f"lock:\n{again.stderr}"
         )
-        _assert_clean(study, "the inner verb dispatched under the bumped lock")
+        keep_refused_records(
+            study,
+            study,
+            LABEL,
+            SOURCEDATA,
+            anchor_app,
+            "merge",
+            "the inner verb dispatched under the bumped lock",
+        )
+        _assert_clean(study, "keeping the bumped-lock refusal's records")
 
     # The stage that follows drives the chain cell's whole life with real iterates, and
     # now does so under THIS lock — so the campaign ends deliberately heterogeneous,
