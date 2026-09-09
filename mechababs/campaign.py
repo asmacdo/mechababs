@@ -67,6 +67,10 @@ MEMBERS_FILENAME = "studies+sourcedata.tsv"
 APPS_DIRNAME = "bids-app-configs"
 CLUSTERS_DIRNAME = "clusters"
 INCLUSIONS_DIRNAME = "inclusions"
+# con/duct's usage and resource records of each dispatched transition, one
+# subdirectory per cell beside the inclusion pins: the study's own evidence of what
+# scaffolding and merging a cell cost, written inside the transition's `datalad run`.
+DUCT_DIRNAME = "duct"
 ENV_FILENAME = "env.sh"
 PYPROJECT_FILENAME = "pyproject.toml"
 UV_LOCK_FILENAME = "uv.lock"
@@ -345,6 +349,10 @@ def clusters_dir(root, label):
 
 def inclusions_dir(root, label):
     return campaign_dir(root, label) / INCLUSIONS_DIRNAME
+
+
+def duct_dir(root, label):
+    return campaign_dir(root, label) / DUCT_DIRNAME
 
 
 def env_path(root, label):

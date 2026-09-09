@@ -25,7 +25,7 @@ Don't narrate the transition in a doc ("this used to be X"); write the current s
 ## Conventions
 
 - **Wrap runs in duct.** Every run should carry con/duct usage/resource logs alongside its outputs; `con-duct` is a dependency of every campaign environment.
-  The wiring is tracked, not yet built: duct-wrapping each `iterate` step is #53, and duct inside the babs jobs is #16 (tracks `PennLINC/babs#356`).
+  Every recorded transition is wrapped by `dispatch()`, so a new recorded verb gets it for free; duct inside the babs jobs is #16 (tracks `PennLINC/babs#356`).
 - **No untracked-local paths in upstream-facing stuff** (issues, tracked docs).
   A gitignored path means nothing to a reader on GitHub — **strip the path, keep the intent** (e.g. "the resample question in our fmriprep meeting notes is stale", not the path); remove it at filing time.
 - **Configs are the user's, never the tool's.** `examples/` are starters to copy; real site paths never land there, and nothing in the package resolves a config by name.

@@ -46,6 +46,7 @@ study-<id>/
         uv.lock                #   the resolved, reproducible environment
         sourcedata+derivatives.tsv  # the statefile: this study's cells for this campaign
         inclusions/            #   the requested subject list per cell, pinned at scaffold
+        duct/<cell>/           #   con/duct records of each scaffold and merge of that cell
 ```
 
 A study can hold **more than one** `sourcedata/<id>`; a campaign selects which to process (the `(study, sourcedata)` pair is the coarse selection; subjects/configs are the fine selection).
@@ -57,6 +58,12 @@ So a mechababs derivative is `<Tool>-<Ver>+<stage>[+<id>]+<label>/` (e.g. `fMRIP
 **A campaign is a config-epoch run, not a dataset.**
 `.mechababs/campaigns/<label>/` is where a study records each campaign that touched it: one pinned environment (`uv.lock` fixes `mechababs` + `babs` by git commit — a fork is just a different URL), one bundle of BIDS-App configs, and the state of that study's cells.
 A study **accumulates** campaigns over time — a set of derivatives now, another a year later with newer tools, each its own `<label>` — and because the record is the study's own, the study stays operable standalone: clone it, `uv sync` the campaign's lock, and everything needed to add to it or reproduce it is inside.
+
+**Each transition's cost is recorded beside its provenance.**
+`duct/<cell>/` holds the [con/duct](https://github.com/con/duct) records of every scaffold and merge of that cell: `<verb>_<datetime>_{info.json,usage.jsonl,stdout,stderr}`, written inside the transition's `datalad run` and committed by it, so the study carries how long and how heavy each orchestration step was, not only that it happened.
+`<cell>` is the same `<sourcedata>_<app>` key that names the inclusion pin.
+The timestamp keys attempts: a redone cell or a `datalad rerun` adds its records beside the earlier ones rather than replacing them, so one directory reads as the cell's whole orchestration history.
+The records babs's jobs produce, the compute side, live inside the derivative.
 
 **Retired derivatives live outside the study.**
 A derivative that had to be redone (a resource change, a tool bug, a config fix) is retired, not deleted: `mechababs retire-derivative` moves it to a required target directory that must be **outside the study** (a destination inside is refused) and resets its cell in the same transition.

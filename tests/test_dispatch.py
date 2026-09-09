@@ -15,6 +15,7 @@ import json
 import os
 import shlex
 import subprocess
+import time
 
 import pytest
 
@@ -48,10 +49,11 @@ def test_the_recorded_command_names_the_campaign_and_is_relative():
     assert not any(str(part).startswith("/") for part in cmd), cmd
 
 
-def test_scaffold_declares_the_four_paths_it_writes(tmp_path):
+def test_scaffold_declares_the_five_paths_it_writes(tmp_path):
     """Explicit mode captures only what is declared, so the declaration is the
     contract — including `.gitmodules`, which datalad commits mid-command when it
-    registers the new derivative as a subdataset."""
+    registers the new derivative as a subdataset, and the cell's duct directory,
+    whose filenames are not known until the run starts."""
     outputs = dispatch.scaffold_outputs(tmp_path, LABEL, SOURCEDATA, ANCHOR)
     assert outputs == [
         "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e",
@@ -61,8 +63,20 @@ def test_scaffold_declares_the_four_paths_it_writes(tmp_path):
             "sourcedata-ds999999_SimBIDS-0.0.3+anchor.csv"
         ),
         ".gitmodules",
+        ".mechababs/campaigns/e2e/duct/sourcedata-ds999999_SimBIDS-0.0.3+anchor/",
     ]
     assert all(not os.path.isabs(o) for o in outputs), outputs
+
+
+def test_the_duct_prefix_is_relative_and_keeps_the_datetime_template(tmp_path):
+    """datalad format-expands the command it records, so the braces are doubled:
+    the record keeps the template and every execution gets its own timestamp."""
+    prefix = dispatch.duct_prefix(tmp_path, LABEL, SOURCEDATA, ANCHOR, "scaffold")
+    assert prefix == (
+        ".mechababs/campaigns/e2e/duct/sourcedata-ds999999_SimBIDS-0.0.3+anchor/"
+        "scaffold_{{datetime}}_"
+    )
+    assert prefix.startswith(dispatch.duct_output(tmp_path, LABEL, SOURCEDATA, ANCHOR))
 
 
 def test_the_message_says_which_cell_advanced_and_where(tmp_path):
@@ -103,22 +117,88 @@ WRITE = [
     "import pathlib; pathlib.Path('landed.txt').write_text('x\\n')",
 ]
 
+# Every dispatch is duct-wrapped; the wrapper's own records land under this prefix.
+# Study-relative and still a template, as `dispatch.duct_prefix` composes it.
+DUCT_DIR = "duct/"
+DUCT_PREFIX = DUCT_DIR + "{{datetime}}_"
+
+
+def _dispatch(dataset, cmd, *, outputs, **kwargs):
+    """`dispatch.dispatch` with the duct half filled in the way the verbs do it:
+    the prefix, and its directory among the declared outputs."""
+    return dispatch.dispatch(
+        dataset, cmd, outputs=[*outputs, DUCT_DIR], duct_prefix=DUCT_PREFIX, **kwargs
+    )
+
 
 def test_a_dispatch_lands_as_a_run_record_with_the_command_verbatim(dataset):
-    dispatch.dispatch(dataset, WRITE, outputs=["landed.txt"], message="write it")
+    _dispatch(dataset, WRITE, outputs=["landed.txt"], message="write it")
 
     assert (dataset / "landed.txt").is_file()
     assert dispatch.head_subject(dataset) == "[DATALAD RUNCMD] write it"
     record = _run_record(dataset)
-    # datalad stores the argv shell-quoted, so the record reads as a command line.
-    assert shlex.split(record["cmd"]) == WRITE, record["cmd"]
-    assert record["outputs"] == ["landed.txt"]
+    # datalad stores the argv shell-quoted, so the record reads as a command line:
+    # the duct wrap first, then the verb verbatim.
+    assert shlex.split(record["cmd"]) == [
+        "duct",
+        "--fail-time",
+        "0",
+        "-p",
+        DUCT_PREFIX,
+        *WRITE,
+    ], record["cmd"]
+    assert record["outputs"] == ["landed.txt", DUCT_DIR]
     assert not subprocess.run(
         ["git", "-C", str(dataset), "status", "--porcelain"],
         check=True,
         capture_output=True,
         text=True,
     ).stdout.strip(), "the dispatch left the study dirty"
+
+
+def _duct_records(dataset):
+    """The tracked duct files, by name."""
+    return sorted(
+        subprocess.run(
+            ["git", "-C", str(dataset), "ls-files", "--", DUCT_DIR],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+    )
+
+
+def test_the_duct_records_are_outputs_of_the_run(dataset):
+    """The four duct files are captured by the run (the directory did not exist
+    before it), and the record stores the prefix as a template rather than the
+    timestamp this execution expanded it to."""
+    _dispatch(dataset, WRITE, outputs=["landed.txt"], message="measured")
+
+    records = _duct_records(dataset)
+    assert [r.rsplit("_", 1)[-1] for r in records] == [
+        "info.json",
+        "stderr",
+        "stdout",
+        "usage.jsonl",
+    ], records
+    assert all("{datetime}" not in r for r in records), records
+    assert "{{datetime}}" in _run_record(dataset)["cmd"]
+
+
+def test_a_rerun_adds_a_second_set_of_duct_records_beside_the_first(dataset):
+    """The template is re-expanded on rerun, so the second execution's records
+    land next to the first's instead of clobbering them (duct refuses to
+    overwrite), and the cell's history reads out of one directory."""
+    _dispatch(dataset, WRITE, outputs=["landed.txt"], message="first")
+    first = _duct_records(dataset)
+    # duct's {datetime} has one-second resolution; a real transition never repeats
+    # inside a second, but this trivial writer does.
+    time.sleep(1.1)
+    subprocess.run(["datalad", "-C", str(dataset), "rerun", "HEAD"], check=True)
+
+    both = _duct_records(dataset)
+    assert len(both) == 2 * len(first), both
+    assert set(first) < set(both), "the rerun replaced the first records"
 
 
 def test_the_run_is_recorded_study_relative_even_when_dispatched_from_elsewhere(
@@ -133,7 +213,7 @@ def test_the_run_is_recorded_study_relative_even_when_dispatched_from_elsewhere(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    dispatch.dispatch(dataset, WRITE, outputs=["landed.txt"], message="from afar")
+    _dispatch(dataset, WRITE, outputs=["landed.txt"], message="from afar")
 
     record = _run_record(dataset)
     assert record["pwd"] == ".", record
@@ -153,7 +233,7 @@ def test_an_undeclared_output_is_not_captured_by_the_run(dataset):
             "pathlib.Path('undeclared.txt').write_text('y\\n')"
         ),
     ]
-    dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="partial")
+    _dispatch(dataset, cmd, outputs=["landed.txt"], message="partial")
 
     tracked = subprocess.run(
         ["git", "-C", str(dataset), "ls-files"],
@@ -168,14 +248,12 @@ def test_an_undeclared_output_is_not_captured_by_the_run(dataset):
 def test_a_dirty_study_refuses_the_dispatch_before_anything_runs(dataset):
     (dataset / "someone-elses-work.txt").write_text("mine\n")
     with pytest.raises(RuntimeError, match="someone-elses-work.txt"):
-        dispatch.dispatch(dataset, WRITE, outputs=["landed.txt"], message="nope")
+        _dispatch(dataset, WRITE, outputs=["landed.txt"], message="nope")
     assert not (dataset / "landed.txt").exists(), "the refused dispatch still ran"
 
 
 def test_dry_run_prints_the_dispatch_and_changes_nothing(dataset, capsys):
-    dispatch.dispatch(
-        dataset, WRITE, outputs=["landed.txt"], message="planned", dry_run=True
-    )
+    _dispatch(dataset, WRITE, outputs=["landed.txt"], message="planned", dry_run=True)
     assert "DRY-RUN" in capsys.readouterr().err
     assert not (dataset / "landed.txt").exists()
 
@@ -206,7 +284,7 @@ def test_a_command_that_commits_for_itself_still_lands_a_run_record(dataset):
             "subprocess.run(['git','commit','-qm','inner commit'], check=True)"
         ),
     ]
-    dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="inner-commits")
+    _dispatch(dataset, cmd, outputs=["landed.txt"], message="inner-commits")
     assert dispatch.head_subject(dataset) == "[DATALAD RUNCMD] inner-commits"
 
 
@@ -229,16 +307,18 @@ def test_an_undeclared_path_in_an_inner_commit_is_refused(dataset):
         ),
     ]
     with pytest.raises(subprocess.CalledProcessError):
-        dispatch.dispatch(dataset, cmd, outputs=["landed.txt"], message="smuggler")
+        _dispatch(dataset, cmd, outputs=["landed.txt"], message="smuggler")
 
 
-def test_merge_declares_the_two_paths_it_writes(tmp_path):
+def test_merge_declares_the_three_paths_it_writes(tmp_path):
     """No `.gitmodules`: at the study level merge registers and drops nothing. The
-    derivative was registered at scaffold; merge only moves its HEAD."""
+    derivative was registered at scaffold; merge only moves its HEAD. The cell's
+    duct directory is the same one scaffold declared: both verbs' records share it."""
     outputs = dispatch.merge_outputs(tmp_path, LABEL, SOURCEDATA, ANCHOR)
     assert outputs == [
         "derivatives/SimBIDS-0.0.3+anchor+ds999999+e2e",
         ".mechababs/campaigns/e2e/sourcedata+derivatives.tsv",
+        ".mechababs/campaigns/e2e/duct/sourcedata-ds999999_SimBIDS-0.0.3+anchor/",
     ]
     assert dispatch.GITMODULES not in outputs
     assert all(not os.path.isabs(o) for o in outputs), outputs

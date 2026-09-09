@@ -65,6 +65,7 @@ A missed event in an event-driven system is permanent drift; a level-triggered l
 ## Provenance
 
 Every change-making transition is recorded with `datalad run` at the study, so the study's git history holds the exact command that scaffolded or merged each derivative.
+The recorded command runs under [con/duct](https://github.com/con/duct), so the same run also commits how long and how heavy the transition was, in the campaign dir beside the cell's inclusion pin.
 The jobs themselves are recorded by babs inside the derivative, as `datalad run` records of each `singularity run`.
 Two record homes: orchestration in the study, compute in the derivative.
 

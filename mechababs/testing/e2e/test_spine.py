@@ -32,6 +32,7 @@ import csv
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -44,6 +45,8 @@ import yaml
 from conftest import BUMP_PACKAGE, bump_declaration
 from mechababs import babs_status
 from mechababs import campaign as campaign_mod
+from mechababs import dispatch
+from mechababs import scaffold as scaffold_mod
 from mechababs import status as status_mod
 
 log = logging.getLogger("mechababs.e2e")
@@ -243,6 +246,28 @@ def _run_record(study):
     """
     body = _git(study, "log", "-1", "--format=%b")
     return json.loads(body[body.index("{") : body.rindex("}") + 1])
+
+
+def _recorded_argv(study, verb, source_dataset, app_config):
+    """What the run record's `cmd` should split back into: the duct wrap, then the
+    inner verb verbatim. The prefix keeps `{{datetime}}` — datalad format-expands
+    the command it records, so the record holds the template and every execution,
+    a `datalad rerun` included, expands it to its own timestamp."""
+    return [
+        "duct",
+        "--fail-time",
+        "0",
+        "-p",
+        dispatch.duct_prefix(study, LABEL, source_dataset, app_config, verb),
+        *dispatch.inner_command(verb, LABEL, source_dataset, app_config),
+    ]
+
+
+def _duct_records(study, source_dataset, app_config, verb):
+    """The tracked duct records of one verb's executions for one cell."""
+    cell_dir = scaffold_mod.duct_dir(study, LABEL, source_dataset, app_config)
+    tracked = _git(study, "ls-files", "--", str(cell_dir.relative_to(study))).split()
+    return sorted(Path(f).name for f in tracked if Path(f).name.startswith(f"{verb}_"))
 
 
 def _iterate(study, *args):
@@ -534,9 +559,8 @@ def _stage_scaffold(study):
     assert subject.startswith("[DATALAD RUNCMD] mechababs scaffold"), subject
     record = _run_record(study)
     assert record["pwd"] == ".", record
-    assert record["cmd"] == (
-        f"mechababs-inner scaffold --campaign {LABEL} "
-        f"--source-dataset {SOURCEDATA} --app {anchor_app}"
+    assert shlex.split(record["cmd"]) == _recorded_argv(
+        study, "scaffold", SOURCEDATA, anchor_app
     ), record["cmd"]
     assert str(study) not in record["cmd"], (
         "the recorded command carries this machine's path, so it re-executes nowhere"
@@ -548,7 +572,18 @@ def _stage_scaffold(study):
         str(campaign_mod.state_path(study, LABEL).relative_to(study)),
         str(pin.relative_to(study)),
         ".gitmodules",
+        dispatch.duct_output(study, LABEL, SOURCEDATA, anchor_app),
     }, record["outputs"]
+
+    # The transition's own resource record: four duct files, committed by the run
+    # that produced them, named by the verb and the timestamp it expanded to.
+    duct_files = _duct_records(study, SOURCEDATA, anchor_app, "scaffold")
+    assert [f.rsplit("_", 1)[-1] for f in duct_files] == [
+        "info.json",
+        "stderr",
+        "stdout",
+        "usage.jsonl",
+    ], duct_files
 
     _assert_clean(study, "scaffold")
 
@@ -668,15 +703,18 @@ def _stage_merge(study):
     assert subject.startswith("[DATALAD RUNCMD] mechababs merge"), subject
     record = _run_record(study)
     assert record["pwd"] == ".", record
-    assert record["cmd"] == (
-        f"mechababs-inner merge --campaign {LABEL} "
-        f"--source-dataset {SOURCEDATA} --app {anchor_app}"
+    assert shlex.split(record["cmd"]) == _recorded_argv(
+        study, "merge", SOURCEDATA, anchor_app
     ), record["cmd"]
-    # Two, and no `.gitmodules`: merge registers and drops nothing at the study.
+    # Three, and no `.gitmodules`: merge registers and drops nothing at the study.
     assert set(record["outputs"]) == {
         derivative,
         str(campaign_mod.state_path(study, LABEL).relative_to(study)),
+        dispatch.duct_output(study, LABEL, SOURCEDATA, anchor_app),
     }, record["outputs"]
+    # Merge's records land beside scaffold's, in the cell's one duct directory.
+    assert len(_duct_records(study, SOURCEDATA, anchor_app, "merge")) == 4
+    assert len(_duct_records(study, SOURCEDATA, anchor_app, "scaffold")) == 4
 
     _assert_clean(study, "merge")
 
@@ -829,9 +867,8 @@ def _stage_iterate_drives_the_chain_cell(study):
     subject = _git(study, "log", "-1", "--format=%s").strip()
     assert subject.startswith("[DATALAD RUNCMD] mechababs scaffold"), subject
     record = _run_record(study)
-    assert record["cmd"] == (
-        f"mechababs-inner scaffold --campaign {LABEL} "
-        f"--source-dataset {SOURCEDATA} --app {chain_app}"
+    assert shlex.split(record["cmd"]) == _recorded_argv(
+        study, "scaffold", SOURCEDATA, chain_app
     ), record["cmd"]
 
     # The config babs kept carries the producer's output RIA, in the alias form.

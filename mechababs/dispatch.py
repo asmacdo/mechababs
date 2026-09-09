@@ -34,6 +34,19 @@ mid-command — a commit datalad's `datalad.run.dirty-committed=error` guard wou
 otherwise refuse as touching undeclared paths. Declaring `.gitmodules` satisfies
 the guard while leaving it armed for a genuinely unexpected mid-command commit,
 which is the point of keeping it on.
+
+**The recorded command is `duct … mechababs-inner …`.** Every dispatched verb runs
+under con/duct, inside the `datalad run` rather than around it, so the usage and
+resource records of the transition are outputs of the run and travel with the
+study like the inclusion pin does. The prefix is study-relative and keeps duct's
+`{datetime}` template — escaped once, because datalad format-expands the command
+string it records — so the record stores the template, and a `datalad rerun` or
+a redo of the cell adds a second timestamped record beside the first instead of
+clobbering it. The cell's duct directory is declared as the output, since the
+filenames are not known until the run starts. `--fail-time 0` keeps the records
+of a failed transition: the run does not save them, so they sit untracked and the
+next iterate refuses until a human has looked, which is the failures-stop rule
+applied to the orchestration itself.
 """
 
 import subprocess
@@ -49,6 +62,10 @@ from mechababs.utils import require_clean_shallow, shallow_status
 # recorded command naming an absolute interpreter would not re-execute anywhere
 # else.
 INNER = "mechababs-inner"
+
+# con/duct, bare for the same reason: it is the campaign venv's, and the run record
+# names it as the thing to re-execute.
+DUCT = "duct"
 
 # datalad from THIS environment rather than PATH, for the same reason every other
 # shell-out in the package does it: the environment is the campaign's pin.
@@ -92,12 +109,32 @@ def inner_command(verb, label, source_dataset, app_config, *, executable=INNER):
     ]
 
 
+def duct_prefix(study, label, source_dataset, app_config, verb):
+    """The `-p` handed to duct: the cell's duct directory, then `<verb>_{datetime}_`.
+
+    Study-relative, since the run's cwd is the study and an absolute path would not
+    re-execute elsewhere. The braces are doubled because datalad format-expands
+    the command it records (`{inputs}`, `{pwd}`); the record keeps `{{datetime}}`
+    and duct receives `{datetime}` on every execution, so each one gets its own
+    timestamp and none overwrites another.
+    """
+    cell_dir = scaffold_mod.duct_dir(study, label, source_dataset, app_config)
+    return f"{cell_dir.relative_to(study)}/{verb}_{{{{datetime}}}}_"
+
+
+def duct_output(study, label, source_dataset, app_config):
+    """The cell's duct directory, study-relative — what each verb declares for it."""
+    cell_dir = scaffold_mod.duct_dir(study, label, source_dataset, app_config)
+    return f"{cell_dir.relative_to(study)}/"
+
+
 def scaffold_outputs(study, label, source_dataset, app_config):
     """What a scaffold writes, study-relative — its `--output` declaration.
 
-    Four things, and the run captures exactly these: the derivative babs inits, the
-    statefile row recording it, the inclusion pinned beside that statefile, and the
-    `.gitmodules` entry that registers the derivative as a subdataset.
+    Five things, and the run captures exactly these: the derivative babs inits, the
+    statefile row recording it, the inclusion pinned beside that statefile, the
+    `.gitmodules` entry that registers the derivative as a subdataset, and the
+    cell's duct records.
     """
     pin = scaffold_mod.inclusion_pin(study, label, source_dataset, app_config)
     return [
@@ -105,6 +142,7 @@ def scaffold_outputs(study, label, source_dataset, app_config):
         str(campaign_mod.state_path(study, label).relative_to(study)),
         str(pin.relative_to(study)),
         GITMODULES,
+        duct_output(study, label, source_dataset, app_config),
     ]
 
 
@@ -119,16 +157,17 @@ def scaffold_message(source_dataset, app_config, label):
 def merge_outputs(study, label, source_dataset, app_config):
     """What a merge writes, study-relative — its `--output` declaration.
 
-    Two things, and deliberately not `.gitmodules`: at the study level merge
+    Three things, and deliberately not `.gitmodules`: at the study level merge
     registers and drops nothing. The derivative was registered as a subdataset at
     scaffold; merge only moves its HEAD, so the study's diff is that gitlink plus
-    the statefile row. (The merged branch may well change the DERIVATIVE's own
-    `.gitmodules` — that is inside the derivative, and declaring the derivative
-    covers it.)
+    the statefile row, plus the cell's duct records. (The merged branch may well
+    change the DERIVATIVE's own `.gitmodules` — that is inside the derivative, and
+    declaring the derivative covers it.)
     """
     return [
         scaffold_mod.derivative_path(source_dataset, app_config, label),
         str(campaign_mod.state_path(study, label).relative_to(study)),
+        duct_output(study, label, source_dataset, app_config),
     ]
 
 
@@ -179,11 +218,13 @@ def require_runcmd_head(study, message):
         )
 
 
-def dispatch(study, cmd, *, outputs, message, dry_run=False):
+def dispatch(study, cmd, *, outputs, message, duct_prefix, dry_run=False):
     """Run ``cmd`` at ``study`` under ``datalad run --explicit``, declaring ``outputs``.
 
     ``study`` is the run's dataset AND its working directory, so the recorded
-    command is study-relative regardless of where the caller stands.
+    command is study-relative regardless of where the caller stands. ``cmd`` is
+    wrapped in duct with ``duct_prefix``; the directory that prefix writes into
+    must be among ``outputs``, or `--explicit` leaves the records unsaved.
     """
     study = Path(study)
     require_clean_shallow(study, what=f"dispatching: {message}")
@@ -191,7 +232,8 @@ def dispatch(study, cmd, *, outputs, message, dry_run=False):
     argv = [DATALAD, "run", "--explicit", "-d", ".", "-m", message]
     for output in outputs:
         argv += ["--output", output]
-    argv += ["--", *[str(c) for c in cmd]]
+    argv += ["--", DUCT, "--fail-time", "0", "-p", duct_prefix]
+    argv += [str(c) for c in cmd]
 
     if dry_run:
         print(f"DRY-RUN  {' '.join(argv)}   (cwd={study})", file=sys.stderr)
@@ -250,6 +292,7 @@ def scaffold(study, label, source_dataset, app_config, *, dry_run=False):
         inner_command("scaffold", label, source_dataset, app_config),
         outputs=scaffold_outputs(study, label, source_dataset, app_config),
         message=scaffold_message(source_dataset, app_config, label),
+        duct_prefix=duct_prefix(study, label, source_dataset, app_config, "scaffold"),
         dry_run=dry_run,
     )
 
@@ -273,5 +316,6 @@ def merge(study, label, source_dataset, app_config, *, dry_run=False):
         inner_command("merge", label, source_dataset, app_config),
         outputs=merge_outputs(study, label, source_dataset, app_config),
         message=merge_message(source_dataset, app_config),
+        duct_prefix=duct_prefix(study, label, source_dataset, app_config, "merge"),
         dry_run=dry_run,
     )

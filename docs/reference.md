@@ -103,6 +103,7 @@ At a superstudy the iterate runs over every installed member in study catalog or
 A member study that has been uninstalled is skipped, never reinstalled.
 
 Scaffold and merge are recorded with `datalad run` at the study, so the study's git history carries the command that produced each derivative; submit changes nothing tracked and is not recorded.
+Each recorded transition runs under [con/duct](https://github.com/con/duct), and its usage and resource records are committed by the same run at `.mechababs/campaigns/<label>/duct/<sourcedata>_<app>/<verb>_<datetime>_*`, one directory per cell keyed like its inclusion pin; `con-duct ls` over that directory is how a campaign's orchestration cost is read.
 At a superstudy each scaffold or merge is also committed at the superstudy, as the member's moved gitlink, one commit per tick and before the next cell is attempted.
 An iterate takes the level's single-writer lock, and refuses to start on a dirty tree.
 
