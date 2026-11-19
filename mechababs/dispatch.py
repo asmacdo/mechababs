@@ -166,8 +166,8 @@ def require_runcmd_head(study, message):
     of its own, and older datalad dropped the run record entirely in that case —
     leaving a study that looks advanced with no re-executable command in it. That
     failure is silent by nature, so it is checked rather than assumed. (The
-    `datalad>=1.6` floor in pyproject.toml is the fix; this is the check that it
-    is in force.)
+    datalad floor in pyproject.toml is the fix; this is the check that it is in
+    force.)
     """
     subject = head_subject(study)
     if not subject.startswith(RUNCMD_PREFIX):
